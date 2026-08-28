@@ -1,0 +1,10 @@
+[package]
+name = "evidence-reader"
+description = "Read-only, bounded, streaming access to evidence images and physical disks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database. OS handles only, always read-only.
+[dependencies]

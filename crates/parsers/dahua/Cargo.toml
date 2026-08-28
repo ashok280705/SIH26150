@@ -1,0 +1,10 @@
+[package]
+name = "parser-dahua"
+description = "Dahua OEM parser: profile-driven filesystem, metadata, recording, and timestamp interpretation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database. OEM facts come from profiles/dahua/.
+[dependencies]

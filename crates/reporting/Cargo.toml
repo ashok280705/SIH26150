@@ -1,0 +1,10 @@
+[package]
+name = "reporting"
+description = "Forensic reporting: PDF/JSON/CSV output with hashes, provenance, and limitations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database.
+[dependencies]

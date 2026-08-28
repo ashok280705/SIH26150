@@ -1,0 +1,10 @@
+[package]
+name = "parser-honeywell"
+description = "Honeywell OEM parser: profile-driven partition, filesystem, metadata, and recording interpretation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database. OEM facts come from profiles/honeywell/.
+[dependencies]

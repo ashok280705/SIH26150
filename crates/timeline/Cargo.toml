@@ -1,0 +1,10 @@
+[package]
+name = "timeline"
+description = "Timeline engine: timestamp normalization, unification, and cross-camera correlation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database.
+[dependencies]

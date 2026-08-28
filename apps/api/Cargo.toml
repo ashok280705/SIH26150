@@ -1,0 +1,15 @@
+[package]
+name = "forensic-api"
+description = "Axum/Tokio HTTP API. The only crate permitted to touch the network and the database."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "forensic-api"
+path = "src/main.rs"
+
+# This is the ONLY workspace crate allowed network and database dependencies
+# (Axum, Tokio, sqlx/PostgreSQL). They are introduced by later Phase 1 tasks.
+[dependencies]

@@ -1,0 +1,60 @@
+# Multi-Vendor DVR/NVR Forensic Analysis Platform — Rust workspace root.
+#
+# Layout follows design.md → "Workspace Layout" / "System Topology":
+#
+#   crates/*             forensic core: pure, deterministic, no network, no database
+#   crates/parsers/*     one crate per CURRENTLY SUPPORTED OEM
+#                        (dahua, hikvision, honeywell, cpplus-ubs, uniview)
+#   apps/api             the ONLY crate permitted to touch the network and the database
+#   apps/frontend        React + TypeScript + Vite app (not a Cargo member)
+#   profiles/            versioned OEM_Profile DATA artifacts (never Rust constants)
+#   config/              versioned NON-OEM platform configuration DATA (never Rust constants)
+#   services/ai/         optional Python FastAPI AI service (not a Cargo member)
+#   validation_corpus/   deterministic validation corpus manifests
+#   tests/               cross-crate tests + fixture generators
+#   docs/                decision notes and documentation
+#   cases/               local dev/test evidence workspace — git-ignored, NEVER committed
+#
+# Forensic constraints that govern this workspace:
+#   * No OEM signature, magic value, offset, structure, or confidence weight is ever a
+#     source constant. All OEM factual knowledge lives in versioned `profiles/` data.
+#   * Core crates carry no network or database dependencies so forensic results stay
+#     pure, testable, and deterministic.
+#   * Evidence is read-only; no crate exposes a write path to evidence.
+
+[workspace]
+resolver = "2"
+members = [
+  # Forensic core
+  "crates/forensic-core",
+  "crates/evidence-reader",
+  "crates/hashing",
+  "crates/detection",
+  "crates/confidence",
+  "crates/recovery",
+  "crates/timeline",
+  "crates/reporting",
+
+  # Per-OEM parsers — five currently supported OEMs, Uniview included as first-class
+  "crates/parsers/dahua",
+  "crates/parsers/hikvision",
+  "crates/parsers/honeywell",
+  "crates/parsers/cpplus-ubs",
+  "crates/parsers/uniview",
+
+  # Applications
+  "apps/api",
+
+  # Cross-crate tests and fixture generators
+  "tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+# Shared third-party dependencies are declared here as they are introduced by later
+# tasks, so every crate resolves to one version. Intentionally empty at skeleton stage.
+[workspace.dependencies]

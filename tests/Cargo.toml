@@ -1,0 +1,12 @@
+[package]
+name = "forensic-tests"
+description = "Cross-crate integration tests, workspace layout assertions, and synthetic fixture generators."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Test-support crate: no network, no database. Layout assertions use std only.
+[dependencies]
+
+[dev-dependencies]

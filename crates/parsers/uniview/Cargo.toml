@@ -1,0 +1,10 @@
+[package]
+name = "parser-uniview"
+description = "Uniview OEM parser: profile-driven super metadata, region, index, and recording interpretation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database. OEM facts come from profiles/uniview/.
+[dependencies]

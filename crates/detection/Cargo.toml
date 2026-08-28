@@ -1,0 +1,10 @@
+[package]
+name = "detection"
+description = "Detector trait, profile-driven detection evidence, and the parallel Detection_Orchestrator."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database.
+[dependencies]

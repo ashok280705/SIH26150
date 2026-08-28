@@ -1,0 +1,1556 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. OPEN-1 — Spike: select and license-verify a Rust EWF/E01 dependency": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482047
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904509337
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787910613093
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580347
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911626089
+      }
+    ],
+    "2. OPEN-2 — Decision: maximum read-window / bounded-buffer default": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482145
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787905778771
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787910617135
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580494
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911861704
+      }
+    ],
+    "3. OPEN-3 — Dependency: FFmpeg runtime for remux and decode test": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482207
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787905780248
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787910614325
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580605
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911879423
+      }
+    ],
+    "4. OPEN-4 — Decision: provisional confidence configuration and recovery bounds": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482295
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787905781604
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787910615803
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580665
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911901538
+      }
+    ],
+    "5. P1-001 — Initialize Rust workspace and crate skeletons (five OEMs)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482353
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904588142
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787905770578
+      }
+    ],
+    "6. P1-002 — forensic-core domain types and ForensicError": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482427
+      },
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787905782639
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580719
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911929914
+      }
+    ],
+    "7. P1-003 — Checked-arithmetic and bounds primitives (hostile input contract)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482470
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580790
+      }
+    ],
+    "8. P1-004 — ValidationState enum with required reason": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482509
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580837
+      }
+    ],
+    "9. P1-005 — Capability_Stage model (five independent dimensions)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482562
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580887
+      }
+    ],
+    "10. P1-006 — Provenance and SourceRegion model": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482606
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580939
+      }
+    ],
+    "11. P1-007 — Artifact model: native vs derived": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482643
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911580990
+      }
+    ],
+    "12. P1-008 — Case and Evidence domain model": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482687
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581053
+      }
+    ],
+    "13. P1-009 — Acquisition model and AcquisitionStatus": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482727
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581114
+      }
+    ],
+    "14. P1-010 — EvidenceReader trait (read-only, no write API)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482768
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581172
+      }
+    ],
+    "15. P1-011 — Raw/.dd/.img backend with read-only OS handles": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482810
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581215
+      }
+    ],
+    "16. P1-012 — Source safety inspection (SourceState, SafetyDecision, report)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482852
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581265
+      }
+    ],
+    "17. P1-013 — Bounded read_at and RegionScanner with searched/skipped accounting": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482887
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581318
+      }
+    ],
+    "18. P1-014 — Sparse awareness, truncation reporting, and out-of-bounds rejection": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482928
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581371
+      }
+    ],
+    "19. P1-015 — Read-only memory-mapped region support": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904482977
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581432
+      }
+    ],
+    "20. P1-016 — Progress reporting and cancellation": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483017
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581499
+      }
+    ],
+    "21. P1-017 — WriteGuard and write-denied chain-of-custody logging": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483057
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581547
+      }
+    ],
+    "22. P1-018 — Streaming SHA-256 Hashing_Service with hash metadata": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483122
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581597
+      }
+    ],
+    "23. P1-019 — Chain_Of_Custody logging": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483161
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581657
+      }
+    ],
+    "24. P1-020 — Export provenance and hashing hooks (native vs derived)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483202
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581716
+      }
+    ],
+    "25. P1-021 — PostgreSQL schema and sqlx migrations (Phase 1 tables)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483241
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581771
+      }
+    ],
+    "26. P1-022 — Case_Manager service, validation, and acquisition verification": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483290
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581823
+      }
+    ],
+    "27. P1-023 — Deterministic forensic-result comparison harness": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483326
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581881
+      }
+    ],
+    "28. P1-024 — Synthetic fixture generator (labeled synthetic)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483373
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581940
+      }
+    ],
+    "29. P1-025 — Machine-readable validation corpus": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483410
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911581993
+      }
+    ],
+    "30. P1-026 — Phase 1 foundational test suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483467
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582037
+      }
+    ],
+    "31. P1-027 — Axum API skeleton: case, evidence, acquisition, source-safety endpoints": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483505
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582081
+      }
+    ],
+    "32. P1-UI-001 — UI shell, navigation, Case/Evidence/Acquisition, Overview": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483540
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582158
+      }
+    ],
+    "33. P2-001 — Evidence_Status domain type": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483587
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582216
+      }
+    ],
+    "34. P2-002 — OEM_Profile TOML schema and types (incl. applicability)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483632
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582271
+      }
+    ],
+    "35. P2-003 — Profile loader, strict validation, and applicability selection": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483669
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582318
+      }
+    ],
+    "36. P2-004 — Profile hashing and version recording": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483713
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582367
+      }
+    ],
+    "37. P2-005 — EvidenceItem model (rule_match_status vs evidence_status)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483756
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582421
+      }
+    ],
+    "38. P2-006 — DetectorOutput model (no attribution, no confidence)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483832
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582471
+      }
+    ],
+    "39. P2-007 — ClassifiedDetectionResult model (Confidence_Engine output only)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483869
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582526
+      }
+    ],
+    "40. P2-008 — Detector trait": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483912
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582582
+      }
+    ],
+    "41. P2-009 — Detection_Orchestrator (parallel, five OEMs, evidence-independent)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483953
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582638
+      }
+    ],
+    "42. P2-010 — Storage Topology Profiler": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904483990
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582696
+      }
+    ],
+    "43. P2-011 — Deterministic weighted evidence scoring": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484032
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582746
+      }
+    ],
+    "44. P2-012 — Confidence normalization (score → confidence)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484075
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582792
+      }
+    ],
+    "45. P2-013 — Versioned ConfidenceConfig": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484118
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582856
+      }
+    ],
+    "46. P2-014 — Classification decision order": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484168
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582899
+      }
+    ],
+    "47. P2-015 — Attribution_Status and detection Validation_State assignment": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484212
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911582956
+      }
+    ],
+    "48. P2-016 — Deterministic detection result ordering": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484249
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583013
+      }
+    ],
+    "49. P2-017 — CP Plus/UBS attribution rule enforcement": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484292
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583064
+      }
+    ],
+    "50. P2-018 — Dahua detector (profile-driven)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484335
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583117
+      }
+    ],
+    "51. P2-019 — Hikvision detector (profile-driven)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484377
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583164
+      }
+    ],
+    "52. P2-020 — Honeywell detector (profile-driven, topology-aware)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484427
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583222
+      }
+    ],
+    "53. P2-021 — CP Plus/UBS detector (profile-driven)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484464
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583267
+      }
+    ],
+    "54. P2-022 — Uniview detector (profile-driven, bounded initial scan)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484532
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583308
+      }
+    ],
+    "55. P2-023 — Detection-phase migrations": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484570
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583372
+      }
+    ],
+    "56. P2-024 — Adversarial detection test suite (five OEMs)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484610
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583436
+      }
+    ],
+    "57. P2-025 — Uniview detection edge-case and adversarial suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484652
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583509
+      }
+    ],
+    "58. P2-026 — Capability stage derivation and reporting service": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484691
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583552
+      }
+    ],
+    "59. P2-027 — Detection API endpoints": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484727
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583606
+      }
+    ],
+    "60. P2-UI-001 — Detection screen (evidence-backed)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484760
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583661
+      }
+    ],
+    "61. P2-UI-002 — Hex Viewer (bytes only via API/EvidenceReader)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484801
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583715
+      }
+    ],
+    "62. P2-UI-003 — Capability matrix, validation status, and storage topology views": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484860
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583761
+      }
+    ],
+    "63. P3-001 — Parser trait (common interface, no attribution/timeline/recovery ownership)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484895
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583811
+      }
+    ],
+    "64. P3-002 — TimeEvidence model (replaces TimestampPair)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484939
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583858
+      }
+    ],
+    "65. P3-003 — Recording model and integrity": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904484975
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583914
+      }
+    ],
+    "66. P3-004 — Filesystem/metadata/recording interpretation scaffolding": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485024
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911583963
+      }
+    ],
+    "67. P3-005 — TimelineEvent extraction interface": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485061
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584015
+      }
+    ],
+    "68. P3-006 — Parser provenance, parser_runs, and validation state": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485109
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584064
+      }
+    ],
+    "69. P3-007 — Hostile-input parser contract (no panic, checked arithmetic)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485167
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584122
+      }
+    ],
+    "70. P3-008 — Dahua parser": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485209
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584198
+      }
+    ],
+    "71. P3-009 — Hikvision parser": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485248
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584258
+      }
+    ],
+    "72. P3-010 — Honeywell parser": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485283
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584322
+      }
+    ],
+    "73. P3-011 — CP Plus/UBS parser": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485321
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584382
+      }
+    ],
+    "74. P3-012 — Uniview parser": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485362
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584438
+      }
+    ],
+    "75. P3-013 — Phase 3 migrations (parser runs, recordings, timeline events)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485407
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584484
+      }
+    ],
+    "76. P3-014 — Parser test corpus (five OEMs)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485455
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584542
+      }
+    ],
+    "77. P3-015 — Uniview parser edge-case and adversarial suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485513
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584606
+      }
+    ],
+    "78. P3-UI-001 — Parsing screen (parser status and time classes)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485563
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584666
+      }
+    ],
+    "79. P4-001 — DataState and RecoveryStatus types (independent)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485604
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584716
+      }
+    ],
+    "80. P4-002 — RecoveryCandidate model": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485642
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584775
+      }
+    ],
+    "81. P4-003 — RecoveryBounds and RecoveryRun (REVIEW when truncated)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485685
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584829
+      }
+    ],
+    "82. P4-004 — Recovery_Engine orchestration": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485729
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584896
+      }
+    ],
+    "83. P4-005 — Level 1 indexed recovery": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485770
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584948
+      }
+    ],
+    "84. P4-006 — Level 2 orphan/slack recovery": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485859
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911584999
+      }
+    ],
+    "85. P4-007 — Level 3 raw carving (bounded, cancellable)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485911
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585049
+      }
+    ],
+    "86. P4-008 — Candidate frame validation": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485947
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585095
+      }
+    ],
+    "87. P4-009 — Overwritten/unrecoverable classification rules": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904485988
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585141
+      }
+    ],
+    "88. P4-010 — Reconstruction hypothesis model with deterministic tie-break": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486030
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585190
+      }
+    ],
+    "89. P4-011 — Fragmented recording handling": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486073
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585240
+      }
+    ],
+    "90. P4-012 — Circular/wrap storage handling": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486108
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585290
+      }
+    ],
+    "91. P4-013 — FFmpeg integration for remux/transmux": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486142
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585339
+      }
+    ],
+    "92. P4-014 — Frame/GOP validation and ordering": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486194
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585390
+      }
+    ],
+    "93. P4-015 — Gap marking": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486239
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585448
+      }
+    ],
+    "94. P4-016 — Codec and media validation (codec identity ≠ OEM identity)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486278
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585522
+      }
+    ],
+    "95. P4-017 — Video_Reconstructor Validation_State assignment": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486313
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585574
+      }
+    ],
+    "96. P4-018 — Native vs derived artifact production in reconstruction": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486354
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585630
+      }
+    ],
+    "97. P4-019 — Decode validation and export hashing": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486401
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585688
+      }
+    ],
+    "98. P4-020 — Uniview L1/L2/L3 recovery application": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486440
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585740
+      }
+    ],
+    "99. P4-021 — Phase 4 migrations (recovery runs, candidates, artifacts/provenance)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486510
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585798
+      }
+    ],
+    "100. P4-022 — Recovery and reconstruction test suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486550
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585849
+      }
+    ],
+    "101. P4-023 — Adversarial recovery hostile-input suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486588
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585906
+      }
+    ],
+    "102. P4-UI-001 — Recovery screen (states, bounds, reconstruction status)": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486635
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911585966
+      }
+    ],
+    "103. P5-001 — TimelineEvent model": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486673
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586023
+      }
+    ],
+    "104. P5-002 — Timeline_Engine unified timeline construction": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486715
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586082
+      }
+    ],
+    "105. P5-003 — Normalized ordering with raw and recorder-native preservation": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486764
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586130
+      }
+    ],
+    "106. P5-004 — Distinguishable physical, recorder-native, and normalized order": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486808
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586206
+      }
+    ],
+    "107. P5-005 — Cross-camera correlation": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486852
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586259
+      }
+    ],
+    "108. P5-006 — Timeline test suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486893
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586321
+      }
+    ],
+    "109. P5-UI-001 — Timeline and Evidence/Provenance screens": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486929
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586381
+      }
+    ],
+    "110. P6-001 — Report model": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904486971
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586441
+      }
+    ],
+    "111. P6-002 — JSON report export": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487022
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586501
+      }
+    ],
+    "112. P6-003 — CSV report export": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487059
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586554
+      }
+    ],
+    "113. P6-004 — PDF report export": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487123
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586604
+      }
+    ],
+    "114. P6-005 — Report hashing, provenance, and chain of custody": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487168
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586670
+      }
+    ],
+    "115. P6-006 — Limitations section": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487213
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586732
+      }
+    ],
+    "116. P6-007 — Capability and validation honesty in reporting": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487255
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586782
+      }
+    ],
+    "117. P6-008 — Reporting test suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487293
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586836
+      }
+    ],
+    "118. P6-UI-001 — Reports screen": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487335
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586914
+      }
+    ],
+    "119. P7-001 — Python/FastAPI AI service scaffold": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487384
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911586966
+      }
+    ],
+    "120. P7-002 — Validated-evidence boundary": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487421
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911587015
+      }
+    ],
+    "121. P7-003 — AI finding model as Derived_Artifact with provenance and labeling": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487470
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911587067
+      }
+    ],
+    "122. P7-004 — Graceful degradation and disabled path": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487525
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911587118
+      }
+    ],
+    "123. P7-005 — AI test suite": [
+      {
+        "executionId": "c5d1430c-a2c6-4439-8717-e017bb0d467b",
+        "chatSessionId": "sess_828778f8-8711-4772-a6f6-0bec8a81b733",
+        "timestamp": 1787904487568
+      },
+      {
+        "executionId": "faff481f-e009-4c1d-9cc6-54d6568e18b8",
+        "chatSessionId": "sess_09be2ee1-6e2c-4080-a535-dc6c0a15a51b",
+        "timestamp": 1787911587165
+      }
+    ]
+  }
+}

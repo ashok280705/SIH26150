@@ -1,0 +1,10 @@
+[package]
+name = "confidence"
+description = "Confidence engine: threshold, margin, and evidence quality to Classification and Attribution_Status."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure core crate: no network, no database.
+[dependencies]

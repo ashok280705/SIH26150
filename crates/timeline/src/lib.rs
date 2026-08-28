@@ -1,0 +1,18 @@
+//! # timeline
+//!
+//! The `Timeline_Engine`: normalizes `TimeEvidence`, builds the unified cross-camera
+//! timeline, and correlates events across cameras.
+//!
+//! Constraints this crate must uphold:
+//!
+//! * Raw and recorder-native timestamps are preserved verbatim and never overwritten by a
+//!   normalized value; `raw` is always recoverable (Req 4).
+//! * An unknown timezone stays `Unknown` and is never silently treated as UTC (Req 4.5–4.7).
+//! * Physical storage order is not chronological order; the two are reported distinctly
+//!   (Req 15).
+//! * The engine owns unified-timeline construction; parsers only extract `TimelineEvent`
+//!   candidates (Req 15.1).
+//!
+//! Skeleton only — the engine lands in Phase 5.
+
+#![forbid(unsafe_code)]

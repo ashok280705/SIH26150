@@ -1,0 +1,44 @@
+# Evidence_Reader runtime configuration — PLATFORM CONFIGURATION DATA, NOT FORENSIC FACT.
+#
+# Decision: OPEN-2 (tasks.md task 2) — maximum read-window / bounded-buffer default.
+# Decision note: docs/decisions/OPEN-2-max-read-window.md
+# Requirements: Req 8.2 (bounded buffers, never load the whole image),
+#               Req 8.3 (no allocation proportional to total image size).
+# Design:       Cross-Cutting (bounded memory); Bounded Scanning; Component 1 (Evidence Reader).
+#
+# Every value below is a PROVISIONAL ENGINEERING DEFAULT chosen for memory behavior and
+# responsiveness. None of these values is a validated forensic constant, and none of them
+# may be re-expressed as a Rust source constant (design.md: "No authoritative forensic
+# numeric constant is hard-coded in source").
+#
+# Forensic invariant: read-window size is a performance/memory knob ONLY. It is NOT part of
+# the determinism key (design.md → "Determinism inputs (the full key)"), so a Forensic_Result
+# MUST be identical for every value in the allowed range. A forensic result that changes
+# when this value changes is a reader/scanner defect, not a configuration choice.
+
+config_id     = "reader"
+config_version = "reader-1.0.0"
+status        = "provisional"          # provisional engineering configuration, not validated
+decision_note = "docs/decisions/OPEN-2-max-read-window.md"
+
+# --------------------------------------------------------------------------------------
+# Read window / bounded buffer
+# --------------------------------------------------------------------------------------
+# `read_window.max_bytes` is the platform-wide CEILING on any single evidence read buffer
+# or scan window: positioned `read_at` buffers, `RegionScanner` windows, streaming hash
+# windows, and recovery-scan windows. It is a maximum, not a required allocation — a scan
+# over a shorter region allocates `min(max_bytes, remaining_region_len)`.
+#
+# `read_window.min_bytes` is the floor for a caller-supplied window. It exists for
+# correctness, not performance: a zero-length window would produce a non-terminating scan.
+[read_window]
+max_bytes = 16777216   # 16 MiB — PROVISIONAL default (see decision note for rationale)
+min_bytes = 4096       #  4 KiB — floor for an explicitly requested window
+
+# Allowed configuration range for the keys above. The loader validates each configured
+# value against its range and rejects out-of-range configuration rather than clamping
+# silently. The 8–64 MiB range for `max_bytes` is the range proposed in design.md
+# (Component 1: "default e.g. 8–64 MiB") — a proposed range, not an established fact.
+[read_window.allowed]
+max_bytes = { min = 8388608, max = 67108864 }   #  8 MiB .. 64 MiB
+min_bytes = { min = 512,     max = 16777216 }   # 512 B  .. 16 MiB (never above max_bytes)
