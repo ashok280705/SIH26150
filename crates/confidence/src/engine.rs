@@ -139,7 +139,7 @@ impl ConfidenceEngine {
             (Classification::CompatibleCandidate, AttributionStatus::CompatibleCandidate, expl, vs)
         };
 
-        Ok(ClassifiedDetectionResult {
+        let top_result = ClassifiedDetectionResult {
             detector_output: top_output.clone(),
             raw_score: top.raw_score,
             confidence: top.confidence,
@@ -153,7 +153,81 @@ impl ConfidenceEngine {
             explanation,
             config_version: config.config_version.clone(),
             config_hash: config.config_hash.clone(),
-        })
+        };
+
+        Ok(top_result)
+    }
+
+    /// Evaluates and returns classified results for all candidate OEM detectors, sorted by confidence descending.
+    pub fn classify_all(
+        outputs: &[DetectorOutput],
+        registry: &ProfileRegistry,
+        config: &ConfidenceConfig,
+    ) -> Result<Vec<ClassifiedDetectionResult>, ForensicError> {
+        if outputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let primary_result = Self::classify(outputs, registry, config)?;
+
+        // Compute individual scores for all candidates
+        let mut results = vec![primary_result.clone()];
+
+        for out in outputs {
+            if out.oem_key == primary_result.top_candidate {
+                continue; // Already included as primary
+            }
+
+            let profile = registry.find_applicable(&out.oem_key, None, None, None);
+            let max_possible_score = profile
+                .map(|p| p.confidence_weights.max_possible_score)
+                .unwrap_or(1.0)
+                .max(0.01);
+
+            let mut raw_score = 0.0;
+            let mut total_quality = 0.0;
+            let mut quality_count = 0;
+
+            for item in &out.evidence {
+                let v_factor = config.validation_factor(item.evidence_status);
+                let q_factor = config.quality_factor(item.rule_match_status);
+                raw_score += item.score_contribution * v_factor * q_factor;
+                total_quality += q_factor;
+                quality_count += 1;
+            }
+
+            let confidence = (raw_score / max_possible_score).clamp(0.0, 1.0);
+            let average_quality = if quality_count > 0 { total_quality / quality_count as f64 } else { 0.0 };
+
+            let val_state = ValidationState::new(
+                forensic_core::ValidationStateKind::Unknown,
+                if out.evidence.is_empty() { "No matching signatures found" } else { "Candidate score evaluated" },
+                "detection_classification",
+                &out.oem_key,
+            ).unwrap();
+
+            results.push(ClassifiedDetectionResult {
+                detector_output: out.clone(),
+                raw_score,
+                confidence,
+                top_candidate: out.oem_key.clone(),
+                second_candidate: None,
+                margin: 0.0,
+                evidence_quality: average_quality,
+                classification: if out.evidence.is_empty() { Classification::Unknown } else { Classification::Insufficient },
+                attribution_status: AttributionStatus::Unknown,
+                validation_state: val_state,
+                explanation: if out.evidence.is_empty() {
+                    format!("No matching structural signatures detected for '{}'", out.oem_key)
+                } else {
+                    format!("Candidate evaluated with confidence {:.2}%", confidence * 100.0)
+                },
+                config_version: config.config_version.clone(),
+                config_hash: config.config_hash.clone(),
+            });
+        }
+
+        Ok(results)
     }
 }
 

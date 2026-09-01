@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS acquisitions (
     tool_version VARCHAR(100),
     map_reference VARCHAR(1024),
     map_hash BYTEA,
-    bad_sector_ranges JSONB NOT NULL DEFAULT '[]'::jsonb,
-    unresolved_ranges JSONB NOT NULL DEFAULT '[]'::jsonb,
+    bad_sector_ranges JSONB NOT NULL DEFAULT '[]',
+    unresolved_ranges JSONB NOT NULL DEFAULT '[]',
     verification_state VARCHAR(50) NOT NULL,
     verification_reason TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS validation_states (
     reason TEXT NOT NULL, -- NOT NULL constraint enforced: reason is mandatory (Req 22.2)
     operation VARCHAR(255) NOT NULL,
     subject VARCHAR(1024) NOT NULL,
-    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS capability_stages (
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS capability_stages (
     parsing VARCHAR(50) NOT NULL DEFAULT 'not_implemented',
     reconstruction VARCHAR(50) NOT NULL DEFAULT 'not_implemented',
     validation VARCHAR(50) NOT NULL DEFAULT 'not_implemented',
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS hashes (
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS provenance (
     parser_version VARCHAR(100),
     recovery_level VARCHAR(50),
     output_hash BYTEA NOT NULL,
-    transformation_history JSONB NOT NULL DEFAULT '[]'::jsonb,
+    transformation_history JSONB NOT NULL DEFAULT '[]',
     validation_state_id UUID REFERENCES validation_states(id),
     created_at TIMESTAMPTZ NOT NULL
 );

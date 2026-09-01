@@ -125,29 +125,20 @@ export interface ClassifiedDetectionResult {
   validation: ValidationState;
 }
 
-export type PartitionType = 'Unknown' | 'OEM_Data' | 'OEM_Index' | 'FAT' | 'NTFS' | 'Linux_EXT' | 'Swap' | 'Empty';
-
-export interface PartitionGeometry {
-  id: string;
+export interface PartitionCandidate {
+  index: number;
+  partition_type: string;
   start_sector: number;
-  length_sectors: number;
-  partition_type: PartitionType;
-  fs_signature?: string;
-}
-
-export interface CandidateRegion {
-  geometry: PartitionGeometry;
-  oem_key: string;
-  confidence_score: number;
-  provenance_evidence: EvidenceItem[];
+  sector_count: number;
+  sector_size: number;
+  region: { offset: number; length: number };
 }
 
 export interface StorageTopology {
-  geometry_type: 'MBR' | 'GPT' | 'RAW' | 'UNKNOWN';
-  total_sectors?: number;
-  partitions: PartitionGeometry[];
-  unpartitioned_ranges: { start: number; length: number }[];
-  candidate_regions: CandidateRegion[];
+  topology_type: string;
+  sector_size: number;
+  partitions: PartitionCandidate[];
+  unpartitioned_regions: { offset: number; length: number }[];
 }
 
 export interface ParserRun {

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS recovery_runs (
     cancelled BOOLEAN NOT NULL DEFAULT FALSE,
     validation_state JSONB NOT NULL,
     reason TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_recovery_runs_evidence ON recovery_runs(evidence_id);
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS recovery_candidates (
     sha256 TEXT,
     hypothesis_metadata JSONB,
     provenance_id UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_recovery_candidates_run ON recovery_candidates(recovery_run_id);

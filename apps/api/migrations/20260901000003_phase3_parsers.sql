@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS parser_runs (
     profile_hash TEXT NOT NULL,
     operation_name TEXT NOT NULL,
     validation_state JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_parser_runs_evidence ON parser_runs(evidence_id);
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS recordings (
     exported_video_path TEXT,
     sha256 TEXT,
     
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_recordings_evidence ON recordings(evidence_id);
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     
     description TEXT NOT NULL,
     
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_timeline_events_evidence ON timeline_events(evidence_id);

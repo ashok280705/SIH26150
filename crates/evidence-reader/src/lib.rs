@@ -27,6 +27,7 @@ pub mod source_safety;
 pub mod progress;
 pub mod scanner;
 pub mod mmap;
+pub mod bounded;
 
 pub use reader::{EvidenceReader, SourceKind};
 pub use config::ReaderConfig;
@@ -35,3 +36,4 @@ pub use source_safety::{SafetyDecision, SourceSafetyReport, inspect_source};
 pub use progress::{CancellationToken, ProgressCallback, ProgressInfo};
 pub use scanner::{RegionScanner, ScanOptions, ScanReport, TerminationReason};
 pub use mmap::ReadOnlyMmap;
+pub use bounded::BoundedReader;

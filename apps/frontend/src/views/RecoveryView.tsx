@@ -1,4 +1,5 @@
 import React from 'react';
+import { Video } from 'lucide-react';
 import { Evidence, RecoveryCandidateUI, RecoveryRunUI } from '../types';
 
 interface RecoveryViewProps {
@@ -11,8 +12,15 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({ evidence, onNavigate
     return (
       <div className="view-container">
         <div className="view-header">
-          <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
-          <p className="view-subtitle">Select an evidence target to execute recovery and reconstruction.</p>
+          <div>
+            <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
+            <p className="view-subtitle">Select an evidence target to execute recovery and reconstruction.</p>
+          </div>
+        </div>
+        <div className="empty-state">
+          <Video size={32} />
+          <h3>No Evidence Selected</h3>
+          <p>Select a DVR/NVR evidence item from the active case to begin analysis.</p>
         </div>
       </div>
     );
@@ -118,6 +126,33 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({ evidence, onNavigate
     },
   ];
 
+  const getValidationBadge = (state: string) => {
+    switch (state) {
+      case 'PASS': return 'badge badge-pass';
+      case 'REVIEW': return 'badge badge-review';
+      case 'FAIL': return 'badge badge-fail';
+      default: return 'badge badge-unknown';
+    }
+  };
+
+  const getDataStateBadge = (state: string) => {
+    switch (state) {
+      case 'Active': return 'badge badge-pass';
+      case 'Deleted': return 'badge badge-fail';
+      case 'Orphaned': return 'badge badge-review';
+      default: return 'badge badge-unknown'; // For Corrupted, Overwritten etc.
+    }
+  };
+
+  const getRecoveryStatusBadge = (status: string) => {
+    switch (status) {
+      case 'Recoverable': return 'badge badge-pass';
+      case 'PartiallyRecoverable': return 'badge badge-review';
+      case 'Unrecoverable': return 'badge badge-fail';
+      default: return 'badge badge-unknown';
+    }
+  };
+
   return (
     <div className="view-container">
       <div className="view-header">
@@ -128,132 +163,128 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({ evidence, onNavigate
       </div>
 
       {/* Metrics & Bounds Banner */}
-      <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-        <div className="metric-card" style={{ padding: '16px', backgroundColor: '#1e1e1e', borderRadius: '8px', border: '1px solid #333' }}>
-          <div className="metric-label" style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>Recovery Run Extent</div>
-          <div className="metric-value" style={{ fontSize: '18px', fontWeight: 'bold' }}>
+      <div className="grid-4 mb-4">
+        <div className="stat-card">
+          <div className="stat-label">Recovery Run Extent</div>
+          <div className="stat-value">
             {(mockRun.searched_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB / {(mockRun.total_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB
           </div>
-          <div className="metric-subtext" style={{ fontSize: '12px', color: '#ff9800' }}>
-            {mockRun.truncated ? '⚠️ Bounded (Truncated)' : 'Exhaustive Scan'}
+          <div className="stat-sub mt-4">
+            {mockRun.truncated ? (
+              <span className="badge badge-review">⚠️ Bounded (Truncated)</span>
+            ) : (
+              <span className="badge badge-pass">Exhaustive Scan</span>
+            )}
           </div>
         </div>
 
-        <div className="metric-card" style={{ padding: '16px', backgroundColor: '#1e1e1e', borderRadius: '8px', border: '1px solid #333' }}>
-          <div className="metric-label" style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>Recovery Validation State</div>
-          <div className="metric-value" style={{ fontSize: '18px', fontWeight: 'bold', color: mockRun.validation_state.state === 'REVIEW' ? '#ff9800' : '#4caf50' }}>
-            {mockRun.validation_state.state}
+        <div className="stat-card">
+          <div className="stat-label">Recovery Validation State</div>
+          <div className="mt-4">
+             <span className={getValidationBadge(mockRun.validation_state.state)}>
+                {mockRun.validation_state.state}
+             </span>
           </div>
-          <div className="metric-subtext" style={{ fontSize: '11px', color: '#aaa', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div className="stat-sub mt-4" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {mockRun.validation_state.reason}
           </div>
         </div>
 
-        <div className="metric-card" style={{ padding: '16px', backgroundColor: '#1e1e1e', borderRadius: '8px', border: '1px solid #333' }}>
-          <div className="metric-label" style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>Candidates Accepted / Total</div>
-          <div className="metric-value" style={{ fontSize: '24px', fontWeight: 'bold', color: '#4caf50' }}>
+        <div className="stat-card">
+          <div className="stat-label">Candidates Accepted / Total</div>
+          <div className="stat-value" style={{ color: 'var(--success)' }}>
             {mockRun.accepted} / {mockRun.candidate_count}
           </div>
-          <div className="metric-subtext" style={{ fontSize: '12px', color: '#aaa' }}>{mockRun.rejected} rejected by media QC</div>
+          <div className="stat-sub">{mockRun.rejected} rejected by media QC</div>
         </div>
 
-        <div className="metric-card" style={{ padding: '16px', backgroundColor: '#1e1e1e', borderRadius: '8px', border: '1px solid #333' }}>
-          <div className="metric-label" style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>Artifact Classification</div>
-          <div className="metric-value" style={{ fontSize: '16px', fontWeight: 'bold' }}>Native + Derived</div>
-          <div className="metric-subtext" style={{ fontSize: '12px', color: '#2196f3' }}>Strict Lineage Separation (Req 5.9)</div>
+        <div className="stat-card">
+          <div className="stat-label">Artifact Classification</div>
+          <div className="stat-value" style={{ fontSize: '18px' }}>Native + Derived</div>
+          <div className="stat-sub" style={{ color: 'var(--accent)' }}>Strict Lineage Separation (Req 5.9)</div>
         </div>
       </div>
 
       {/* Main Table */}
-      <div className="data-panel" style={{ backgroundColor: '#1e1e1e', borderRadius: '8px', border: '1px solid #333', overflow: 'hidden' }}>
-        <div className="panel-header" style={{ padding: '16px', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0, fontSize: '16px' }}>Reconstructed Recording Candidates</h3>
+      <div className="panel" style={{ padding: '0', overflow: 'hidden' }}>
+        <div className="panel-header" style={{ margin: 0, padding: '16px' }}>
+          <h3 style={{ margin: 0, fontSize: '14px' }}>Reconstructed Recording Candidates</h3>
         </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#252525', textAlign: 'left' }}>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Candidate / Channel</th>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Timestamp & Duration</th>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>DataState (Physical)</th>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>RecoveryStatus</th>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Level</th>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Artifacts</th>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Validation</th>
-              <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mockCandidates.map(cand => (
-              <tr key={cand.id} style={{ borderBottom: '1px solid #333' }}>
-                <td style={{ padding: '12px 16px' }}>
-                  <div style={{ fontWeight: 'bold' }}>{cand.id}</div>
-                  <div style={{ color: '#888' }}>CH {cand.channel} | {cand.codec}</div>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <div>{cand.time_native}</div>
-                  <div style={{ color: '#888', fontSize: '11px' }}>{cand.duration_sec > 0 ? `${Math.floor(cand.duration_sec / 60)} min` : 'N/A'}</div>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <span style={{
-                    padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold',
-                    backgroundColor: cand.data_state === 'Active' ? '#2e7d3233' : cand.data_state === 'Deleted' ? '#c6282833' : cand.data_state === 'Orphaned' ? '#ef6c0033' : '#6a1b9a33',
-                    color: cand.data_state === 'Active' ? '#81c784' : cand.data_state === 'Deleted' ? '#e57373' : cand.data_state === 'Orphaned' ? '#ffb74d' : '#ba68c8',
-                  }}>
-                    {cand.data_state}
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <span style={{
-                    padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold',
-                    backgroundColor: cand.recovery_status === 'Recoverable' ? '#1b5e2033' : cand.recovery_status === 'PartiallyRecoverable' ? '#e6510033' : '#b71c1c33',
-                    color: cand.recovery_status === 'Recoverable' ? '#a5d6a7' : cand.recovery_status === 'PartiallyRecoverable' ? '#ffcc80' : '#ef9a9a',
-                  }}>
-                    {cand.recovery_status}
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#333', color: '#eee' }}>
-                    {cand.recovery_level}
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
-                    {cand.has_native_artifact && (
-                      <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '2px', backgroundColor: '#0d47a1', color: '#90caf9' }}>
-                        [Native]
-                      </span>
-                    )}
-                    {cand.has_derived_artifact && (
-                      <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '2px', backgroundColor: '#4a148c', color: '#ce93d8' }}>
-                        [Derived Remux]
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <span style={{
-                    padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold',
-                    backgroundColor: cand.validation.state === 'PASS' ? '#4caf5033' : cand.validation.state === 'REVIEW' ? '#ff980033' : '#f4433633',
-                    color: cand.validation.state === 'PASS' ? '#81c784' : cand.validation.state === 'REVIEW' ? '#ffb74d' : '#e57373',
-                  }}>
-                    {cand.validation.state}
-                  </span>
-                  <div style={{ fontSize: '11px', color: '#777', marginTop: '2px', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {cand.validation.reason}
-                  </div>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <button
-                    onClick={() => onNavigateToHex(cand.source_offset)}
-                    style={{ background: '#2196f3', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
-                  >
-                    View Hex (0x{cand.source_offset.toString(16)})
-                  </button>
-                </td>
+        <div className="table-container" style={{ border: 'none', borderTop: '1px solid var(--border)', borderRadius: '0' }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Candidate / Channel</th>
+                <th>Timestamp & Duration</th>
+                <th>DataState (Physical)</th>
+                <th>RecoveryStatus</th>
+                <th>Level</th>
+                <th>Artifacts</th>
+                <th>Validation</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {mockCandidates.map(cand => (
+                <tr key={cand.id}>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{cand.id}</div>
+                    <div className="text-muted" style={{ fontSize: '11px' }}>CH {cand.channel} | {cand.codec}</div>
+                  </td>
+                  <td>
+                    <div>{cand.time_native}</div>
+                    <div className="text-muted" style={{ fontSize: '11px' }}>{cand.duration_sec > 0 ? `${Math.floor(cand.duration_sec / 60)} min` : 'N/A'}</div>
+                  </td>
+                  <td>
+                    <span className={getDataStateBadge(cand.data_state)}>
+                      {cand.data_state}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={getRecoveryStatusBadge(cand.recovery_status)}>
+                      {cand.recovery_status}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="badge badge-info">
+                      {cand.recovery_level}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
+                      {cand.has_native_artifact && (
+                        <span className="badge badge-info" style={{ fontSize: '9px', padding: '1px 4px' }}>
+                          [Native]
+                        </span>
+                      )}
+                      {cand.has_derived_artifact && (
+                        <span className="badge badge-unknown" style={{ fontSize: '9px', padding: '1px 4px' }}>
+                          [Derived Remux]
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <span className={getValidationBadge(cand.validation.state)}>
+                      {cand.validation.state}
+                    </span>
+                    <div className="text-muted" style={{ fontSize: '11px', marginTop: '4px', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {cand.validation.reason}
+                    </div>
+                  </td>
+                  <td>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => onNavigateToHex(cand.source_offset)}
+                    >
+                      Hex (<span className="mono">0x{cand.source_offset.toString(16).toUpperCase()}</span>)
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

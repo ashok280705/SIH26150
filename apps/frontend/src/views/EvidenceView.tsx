@@ -1,18 +1,21 @@
-import React, { useState } from 'react';
-import { HardDriveDownload, AlertCircle, CheckCircle2, FileWarning } from 'lucide-react';
-import { registerEvidence } from '../services/api';
+import React, { useState, useEffect } from 'react';
+import { HardDriveDownload, AlertCircle, CheckCircle2, FileWarning, List } from 'lucide-react';
+import { registerEvidence, listCaseEvidence } from '../services/api';
 import { Case, Evidence, Acquisition } from '../types';
 
 interface EvidenceViewProps {
   activeCase: Case | null;
   onEvidenceRegistered: (data: { evidence: Evidence; acquisition?: Acquisition; ingest_hash: string }) => void;
+  onEvidenceSelected: (evidence: Evidence) => void;
+  activeEvidence: Evidence | null;
 }
 
-export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEvidenceRegistered }) => {
+export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEvidence, onEvidenceRegistered, onEvidenceSelected }) => {
   const [sourceDevice, setSourceDevice] = useState('');
-  const [capacity, setCapacity] = useState<number>(1073741824); // 1 GB default
+  const [capacityValue, setCapacityValue] = useState<string>('1');
+  const [capacityUnit, setCapacityUnit] = useState<'B' | 'MB' | 'GB' | 'TB'>('GB');
   const [imageFormat, setImageFormat] = useState('raw');
-  const [examiner] = useState(activeCase?.examiner || 'Examiner');
+  const [examiner, setExaminer] = useState('');
   const [acquisitionTool, setAcquisitionTool] = useState('dd');
 
   const [acquisitionToolVer, setAcquisitionToolVer] = useState('8.32');
@@ -23,6 +26,27 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEviden
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const [evidenceList, setEvidenceList] = useState<Evidence[]>([]);
+
+  useEffect(() => {
+    if (activeCase) {
+      setExaminer(activeCase.examiner);
+      fetchEvidence();
+    } else {
+      setEvidenceList([]);
+    }
+  }, [activeCase]);
+
+  const fetchEvidence = async () => {
+    if (!activeCase) return;
+    try {
+      const data = await listCaseEvidence(activeCase.id);
+      setEvidenceList(data);
+    } catch (err) {
+      console.error('Failed to load case evidence:', err);
+    }
+  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,11 +59,19 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEviden
     setSuccess(null);
     setLoading(true);
 
+    const multipliers: Record<string, number> = {
+      B: 1,
+      MB: 1024 * 1024,
+      GB: 1024 * 1024 * 1024,
+      TB: 1024 * 1024 * 1024 * 1024,
+    };
+    const computedBytes = Math.floor((parseFloat(capacityValue) || 1) * (multipliers[capacityUnit] || 1));
+
     try {
       const payload = {
         source_device: sourceDevice,
         acquisition_time: new Date().toISOString(),
-        capacity: Number(capacity),
+        capacity: computedBytes,
         image_format: imageFormat,
         responsible_examiner: examiner || activeCase.examiner,
         acquisition_tool: acquisitionTool || null,
@@ -52,14 +84,37 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEviden
       };
 
       const result = await registerEvidence(activeCase.id, payload);
+      setEvidenceList(prev => [...prev, result.evidence]);
       onEvidenceRegistered(result);
       setSuccess(`Evidence '${result.evidence.source_device}' registered successfully.`);
+      
+      // Reset form
+      setSourceDevice('');
+      setPath('');
     } catch (err: any) {
       setError(err.message || 'Failed to register evidence');
     } finally {
       setLoading(false);
     }
   };
+
+  if (!activeCase) {
+    return (
+      <div className="view-container">
+        <div className="view-header">
+          <div>
+            <h1 className="view-title">Evidence Ingest & Registration</h1>
+            <p className="view-subtitle">Register raw forensic images and perform source-safety inspection</p>
+          </div>
+        </div>
+        <div className="panel" style={{ textAlign: 'center', padding: '32px' }}>
+          <FileWarning size={28} color="#d97706" style={{ margin: '0 auto 10px', display: 'block' }} />
+          <h3 style={{ marginBottom: '6px' }}>No Active Case Selected</h3>
+          <p style={{ color: 'var(--text-muted)' }}>Evidence must be registered under an existing case scope. Please create or load a case first.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="view-container">
@@ -70,13 +125,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEviden
         </div>
       </div>
 
-      {!activeCase ? (
-        <div className="panel" style={{ textAlign: 'center', padding: '32px' }}>
-          <FileWarning size={28} color="#d97706" style={{ margin: '0 auto 10px', display: 'block' }} />
-          <h3 style={{ marginBottom: '6px' }}>No Active Case Selected</h3>
-          <p style={{ color: 'var(--text-muted)' }}>Evidence must be registered under an existing case scope. Please create or load a case first.</p>
-        </div>
-      ) : (
+      <div className="grid-2">
         <div className="panel">
           <div className="panel-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -106,7 +155,7 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEviden
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="e.g. Dahua DH-XVR5108HS or Western Digital 2TB"
+                  placeholder="e.g. Western Digital 2TB WD20PURX (Evidence Tag #1042)"
                   value={sourceDevice}
                   onChange={(e) => setSourceDevice(e.target.value)}
                   required
@@ -126,14 +175,43 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEviden
               </div>
 
               <div className="form-group">
-                <label className="form-label">Capacity (Bytes)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  value={capacity}
-                  onChange={(e) => setCapacity(parseInt(e.target.value) || 0)}
-                  required
-                />
+                <label className="form-label">Storage Capacity</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.001"
+                    className="form-input"
+                    style={{ flex: 1 }}
+                    placeholder="e.g. 500 or 2"
+                    value={capacityValue}
+                    onChange={(e) => setCapacityValue(e.target.value)}
+                    required
+                  />
+                  <select
+                    className="form-select"
+                    style={{ width: '90px' }}
+                    value={capacityUnit}
+                    onChange={(e) => setCapacityUnit(e.target.value as any)}
+                  >
+                    <option value="TB">TB</option>
+                    <option value="GB">GB</option>
+                    <option value="MB">MB</option>
+                    <option value="B">Bytes</option>
+                  </select>
+                </div>
+                <div className="text-muted" style={{ fontSize: '11px', marginTop: '4px' }}>
+                  {(() => {
+                    const multipliers: Record<string, number> = {
+                      B: 1,
+                      MB: 1024 * 1024,
+                      GB: 1024 * 1024 * 1024,
+                      TB: 1024 * 1024 * 1024 * 1024,
+                    };
+                    const bytes = Math.floor((parseFloat(capacityValue) || 0) * (multipliers[capacityUnit] || 1));
+                    return `≈ ${bytes.toLocaleString()} bytes (Auto-detected from file if left blank)`;
+                  })()}
+                </div>
               </div>
 
               <div className="form-group">
@@ -195,7 +273,54 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, onEviden
             </div>
           </form>
         </div>
-      )}
+
+        <div className="panel">
+          <div className="panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <List size={15} color="var(--text-secondary)" />
+              <span>Evidence Items for Case: <strong>{activeCase.name}</strong></span>
+            </div>
+          </div>
+          
+          {evidenceList.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', padding: '16px', textAlign: 'center' }}>
+              No evidence registered for this case.
+            </p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Device</th>
+                  <th>Format</th>
+                  <th>Path</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {evidenceList.map((e) => (
+                  <tr key={e.id}>
+                    <td><strong>{e.source_device}</strong></td>
+                    <td><span className="badge badge-info">{e.image_format}</span></td>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      {e.path}
+                    </td>
+                    <td>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                        onClick={() => onEvidenceSelected(e)}
+                        disabled={activeEvidence?.id === e.id}
+                      >
+                        {activeEvidence?.id === e.id ? 'Active' : 'Load'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

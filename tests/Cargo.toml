@@ -32,6 +32,10 @@ parser-honeywell = { path = "../crates/parsers/honeywell" }
 parser-cpplus-ubs = { path = "../crates/parsers/cpplus-ubs" }
 parser-uniview = { path = "../crates/parsers/uniview" }
 parsers-core = { path = "../crates/parsers-core" }
+recovery = { path = "../crates/recovery" }
+timeline = { path = "../crates/timeline" }
+reporting = { path = "../crates/reporting" }
+chrono = { workspace = true }
 tempfile = "3"
 
 [[bin]]

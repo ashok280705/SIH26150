@@ -54,11 +54,27 @@ impl TimelineEngine {
             }
         }
 
-        // Deterministic sorting based on selected ordering mode
+        // Canonical deterministic sorting based on selected ordering mode (Req 20.1)
         match ordering {
             TimelineOrdering::Physical => {
-                events.sort_by_key(|e| {
-                    e.source_offsets.iter().map(|r| r.offset).min().unwrap_or(u64::MAX)
+                events.sort_by(|a, b| {
+                    let a_off = a.source_offsets.iter().map(|r| r.offset).min().unwrap_or(u64::MAX);
+                    let b_off = b.source_offsets.iter().map(|r| r.offset).min().unwrap_or(u64::MAX);
+                    a_off.cmp(&b_off)
+                        .then_with(|| a.channel.cmp(&b.channel))
+                        .then_with(|| {
+                            let an = a.time.recorder_native.as_ref().map(|t| &t.iso_8601);
+                            let bn = b.time.recorder_native.as_ref().map(|t| &t.iso_8601);
+                            an.cmp(&bn)
+                        })
+                        .then_with(|| {
+                            let an = a.time.normalized.as_ref().map(|t| &t.iso_8601);
+                            let bn = b.time.normalized.as_ref().map(|t| &t.iso_8601);
+                            an.cmp(&bn)
+                        })
+                        .then_with(|| a.description.cmp(&b.description))
+                        .then_with(|| a.parser_id.cmp(&b.parser_id))
+                        .then_with(|| a.profile_id.0.cmp(&b.profile_id.0))
                 });
             }
             TimelineOrdering::RecorderNative => {
@@ -66,6 +82,16 @@ impl TimelineEngine {
                     let a_native = a.time.recorder_native.as_ref().map(|t| &t.iso_8601);
                     let b_native = b.time.recorder_native.as_ref().map(|t| &t.iso_8601);
                     a_native.cmp(&b_native)
+                        .then_with(|| a.channel.cmp(&b.channel))
+                        .then_with(|| {
+                            let a_off = a.source_offsets.iter().map(|r| r.offset).min().unwrap_or(u64::MAX);
+                            let b_off = b.source_offsets.iter().map(|r| r.offset).min().unwrap_or(u64::MAX);
+                            a_off.cmp(&b_off)
+                        })
+                        .then_with(|| a.description.cmp(&b.description))
+                        .then_with(|| a.time.raw.value.cmp(&b.time.raw.value))
+                        .then_with(|| a.parser_id.cmp(&b.parser_id))
+                        .then_with(|| a.profile_id.0.cmp(&b.profile_id.0))
                 });
             }
             TimelineOrdering::Normalized => {
@@ -73,6 +99,21 @@ impl TimelineEngine {
                     let a_norm = a.time.normalized.as_ref().map(|t| &t.iso_8601);
                     let b_norm = b.time.normalized.as_ref().map(|t| &t.iso_8601);
                     a_norm.cmp(&b_norm)
+                        .then_with(|| a.channel.cmp(&b.channel))
+                        .then_with(|| {
+                            let an = a.time.recorder_native.as_ref().map(|t| &t.iso_8601);
+                            let bn = b.time.recorder_native.as_ref().map(|t| &t.iso_8601);
+                            an.cmp(&bn)
+                        })
+                        .then_with(|| {
+                            let a_off = a.source_offsets.iter().map(|r| r.offset).min().unwrap_or(u64::MAX);
+                            let b_off = b.source_offsets.iter().map(|r| r.offset).min().unwrap_or(u64::MAX);
+                            a_off.cmp(&b_off)
+                        })
+                        .then_with(|| a.description.cmp(&b.description))
+                        .then_with(|| a.time.raw.value.cmp(&b.time.raw.value))
+                        .then_with(|| a.parser_id.cmp(&b.parser_id))
+                        .then_with(|| a.profile_id.0.cmp(&b.profile_id.0))
                 });
             }
         }
@@ -80,22 +121,22 @@ impl TimelineEngine {
         let validation = if events.is_empty() {
             ValidationState::new(
                 ValidationStateKind::Unknown,
-                "build_timeline",
                 "No candidate timeline events provided",
+                "build_timeline",
                 "Timeline",
             ).unwrap()
         } else if has_unknown_timezones && ordering == TimelineOrdering::Normalized {
             ValidationState::new(
                 ValidationStateKind::Review,
-                "build_timeline",
                 "Timeline contains events with Unknown timezone; review required",
+                "build_timeline",
                 "Timeline",
             ).unwrap()
         } else {
             ValidationState::new(
                 ValidationStateKind::Pass,
+                "Unified timeline successfully constructed and deterministically ordered",
                 "build_timeline",
-                "Unified timeline constructed deterministically",
                 "Timeline",
             ).unwrap()
         };

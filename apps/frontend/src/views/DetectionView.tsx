@@ -141,39 +141,30 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
               <HardDrive size={16} color="var(--accent-primary)" />
               <span>Storage Topology Profiler</span>
             </div>
-            <span className="status-badge success">{topology.geometry_type}</span>
+            <span className="status-badge success">{String(topology.topology_type || 'RAW').toUpperCase()}</span>
           </div>
           <div className="panel-content">
             <h4 style={{ marginBottom: '8px', color: 'var(--text-muted)' }}>Partitions & Regions</h4>
-            {topology.partitions.length === 0 && topology.candidate_regions.length === 0 ? (
+            {(!topology.partitions || topology.partitions.length === 0) ? (
               <div style={{ padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px' }}>
-                Raw disk geometry / Unpartitioned space only.
+                Raw disk geometry / Unpartitioned space only (Sector size: {topology.sector_size || 512} bytes).
+                {topology.unpartitioned_regions && topology.unpartitioned_regions.length > 0 && (
+                  <div style={{ marginTop: '6px', color: 'var(--text-muted)' }}>
+                    Total unpartitioned capacity: {((topology.unpartitioned_regions[0]?.length || 0) / (1024 * 1024)).toFixed(2)} MB
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {topology.candidate_regions.map((region, idx) => (
-                  <div key={`region-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', borderLeft: '3px solid var(--accent-primary)' }}>
-                    <div>
-                      <div style={{ fontWeight: '500', marginBottom: '4px' }}>Candidate {region.geometry.partition_type} Region</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Sector {region.geometry.start_sector} ({region.geometry.length_sectors} sectors)</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="status-badge" style={{ marginBottom: '4px' }}>{region.oem_key.toUpperCase()}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Confidence: {(region.confidence_score * 100).toFixed(1)}%</div>
-                    </div>
-                  </div>
-                ))}
                 {topology.partitions.map((part, idx) => (
-                  <div key={`part-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', borderLeft: '3px solid #6b7280' }}>
+                  <div key={`part-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', borderLeft: '3px solid var(--accent-primary)' }}>
                     <div>
-                      <div style={{ fontWeight: '500', marginBottom: '4px' }}>Standard Partition: {part.partition_type}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Sector {part.start_sector} ({part.length_sectors} sectors)</div>
+                      <div style={{ fontWeight: '500', marginBottom: '4px' }}>Partition #{part.index}: {part.partition_type}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Sector {part.start_sector} ({part.sector_count} sectors, {part.sector_size} B/sector)</div>
                     </div>
-                    {part.fs_signature && (
-                      <div style={{ textAlign: 'right', fontSize: '12px', color: 'var(--text-muted)' }}>
-                        FS: {part.fs_signature}
-                      </div>
-                    )}
+                    <div style={{ textAlign: 'right', fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Offset: 0x{part.region?.offset?.toString(16).toUpperCase() || '0'}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -185,14 +176,79 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
       {/* Detection Results */}
       {results.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ margin: '16px 0 8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>Engine Classification Results</h3>
-          
-          {results.map((res, idx) => (
+          <h3 style={{ margin: '16px 0 8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+            Multi-Vendor Candidate Attribution Leaderboard
+          </h3>
+
+          {/* Multi-Vendor Comparison Matrix */}
+          <div className="panel mb-3">
+            <div className="panel-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Activity size={16} color="var(--accent-primary)" />
+                <span>Candidate Confidence Scores & Evaluated Margins</span>
+              </div>
+            </div>
+            <div className="panel-content" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '8px' }}>Rank</th>
+                    <th style={{ padding: '8px' }}>OEM Candidate</th>
+                    <th style={{ padding: '8px' }}>Confidence Score</th>
+                    <th style={{ padding: '8px' }}>Attribution Status</th>
+                    <th style={{ padding: '8px' }}>Quality</th>
+                    <th style={{ padding: '8px' }}>Matched Signatures</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((cand, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', background: idx === 0 ? 'rgba(59, 130, 246, 0.05)' : 'transparent' }}>
+                      <td style={{ padding: '10px 8px', fontWeight: idx === 0 ? 'bold' : 'normal' }}>#{idx + 1}</td>
+                      <td style={{ padding: '10px 8px', fontWeight: '600', textTransform: 'capitalize' }}>
+                        {cand.oem_key.replace('_', ' ')}
+                        {idx === 0 && <span style={{ marginLeft: '6px', fontSize: '11px', color: 'var(--accent-primary)', fontWeight: 'bold' }}>(Top Candidate)</span>}
+                      </td>
+                      <td style={{ padding: '10px 8px', minWidth: '160px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ flex: 1, height: '8px', background: 'var(--bg-secondary)', borderRadius: '4px', overflow: 'hidden' }}>
+                            <div style={{ width: `${(cand.confidence_score * 100).toFixed(0)}%`, height: '100%', background: cand.confidence_score > 0 ? getAttributionColor(cand.attribution_status) : '#9ca3af' }} />
+                          </div>
+                          <span style={{ fontWeight: 'bold', minWidth: '45px' }}>{(cand.confidence_score * 100).toFixed(1)}%</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px' }}>
+                        <span className="status-badge" style={{ backgroundColor: getAttributionColor(cand.attribution_status), color: 'white', fontSize: '11px' }}>
+                          {cand.attribution_status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 8px' }}>{(cand.quality_score * 100).toFixed(0)}%</td>
+                      <td style={{ padding: '10px 8px' }}>
+                        {(() => {
+                          const matchedCount = cand.evidence_items.filter(item => item.rule_match_status === 'MATCH').length;
+                          return matchedCount > 0 ? (
+                            <span style={{ color: '#10b981', fontWeight: 'bold' }}>{matchedCount} signature(s) matched</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>0 matches</span>
+                          );
+                        })()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <h3 style={{ margin: '16px 0 8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+            Detailed Evidence & Engine Classifications
+          </h3>
+
+          {results.filter(r => r.confidence_score > 0 || r.evidence_items.length > 0).map((res, idx) => (
             <div key={idx} className="panel">
               <div className="panel-header" style={{ borderBottom: `2px solid ${getAttributionColor(res.attribution_status)}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Cpu size={16} />
-                  <span style={{ fontWeight: '600', fontSize: '16px', textTransform: 'capitalize' }}>{res.oem_key.replace('_', ' ')}</span>
+                  <span style={{ fontWeight: '600', fontSize: '16px', textTransform: 'capitalize' }}>{(res.oem_key || 'Unknown').replace('_', ' ')}</span>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <span className="status-badge" style={{ backgroundColor: getAttributionColor(res.attribution_status), color: 'white' }}>
@@ -208,13 +264,13 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px', paddingBottom: '16px', borderBottom: '1px dashed var(--border-color)' }}>
                   <div>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>Confidence Score</div>
-                    <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{(res.confidence_score * 100).toFixed(1)}%</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>Margin to next: {(res.margin * 100).toFixed(1)}% | Quality: {(res.quality_score * 100).toFixed(1)}%</div>
+                    <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{((res.confidence_score || 0) * 100).toFixed(1)}%</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>Margin to next: {((res.margin || 0) * 100).toFixed(1)}% | Quality: {((res.quality_score || 0) * 100).toFixed(1)}%</div>
                   </div>
                   <div>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>Engine Configuration</div>
-                    <div style={{ fontSize: '13px', fontFamily: 'monospace' }}>Profile: {res.profile_version} ({res.profile_hash.substring(0, 8)})</div>
-                    <div style={{ fontSize: '13px', fontFamily: 'monospace', marginTop: '4px' }}>Config: {res.config_version} ({res.config_hash.substring(0, 8)})</div>
+                    <div style={{ fontSize: '13px', fontFamily: 'monospace' }}>Profile: {res.profile_version || '1.0.0'} ({String(res.profile_hash || '').substring(0, 8) || 'N/A'})</div>
+                    <div style={{ fontSize: '13px', fontFamily: 'monospace', marginTop: '4px' }}>Config: {res.config_version || '1.0.0'} ({String(res.config_hash || '').substring(0, 8) || 'N/A'})</div>
                   </div>
                 </div>
 
@@ -230,7 +286,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
                 <h4 style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)' }}>
                   <AlignLeft size={14} /> Corroborating Evidence Items
                 </h4>
-                {res.evidence_items.length === 0 ? (
+                {(!res.evidence_items || res.evidence_items.length === 0) ? (
                   <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No evidence matching this OEM profile found.</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -242,7 +298,7 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
                         </div>
                         <div style={{ display: 'flex', gap: '8px', fontSize: '11px' }}>
                           <span className={`status-badge ${item.evidence_status === 'VALIDATED' ? 'success' : 'warning'}`}>
-                            {item.evidence_status.replace('_', ' ')}
+                            {(item.evidence_status || '').replace('_', ' ')}
                           </span>
                           <span className="status-badge">
                             {item.rule_match_status}

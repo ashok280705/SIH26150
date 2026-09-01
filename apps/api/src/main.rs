@@ -8,7 +8,8 @@ use forensic_api::{app_router, AppState};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let state = AppState::new();
+    let db_pool = forensic_api::db::connection::init_pool("sqlite:forensic_metadata.db").await?;
+    let state = AppState::new(db_pool);
     let app = app_router(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;

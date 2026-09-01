@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, ShieldAlert, CheckCircle2, Database, HardDrive } from 'lucide-react';
+import { Shield, ShieldAlert, CheckCircle2, Database, HardDrive, ShieldCheck } from 'lucide-react';
 
 import { Case, Evidence, Acquisition, SourceSafetyReport } from '../types';
 
@@ -48,10 +48,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       </div>
 
       {/* Top Metrics Row */}
-      <div className="grid-4" style={{ marginBottom: '20px' }}>
+      <div className="grid-4 mb-4">
         <div className="stat-card">
           <div className="stat-label">Active Case</div>
-          <div className="stat-value" style={{ fontSize: '15px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+          <div className="stat-value" style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
             {activeCase ? activeCase.name : 'No Case Loaded'}
           </div>
           <div className="stat-sub">Examiner: {activeCase ? activeCase.examiner : '—'}</div>
@@ -59,7 +59,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
         <div className="stat-card">
           <div className="stat-label">Source Safety State</div>
-          <div style={{ marginTop: '6px' }}>
+          <div className="mt-4">
             <span className={getBadgeClass(safetyReport?.decision)}>
               {safetyReport?.decision === 'accepted' ? <CheckCircle2 size={12} /> : <ShieldAlert size={12} />}
               {safetyReport ? `${safetyReport.source_state} (${safetyReport.decision})` : 'Uninspected'}
@@ -70,7 +70,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
         <div className="stat-card">
           <div className="stat-label">Acquisition Status</div>
-          <div style={{ marginTop: '6px' }}>
+          <div className="mt-4">
             <span className={getBadgeClass(acquisition?.status)}>
               {acquisition ? acquisition.status : 'Unknown'}
             </span>
@@ -82,7 +82,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
         <div className="stat-card">
           <div className="stat-label">Evidence Capacity</div>
-          <div className="stat-value" style={{ fontSize: '17px' }}>
+          <div className="stat-value">
             {activeEvidence ? `${(activeEvidence.capacity / (1024 * 1024 * 1024)).toFixed(2)} GB` : '—'}
           </div>
           <div className="stat-sub">Format: {activeEvidence ? activeEvidence.image_format : '—'}</div>
@@ -94,88 +94,105 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         {/* Evidence Ingest & Hash Details */}
         <div className="panel">
           <div className="panel-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <HardDrive size={15} color="var(--accent-primary)" />
+            <div className="flex items-center gap-2">
+              <HardDrive size={15} style={{ color: 'var(--accent)' }} />
               <span>Evidence Ingest & Provenance</span>
             </div>
             {activeEvidence && <span className="badge badge-pass">Registered</span>}
           </div>
 
           {activeEvidence ? (
-            <table className="data-table">
-              <tbody>
-                <tr>
-                  <td style={{ width: '140px', fontWeight: 600, color: 'var(--text-secondary)' }}>Source Device</td>
-                  <td>{activeEvidence.source_device}</td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Evidence ID</td>
-                  <td style={{ fontFamily: 'var(--font-mono)' }}>{activeEvidence.id}</td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>File Path</td>
-                  <td style={{ fontFamily: 'var(--font-mono)' }}>{activeEvidence.path}</td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>SHA-256 Ingest Hash</td>
-                  <td style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all', color: 'var(--accent-primary)' }}>
-                    {ingestHash || 'Computing / Unhashed'}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Acquisition Tool</td>
-                  <td>{activeEvidence.acquisition_tool ? `${activeEvidence.acquisition_tool} (v${activeEvidence.acquisition_tool_version || '?'})` : 'Unknown'}</td>
-                </tr>
-              </tbody>
-            </table>
+            <div className="table-container">
+              <table className="data-table">
+                <tbody>
+                  <tr>
+                    <td style={{ width: '150px' }}><strong>Source Device</strong></td>
+                    <td>{activeEvidence.source_device}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Evidence ID</strong></td>
+                    <td className="mono">{activeEvidence.id}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>File Path</strong></td>
+                    <td className="mono">{activeEvidence.path}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>SHA-256 Ingest Hash</strong></td>
+                    <td className="mono" style={{ wordBreak: 'break-all', color: 'var(--accent)' }}>
+                      {ingestHash || 'Computing / Unhashed'}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><strong>Acquisition Tool</strong></td>
+                    <td>{activeEvidence.acquisition_tool ? `${activeEvidence.acquisition_tool} (v${activeEvidence.acquisition_tool_version || '?'})` : 'Unknown'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           ) : (
-            <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
-              No evidence registered yet. Go to the <strong>Evidence</strong> tab to register an image.
-            </p>
+            <div className="empty-state">
+              <HardDrive size={32} />
+              <h3>No Evidence Selected</h3>
+              <p>Go to the Evidence tab to register or select a raw evidence image.</p>
+            </div>
           )}
         </div>
 
         {/* Source Safety & Write Blocking Audit */}
         <div className="panel">
           <div className="panel-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Shield size={15} color="var(--accent-primary)" />
+            <div className="flex items-center gap-2">
+              <Shield size={15} style={{ color: 'var(--accent)' }} />
               <span>Source Safety Inspection Audit (Req 1.8–1.12)</span>
             </div>
           </div>
 
           {safetyReport ? (
             <div>
-              <div style={{ marginBottom: '12px', padding: '10px 14px', borderRadius: '4px', background: safetyReport.decision === 'accepted' ? 'var(--status-pass-bg)' : 'var(--status-fail-bg)', border: '1px solid ' + (safetyReport.decision === 'accepted' ? 'var(--status-pass-border)' : 'var(--status-fail-border)') }}>
-                <div style={{ fontWeight: 700, color: safetyReport.decision === 'accepted' ? 'var(--status-pass-text)' : 'var(--status-fail-text)', marginBottom: '4px' }}>
-                  Safety Decision: {safetyReport.decision.toUpperCase()}
+              {safetyReport.decision === 'accepted' ? (
+                <div className="alert alert-success">
+                  <ShieldCheck size={18} />
+                  <div>
+                    <strong>Safety Decision: {safetyReport.decision.toUpperCase()}</strong>
+                    <div className="text-muted" style={{ fontSize: '11px', marginTop: '2px' }}>{safetyReport.reason}</div>
+                  </div>
                 </div>
-                <div style={{ fontSize: '11.5px', color: safetyReport.decision === 'accepted' ? '#14532d' : '#7f1d1d' }}>
-                  {safetyReport.reason}
+              ) : (
+                <div className="alert alert-error">
+                  <ShieldAlert size={18} />
+                  <div>
+                    <strong>Safety Decision: {safetyReport.decision.toUpperCase()}</strong>
+                    <div className="text-muted" style={{ fontSize: '11px', marginTop: '2px' }}>{safetyReport.reason}</div>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <table className="data-table">
-                <tbody>
-                  <tr>
-                    <td style={{ width: '140px', fontWeight: 600, color: 'var(--text-secondary)' }}>Inspected Source State</td>
-                    <td><span className={getBadgeClass(safetyReport.source_state)}>{safetyReport.source_state}</span></td>
-                  </tr>
-                  <tr>
-                    <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Inspection Timestamp</td>
-                    <td>{new Date(safetyReport.inspected_at).toLocaleString()}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Application WriteGuard</td>
-                    <td><span className="badge badge-pass">Enabled (Read-Only Secondary Barrier)</span></td>
-                  </tr>
-                </tbody>
-              </table>
+              <div className="table-container">
+                <table className="data-table">
+                  <tbody>
+                    <tr>
+                      <td style={{ width: '160px' }}><strong>Inspected Source State</strong></td>
+                      <td><span className={getBadgeClass(safetyReport.source_state)}>{safetyReport.source_state}</span></td>
+                    </tr>
+                    <tr>
+                      <td><strong>Inspection Timestamp</strong></td>
+                      <td>{new Date(safetyReport.inspected_at).toLocaleString()}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Application WriteGuard</strong></td>
+                      <td><span className="badge badge-pass">Enabled (Read-Only Barrier)</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : (
-            <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
-              Source safety check will run upon evidence registration.
-            </p>
+            <div className="empty-state">
+              <Shield size={32} />
+              <h3>Pending Inspection</h3>
+              <p>Source safety check will run upon evidence registration.</p>
+            </div>
           )}
         </div>
       </div>
@@ -183,8 +200,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       {/* OEM Capabilities Preview */}
       <div className="panel">
         <div className="panel-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Database size={15} color="var(--accent-primary)" />
+          <div className="flex items-center gap-2">
+            <Database size={15} style={{ color: 'var(--accent)' }} />
             <span>Multi-Vendor OEM Capability Maturity Model (Five Independent Dimensions — Req 21)</span>
           </div>
         </div>

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     oem VARCHAR(100) NOT NULL,
     storage_family VARCHAR(100) NOT NULL,
     profile_hash BYTEA NOT NULL,
-    loaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    loaded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS evidence_items (
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS detection_results (
     explanation TEXT NOT NULL,
     config_version VARCHAR(100) NOT NULL,
     config_hash BYTEA NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_detection_evidence ON detection_results(evidence_id);

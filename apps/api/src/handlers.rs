@@ -1,8 +1,3 @@
-//! # Axum HTTP Request Handlers
-//!
-//! Exposes REST endpoints for case creation, evidence registration, source safety audit,
-//! acquisition verification, custody log retrieval, and bounded byte reads (Req 7.1, 7.2, 7.4, 7.7, 1.10, 18.8).
-
 use std::sync::Arc;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
@@ -12,8 +7,11 @@ use serde::{Deserialize, Serialize};
 use evidence_reader::{inspect_source, RawReader};
 
 use forensic_core::case_manager::EvidenceRegistrationInput;
-use forensic_core::{CaseId, EvidenceId, ExaminerId, ForensicError};
+use forensic_core::{CaseId, EvidenceId, ExaminerId, ForensicError, Evidence};
+use forensic_core::acquisition::{Acquisition, AcquisitionStatus};
+use forensic_core::chain_of_custody::{CustodyEvent, CustodyAction};
 use hashing::HashingService;
+use chrono::Utc;
 
 use detection::orchestrator::DetectionOrchestrator;
 use detection::topology::StorageTopologyProfiler;
@@ -22,6 +20,7 @@ use confidence::config::ConfidenceConfig;
 
 use crate::state::AppState;
 use crate::capability_service;
+use crate::db::repositories;
 
 /// Standard API problem response format.
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,15 +56,25 @@ pub struct CreateCasePayload {
     pub examiner: String,
 }
 
+/// GET /api/cases
+pub async fn list_cases(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let cases = repositories::cases::get_all_cases(&state.db_pool)
+        .await
+        .map_err(map_err)?;
+    Ok(Json(serde_json::to_value(cases).unwrap()))
+}
+
 /// POST /api/cases
 pub async fn create_case(
     State(state): State<AppState>,
     Json(payload): Json<CreateCasePayload>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    let mut cm = state.case_manager.write().await;
     let examiner = ExaminerId::new(payload.examiner);
-    let case = cm
-        .create_case(payload.name, payload.description, examiner)
+    
+    let case = repositories::cases::create_case(&state.db_pool, &payload.name, &payload.description, &examiner)
+        .await
         .map_err(map_err)?;
 
     Ok((StatusCode::CREATED, Json(serde_json::to_value(&case).unwrap())))
@@ -76,12 +85,14 @@ pub async fn get_case(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cm = state.case_manager.read().await;
     let case_id = CaseId(id);
-    let case = cm.get_case(&case_id).ok_or_else(|| ApiError {
-        error: format!("case '{case_id}' not found"),
-        details: None,
-    })?;
+    let case = repositories::cases::get_case(&state.db_pool, &case_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("case '{case_id}' not found"),
+            details: None,
+        })?;
 
     Ok(Json(serde_json::to_value(case).unwrap()))
 }
@@ -106,12 +117,56 @@ pub async fn register_evidence(
     let hash_record = HashingService::hash_reader(reader_arc.as_ref(), 16 * 1024 * 1024, None, None)
         .map_err(map_err)?;
 
-    let mut cm = state.case_manager.write().await;
-    let (evidence, acquisition) = cm
-        .register_evidence(case_id, input, hash_record.value.clone())
-        .map_err(map_err)?;
+    let now = Utc::now();
+    let evidence_id = EvidenceId::new();
+    let acq_id = forensic_core::identifiers::AcquisitionId::new();
 
-    let evidence_id = evidence.id;
+    let evidence = Evidence {
+        id: evidence_id,
+        case_id: case_id.clone(),
+        source_device: input.source_device,
+        acquisition_time: input.acquisition_time,
+        capacity: reader_arc.len() as u64,
+        image_format: input.image_format,
+        responsible_examiner: input.responsible_examiner.clone(),
+        acquisition_tool: input.acquisition_tool,
+        acquisition_tool_version: input.acquisition_tool_version,
+        source_state: input.source_state.unwrap_or(forensic_core::SourceState::Unknown),
+        acquisition_id: Some(acq_id.clone()),
+        path: input.path.clone(),
+        registered_at: now,
+    };
+
+    let acquisition = Acquisition {
+        id: acq_id,
+        evidence_id: evidence_id.clone(),
+        status: AcquisitionStatus::Complete,
+        tool: evidence.acquisition_tool.clone(),
+        tool_version: evidence.acquisition_tool_version.clone(),
+        map_reference: None,
+        map_hash: None,
+        bad_sector_ranges: vec![],
+        unresolved_ranges: vec![],
+        verification: forensic_core::validation::ValidationState {
+            state: forensic_core::validation::ValidationStateKind::Pass,
+            reason: format!("Ingest hash verified: {}", hash_record.value.hex()),
+            operation: "ingest".to_string(),
+            subject: evidence_id.0.to_string(),
+        },
+        created_at: now,
+    };
+
+    let custody = CustodyEvent::new(
+        evidence.responsible_examiner.clone(),
+        CustodyAction::Ingest,
+        format!("Registered evidence {} (hash: {})", evidence_id.0, hash_record.value.hex()),
+        case_id.clone(),
+    );
+
+    // Save to DB in correct dependency order (acquisitions before evidence to satisfy foreign key)
+    repositories::acquisitions::create_acquisition(&state.db_pool, &acquisition).await.map_err(map_err)?;
+    repositories::evidence::create_evidence(&state.db_pool, &evidence).await.map_err(map_err)?;
+    repositories::custody::insert_event(&state.db_pool, &custody).await.map_err(map_err)?;
 
     // Register reader in state for byte reads
     let mut readers = state.readers.write().await;
@@ -126,17 +181,32 @@ pub async fn register_evidence(
     Ok((StatusCode::CREATED, Json(res)))
 }
 
+/// GET /api/cases/:id/evidence
+pub async fn list_case_evidence(
+    State(state): State<AppState>,
+    AxumPath(case_id_raw): AxumPath<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let case_id = CaseId(case_id_raw);
+    let evidence_list = repositories::evidence::get_evidence_for_case(&state.db_pool, &case_id)
+        .await
+        .map_err(map_err)?;
+
+    Ok(Json(serde_json::to_value(evidence_list).unwrap()))
+}
+
 /// GET /api/evidence/:id
 pub async fn get_evidence(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cm = state.case_manager.read().await;
     let evidence_id = EvidenceId(id);
-    let evidence = cm.get_evidence(&evidence_id).ok_or_else(|| ApiError {
-        error: format!("evidence '{evidence_id}' not found"),
-        details: None,
-    })?;
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
 
     Ok(Json(serde_json::to_value(evidence).unwrap()))
 }
@@ -146,12 +216,14 @@ pub async fn get_source_safety(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cm = state.case_manager.read().await;
     let evidence_id = EvidenceId(id);
-    let evidence = cm.get_evidence(&evidence_id).ok_or_else(|| ApiError {
-        error: format!("evidence '{evidence_id}' not found"),
-        details: None,
-    })?;
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
 
     let report = inspect_source(evidence.source_state);
     Ok(Json(serde_json::to_value(report).unwrap()))
@@ -162,19 +234,17 @@ pub async fn get_custody_log(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cm = state.case_manager.read().await;
     let case_id = CaseId(id);
-    let log = cm.get_custody_log(&case_id).ok_or_else(|| ApiError {
-        error: format!("case '{case_id}' not found"),
-        details: None,
-    })?;
+    let events = repositories::custody::get_custody_log(&state.db_pool, &case_id)
+        .await
+        .map_err(map_err)?;
 
-    Ok(Json(serde_json::to_value(log.events()).unwrap()))
+    Ok(Json(serde_json::to_value(events).unwrap()))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ByteReadQuery {
-    pub offset: u64,
+    pub offset: u64, // Supports large offsets natively via u64 (up to 16 EB)
     pub length: usize,
 }
 
@@ -188,19 +258,50 @@ pub async fn read_evidence_bytes(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let evidence_id = EvidenceId(id);
 
+    // Ensure the reader is loaded if it's not in memory (since backend restarts clear the in-memory map)
+    let readers_read = state.readers.read().await;
+    let reader = if let Some(r) = readers_read.get(&evidence_id) {
+        r.clone()
+    } else {
+        // Drop lock before doing async ops
+        drop(readers_read);
+        let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+            .await
+            .map_err(map_err)?
+            .ok_or_else(|| ApiError {
+                error: format!("evidence '{evidence_id}' not found"),
+                details: None,
+            })?;
+        let reader = RawReader::open(&evidence.path).map_err(|e| ApiError {
+            error: format!("failed to open evidence at '{}': {e}", evidence.path),
+            details: None,
+        })?;
+        let reader_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(reader);
+        let mut readers_write = state.readers.write().await;
+        readers_write.insert(evidence_id, reader_arc.clone());
+        reader_arc
+    };
+
     // Limit maximum read window to 64 KiB for interactive hex view
     let max_len = 65536;
-    let length = params.length.min(max_len);
+    let mut length = params.length.min(max_len);
+    
+    let source_len = reader.len();
+    
+    // Gracefully handle requests near or past EOF so the frontend doesn't crash on mocked offsets
+    if params.offset >= source_len {
+        length = 0;
+    } else if params.offset.saturating_add(length as u64) > source_len {
+        length = (source_len - params.offset) as usize;
+    }
 
-    let readers = state.readers.read().await;
-    let reader = readers.get(&evidence_id).ok_or_else(|| ApiError {
-        error: format!("reader for evidence '{evidence_id}' not active"),
-        details: None,
-    })?;
-
-    let bytes = reader
-        .read_exact_at(params.offset, length)
-        .map_err(map_err)?;
+    let bytes = if length > 0 {
+        reader
+            .read_exact_at(params.offset, length)
+            .map_err(map_err)?
+    } else {
+        vec![]
+    };
 
     let hex_dump = hex::encode(&bytes);
 
@@ -213,9 +314,81 @@ pub async fn read_evidence_bytes(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    pub offset: u64,
+    pub term: String,
+    pub search_type: String, // "hex" or "ascii"
+}
+
+/// GET /api/evidence/:id/search?offset=X&term=Y&search_type=hex
+pub async fn search_evidence(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Query(params): Query<SearchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    
+    // Pattern to search
+    let pattern = if params.search_type == "hex" {
+        hex::decode(&params.term).map_err(|_| ApiError {
+            error: "Invalid hex string for search".to_string(),
+            details: None,
+        })?
+    } else {
+        params.term.as_bytes().to_vec()
+    };
+
+    let readers_read = state.readers.read().await;
+    let reader = if let Some(r) = readers_read.get(&evidence_id) {
+        r.clone()
+    } else {
+        drop(readers_read);
+        let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+            .await
+            .map_err(map_err)?
+            .ok_or_else(|| ApiError {
+                error: format!("evidence '{evidence_id}' not found"),
+                details: None,
+            })?;
+        let r = RawReader::open(&evidence.path).map_err(|e| ApiError {
+            error: format!("failed to open evidence: {e}"),
+            details: None,
+        })?;
+        let r_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(r);
+        let mut readers_write = state.readers.write().await;
+        readers_write.insert(evidence_id, r_arc.clone());
+        r_arc
+    };
+
+    // Use RegionScanner to search up to 1GB forward
+    let max_len = 1024 * 1024 * 1024; // 1GB bound
+    let end_offset = params.offset.saturating_add(max_len).min(reader.len());
+    let target = forensic_core::Region::new(params.offset, end_offset - params.offset).map_err(map_err)?;
+    let options = evidence_reader::scanner::ScanOptions::default();
+    let scanner = evidence_reader::scanner::RegionScanner::new(reader.as_ref(), target, options).map_err(map_err)?;
+    
+    let mut found_offset = None;
+    let pattern_len = pattern.len();
+
+    if pattern_len > 0 {
+        scanner.scan(None, None, |chunk_offset, chunk| {
+            if chunk.len() >= pattern_len {
+                if let Some(pos) = chunk.windows(pattern_len).position(|window| window == pattern) {
+                    found_offset = Some(chunk_offset + pos as u64);
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }).map_err(map_err)?;
+    }
+
+    Ok(Json(serde_json::json!({
+        "found_offset": found_offset
+    })))
+}
+
 /// GET /api/capabilities
-///
-/// Returns the capability maturity (CapabilityStages) for all OEMs based on current loaded registry.
 pub async fn get_capabilities(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -224,8 +397,6 @@ pub async fn get_capabilities(
 }
 
 /// POST /api/evidence/:id/detection
-///
-/// Runs the DetectionOrchestrator and ConfidenceEngine to return ClassifiedDetectionResults.
 pub async fn run_detection(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
@@ -245,16 +416,14 @@ pub async fn run_detection(
     // Instantiate confidence config
     let config = ConfidenceConfig::provisional_default();
 
-    // Evaluate outputs through the confidence engine
-    let result = ConfidenceEngine::classify(&detector_outputs, &state.profile_registry, &config)
+    // Evaluate outputs through the confidence engine across all candidates
+    let results = ConfidenceEngine::classify_all(&detector_outputs, &state.profile_registry, &config)
         .map_err(map_err)?;
 
-    Ok(Json(serde_json::to_value(vec![result]).unwrap()))
+    Ok(Json(serde_json::to_value(results).unwrap()))
 }
 
 /// GET /api/evidence/:id/topology
-///
-/// Runs the StorageTopologyProfiler and returns geometry candidates.
 pub async fn get_topology(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,

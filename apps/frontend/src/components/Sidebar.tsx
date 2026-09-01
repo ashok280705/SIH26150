@@ -93,7 +93,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
         </li>
       </ul>
 
-      <div className="nav-section-title" style={{ marginTop: '12px' }}>Analysis Pipeline</div>
+      <div className="nav-section-title">Analysis Pipeline</div>
       <ul className="nav-list">
         <li>
           <div

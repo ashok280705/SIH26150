@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Binary, ArrowRight, RefreshCw, AlertCircle } from 'lucide-react';
-import { readEvidenceBytes } from '../services/api';
+import { Binary, ArrowRight, RefreshCw, AlertCircle, Search } from 'lucide-react';
+import { readEvidenceBytes, searchEvidence } from '../services/api';
 import { HexChunkResponse } from '../types';
 
 interface HexViewerProps {
@@ -9,27 +9,32 @@ interface HexViewerProps {
 }
 
 export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset }) => {
-  const [offset, setOffset] = useState<number>(initialOffset || 0);
+  // Using string for offset to avoid precision loss on large 64-bit integers in JS
+  const [offsetStr, setOffsetStr] = useState<string>(initialOffset ? initialOffset.toString() : '0');
   const [length, setLength] = useState<number>(256);
+  
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [searchType, setSearchType] = useState<'hex' | 'ascii'>('ascii');
+  const [isSearching, setIsSearching] = useState(false);
+
   const [chunk, setChunk] = useState<HexChunkResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialOffset !== undefined) {
-      setOffset(initialOffset);
+      setOffsetStr(initialOffset.toString());
       if (evidenceId) {
-        // Automatically fetch when initialOffset changes
-        handleFetchBytesForOffset(initialOffset);
+        handleFetchBytesForOffset(initialOffset.toString());
       }
     }
   }, [initialOffset, evidenceId]);
 
-  const handleFetchBytesForOffset = async (targetOffset: number) => {
+  const handleFetchBytesForOffset = async (targetOffsetStr: string) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await readEvidenceBytes(evidenceId!, targetOffset, length);
+      const data = await readEvidenceBytes(evidenceId!, parseInt(targetOffsetStr) || 0, length);
       setChunk(data);
     } catch (err: any) {
       setError(err.message || 'Failed to read evidence bytes');
@@ -40,10 +45,29 @@ export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset 
 
   const handleFetchBytes = () => {
     if (!evidenceId) return;
-    handleFetchBytesForOffset(offset);
+    handleFetchBytesForOffset(offsetStr);
   };
 
-  const renderFormattedHex = (hexStr: string, startOffset: number) => {
+  const handleSearch = async () => {
+    if (!evidenceId || !searchTerm) return;
+    setIsSearching(true);
+    setError(null);
+    try {
+      const data = await searchEvidence(evidenceId, offsetStr, searchTerm, searchType);
+      if (data.found_offset !== null) {
+        setOffsetStr(data.found_offset.toString());
+        await handleFetchBytesForOffset(data.found_offset.toString());
+      } else {
+        setError('Pattern not found within the 1GB search limit from the current offset.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to search evidence');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const renderFormattedHex = (hexStr: string, startOffsetNum: number) => {
     const bytes: string[] = [];
     for (let i = 0; i < hexStr.length; i += 2) {
       bytes.push(hexStr.substring(i, i + 2));
@@ -52,8 +76,8 @@ export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset 
     const rows: { offsetStr: string; hexStr: string; asciiStr: string }[] = [];
     for (let i = 0; i < bytes.length; i += 16) {
       const slice = bytes.slice(i, i + 16);
-      const rowOffset = startOffset + i;
-      const offsetStr = '0x' + rowOffset.toString(16).padStart(8, '0').toUpperCase();
+      const rowOffset = startOffsetNum + i;
+      const offsetHex = '0x' + rowOffset.toString(16).padStart(8, '0').toUpperCase();
       
       const hexParts = slice.join(' ').toUpperCase();
       const padding = '   '.repeat(16 - slice.length);
@@ -66,7 +90,7 @@ export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset 
         .join('');
 
       rows.push({
-        offsetStr,
+        offsetStr: offsetHex,
         hexStr: hexParts + padding,
         asciiStr: asciiParts,
       });
@@ -89,7 +113,7 @@ export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset 
     <div className="panel">
       <div className="panel-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Binary size={16} color="var(--accent-primary)" />
+          <Binary size={16} style={{ color: 'var(--accent)' }} />
           <span>Evidence Byte Inspector (Read-Only via EvidenceReader)</span>
         </div>
         {chunk && (
@@ -100,20 +124,22 @@ export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset 
       </div>
 
       {!evidenceId ? (
-        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
-          <AlertCircle size={24} style={{ margin: '0 auto 8px', display: 'block' }} />
-          <span>No evidence selected. Please register or select an evidence target first.</span>
+        <div className="empty-state">
+          <Binary size={32} />
+          <h3>No Evidence Selected</h3>
+          <p>Please register or select an evidence target first.</p>
         </div>
       ) : (
         <>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', marginBottom: '16px' }}>
-            <div style={{ width: '160px' }}>
-              <label className="form-label">Offset (Bytes / 0xHex)</label>
+            <div style={{ width: '180px' }}>
+              <label className="form-label">Offset (Decimal)</label>
               <input
-                type="number"
+                type="text"
                 className="form-input"
-                value={offset}
-                onChange={(e) => setOffset(Math.max(0, parseInt(e.target.value) || 0))}
+                value={offsetStr}
+                onChange={(e) => setOffsetStr(e.target.value.replace(/\D/g, ''))}
+                placeholder="0"
               />
             </div>
             <div style={{ width: '140px' }}>
@@ -131,9 +157,34 @@ export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset 
             </button>
           </div>
 
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', marginBottom: '16px', background: 'var(--surface-muted)', padding: '12px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ width: '120px' }}>
+              <label className="form-label">Search Type</label>
+              <select className="form-select" value={searchType} onChange={(e) => setSearchType(e.target.value as any)}>
+                <option value="ascii">ASCII</option>
+                <option value="hex">Hex (e.g. FFD8)</option>
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="form-label">Search Pattern (scans forward up to 1GB)</label>
+              <input
+                type="text"
+                className="form-input"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder={searchType === 'hex' ? 'e.g. FFD8FFE0' : 'e.g. password'}
+              />
+            </div>
+            <button className="btn btn-secondary" onClick={handleSearch} disabled={isSearching || !searchTerm}>
+              {isSearching ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
+              <span>{isSearching ? 'Searching...' : 'Search Forward'}</span>
+            </button>
+          </div>
+
           {error && (
-            <div style={{ color: '#991b1b', background: '#fee2e2', padding: '10px', borderRadius: '4px', marginBottom: '14px' }}>
-              <strong>Error:</strong> {error}
+            <div className="alert alert-error">
+              <AlertCircle size={16} />
+              <div><strong>Error:</strong> {error}</div>
             </div>
           )}
 

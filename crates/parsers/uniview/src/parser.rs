@@ -50,11 +50,22 @@ impl Parser for UniviewParser {
                         let hex = magic.pattern_hex.replace(" ", "");
                         if let Ok(magic_bytes) = hex::decode(&hex) {
                             if buf.starts_with(&magic_bytes) {
-                                // Simulated deleted marker
-                                if buf[0] == 0xE5 {
-                                    validation_state = ValidationState::review("Deleted marker in UNIV sector", "parse_filesystem", "superblock").unwrap();
+                                validation_state = ValidationState::pass("UNIV Superblock Found", "parse_filesystem", "superblock").unwrap();
+                            } else if buf[0] == 0xE5 && buf.len() >= 4 && &buf[1..4] == &magic_bytes[1..4] {
+                                // Deleted marker candidate (0xE5 + "NIV"): validate surrounding superblock layout
+                                let has_valid_cluster_hint = buf.len() >= 8 && (buf[4] != 0 || buf[5] != 0);
+                                if has_valid_cluster_hint {
+                                    validation_state = ValidationState::review(
+                                        "Deleted marker candidate (0xE5) with valid surrounding superblock structure",
+                                        "parse_filesystem",
+                                        "superblock",
+                                    ).unwrap();
                                 } else {
-                                    validation_state = ValidationState::pass("UNIV Superblock Found", "parse_filesystem", "superblock").unwrap();
+                                    validation_state = ValidationState::review(
+                                        "Deleted marker candidate (0xE5) but superblock structure is corrupt or incomplete",
+                                        "parse_filesystem",
+                                        "superblock",
+                                    ).unwrap();
                                 }
                             } else {
                                 // Wrong offset, lone magic, or missing superblock

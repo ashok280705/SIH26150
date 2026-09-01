@@ -1,20 +1,34 @@
-import React, { useState } from 'react';
-import { FolderPlus, FolderCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { createCase } from '../services/api';
+import React, { useState, useEffect } from 'react';
+import { FolderPlus, FolderCheck, AlertCircle, CheckCircle2, List } from 'lucide-react';
+import { createCase, listCases } from '../services/api';
 import { Case } from '../types';
 
 interface CaseViewProps {
   activeCase: Case | null;
-  onCaseCreated: (c: Case) => void;
+  onCaseSelected: (c: Case) => void;
 }
 
-export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseCreated }) => {
+export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [examiner, setExaminer] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [cases, setCases] = useState<Case[]>([]);
+
+  useEffect(() => {
+    fetchCases();
+  }, []);
+
+  const fetchCases = async () => {
+    try {
+      const data = await listCases();
+      setCases(data);
+    } catch (err) {
+      console.error('Failed to load cases:', err);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +47,8 @@ export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseCreated })
     setLoading(true);
     try {
       const created = await createCase({ name, description, examiner });
-      onCaseCreated(created);
+      setCases(prev => [created, ...prev]);
+      onCaseSelected(created);
       setSuccess(`Case '${created.name}' created successfully.`);
       setName('');
       setDescription('');
@@ -49,7 +64,7 @@ export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseCreated })
       <div className="view-header">
         <div>
           <h1 className="view-title">Forensic Case Management</h1>
-          <p className="view-subtitle">Register new investigative cases, assign examiners, and manage forensic scopes (Req 7.1–7.6)</p>
+          <p className="view-subtitle">Register new investigative cases, assign examiners, and manage forensic scopes</p>
         </div>
       </div>
 
@@ -119,46 +134,91 @@ export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseCreated })
           </form>
         </div>
 
-        {/* Current Active Case Card */}
-        <div className="panel">
-          <div className="panel-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <FolderCheck size={15} color="var(--accent-primary)" />
-              <span>Active Case Context</span>
+        {/* Current Active Case Card & Case List */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div className="panel">
+            <div className="panel-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FolderCheck size={15} color="var(--accent-primary)" />
+                <span>Active Case Context</span>
+              </div>
+              {activeCase && <span className="badge badge-pass">Loaded</span>}
             </div>
-            {activeCase && <span className="badge badge-pass">Loaded</span>}
+
+            {activeCase ? (
+              <table className="data-table">
+                <tbody>
+                  <tr>
+                    <td style={{ width: '130px', fontWeight: 600, color: 'var(--text-secondary)' }}>Case Name</td>
+                    <td><strong>{activeCase.name}</strong></td>
+                  </tr>
+                  <tr>
+                    <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Case ID</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{activeCase.id}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Examiner</td>
+                    <td>{activeCase.examiner}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Created At</td>
+                    <td>{new Date(activeCase.created_at).toLocaleString()}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Description</td>
+                    <td>{activeCase.description || 'No description provided.'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            ) : (
+              <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
+                No active case loaded. Create a case or select one below.
+              </p>
+            )}
           </div>
 
-          {activeCase ? (
-            <table className="data-table">
-              <tbody>
-                <tr>
-                  <td style={{ width: '130px', fontWeight: 600, color: 'var(--text-secondary)' }}>Case Name</td>
-                  <td><strong>{activeCase.name}</strong></td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Case ID</td>
-                  <td style={{ fontFamily: 'var(--font-mono)' }}>{activeCase.id}</td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Examiner</td>
-                  <td>{activeCase.examiner}</td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Created At</td>
-                  <td>{new Date(activeCase.created_at).toLocaleString()}</td>
-                </tr>
-                <tr>
-                  <td style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Description</td>
-                  <td>{activeCase.description || 'No description provided.'}</td>
-                </tr>
-              </tbody>
-            </table>
-          ) : (
-            <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
-              No active case loaded. Create a case using the form on the left.
-            </p>
-          )}
+          <div className="panel">
+            <div className="panel-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <List size={15} color="var(--text-secondary)" />
+                <span>Existing Cases</span>
+              </div>
+            </div>
+            
+            {cases.length === 0 ? (
+              <p style={{ color: 'var(--text-muted)', padding: '16px', textAlign: 'center' }}>
+                No cases found in database.
+              </p>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Created</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cases.map((c) => (
+                    <tr key={c.id}>
+                      <td><strong>{c.name}</strong></td>
+                      <td>{new Date(c.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                          onClick={() => onCaseSelected(c)}
+                          disabled={activeCase?.id === c.id}
+                        >
+                          {activeCase?.id === c.id ? 'Active' : 'Load'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
     </div>

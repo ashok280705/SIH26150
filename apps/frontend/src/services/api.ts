@@ -15,6 +15,15 @@ export async function createCase(data: { name: string; description: string; exam
   return res.json();
 }
 
+export async function listCases(): Promise<Case[]> {
+  const res = await fetch(`${API_BASE}/cases`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to list cases');
+  }
+  return res.json();
+}
+
 export async function getCase(id: string): Promise<Case> {
   const cleanId = id.replace('case-', '');
   const res = await fetch(`${API_BASE}/cases/${cleanId}`);
@@ -35,6 +44,16 @@ export async function registerEvidence(caseId: string, input: any): Promise<{ ev
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to register evidence');
+  }
+  return res.json();
+}
+
+export async function listCaseEvidence(caseId: string): Promise<Evidence[]> {
+  const cleanId = caseId.replace('case-', '');
+  const res = await fetch(`${API_BASE}/cases/${cleanId}/evidence`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to list case evidence');
   }
   return res.json();
 }
@@ -79,6 +98,16 @@ export async function readEvidenceBytes(evidenceId: string, offset: number, leng
   return res.json();
 }
 
+export async function searchEvidence(evidenceId: string, offset: string | number, term: string, searchType: 'hex' | 'ascii'): Promise<{ found_offset: number | null }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/search?offset=${offset}&term=${encodeURIComponent(term)}&search_type=${searchType}`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to search bytes');
+  }
+  return res.json();
+}
+
 export async function getCapabilities(): Promise<Record<string, CapabilityStages>> {
   const res = await fetch(`${API_BASE}/capabilities`);
   if (!res.ok) {
@@ -88,6 +117,8 @@ export async function getCapabilities(): Promise<Record<string, CapabilityStages
   return res.json();
 }
 
+import { normalizeDetectionResponse } from './adapters/detection';
+
 export async function runDetection(evidenceId: string): Promise<ClassifiedDetectionResult[]> {
   const cleanId = evidenceId.replace('evidence-', '');
   const res = await fetch(`${API_BASE}/evidence/${cleanId}/detection`, { method: 'POST' });
@@ -95,7 +126,11 @@ export async function runDetection(evidenceId: string): Promise<ClassifiedDetect
     const err = await res.json();
     throw new Error(err.error || 'Failed to run detection');
   }
-  return res.json();
+  const rawList = await res.json();
+  if (Array.isArray(rawList)) {
+    return rawList.map(normalizeDetectionResponse);
+  }
+  return [normalizeDetectionResponse(rawList)];
 }
 
 export async function getTopology(evidenceId: string): Promise<StorageTopology> {

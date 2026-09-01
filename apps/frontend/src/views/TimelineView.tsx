@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Clock } from 'lucide-react';
 import { Evidence } from '../types';
 
 interface TimelineViewProps {
@@ -39,8 +40,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ evidence, onNavigate
     return (
       <div className="view-container">
         <div className="view-header">
-          <h1 className="view-title">Forensic Timeline & Provenance</h1>
-          <p className="view-subtitle">Select an evidence target to view unified cross-camera timeline.</p>
+          <div>
+            <h1 className="view-title">Forensic Timeline & Provenance</h1>
+            <p className="view-subtitle">Select an evidence target to view unified cross-camera timeline.</p>
+          </div>
+        </div>
+        <div className="empty-state">
+          <Clock size={32} />
+          <h3>No Evidence Selected</h3>
+          <p>Select a DVR/NVR evidence item from the active case to begin analysis.</p>
         </div>
       </div>
     );
@@ -136,32 +144,35 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ evidence, onNavigate
       </div>
 
       {/* Controls Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', backgroundColor: '#1e1e1e', padding: '12px 16px', borderRadius: '8px', border: '1px solid #333' }}>
+      <div className="panel" style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '13px', color: '#aaa', fontWeight: 'bold' }}>Timeline Ordering Mode:</span>
-          {(['Normalized', 'RecorderNative', 'Physical'] as OrderingMode[]).map(mode => (
-            <button
-              key={mode}
-              onClick={() => setOrdering(mode)}
-              style={{
-                padding: '6px 12px',
-                borderRadius: '4px',
-                border: '1px solid',
-                borderColor: ordering === mode ? '#2196f3' : '#444',
-                backgroundColor: ordering === mode ? '#1976d233' : '#252525',
-                color: ordering === mode ? '#90caf9' : '#ccc',
-                fontWeight: ordering === mode ? 'bold' : 'normal',
-                cursor: 'pointer',
-                fontSize: '12px',
-              }}
-            >
-              {mode === 'Normalized' && '🕒 Normalized (UTC Chronological)'}
-              {mode === 'RecorderNative' && '📼 Recorder-Native Time'}
-              {mode === 'Physical' && '💾 Physical Disk Offset'}
-            </button>
-          ))}
+          <span className="text-muted" style={{ fontSize: '13px', fontWeight: 600 }}>Timeline Ordering Mode:</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {(['Normalized', 'RecorderNative', 'Physical'] as OrderingMode[]).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setOrdering(mode)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  border: '1px solid',
+                  borderColor: ordering === mode ? 'var(--accent)' : 'var(--border)',
+                  backgroundColor: ordering === mode ? 'var(--accent-light)' : 'var(--surface)',
+                  color: ordering === mode ? 'var(--accent)' : 'var(--text-secondary)',
+                  fontWeight: ordering === mode ? 600 : 500,
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {mode === 'Normalized' && '🕒 Normalized (UTC Chronological)'}
+                {mode === 'RecorderNative' && '📼 Recorder-Native Time'}
+                {mode === 'Physical' && '💾 Physical Disk Offset'}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{ fontSize: '12px', color: '#888' }}>
+        <div className="text-muted" style={{ fontSize: '12px' }}>
           {ordering === 'Physical' && '⚠️ Note: Physical disk order does NOT imply chronological order (Req 15.6)'}
           {ordering === 'Normalized' && '✓ UTC Normalized timeline with correlation window'}
           {ordering === 'RecorderNative' && '📼 Raw native DVR clock without external adjustment'}
@@ -170,137 +181,141 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ evidence, onNavigate
 
       <div style={{ display: 'grid', gridTemplateColumns: selectedEvent ? '1fr 380px' : '1fr', gap: '16px' }}>
         {/* Timeline Event Stream */}
-        <div className="data-panel" style={{ backgroundColor: '#1e1e1e', borderRadius: '8px', border: '1px solid #333', overflow: 'hidden' }}>
-          <div className="panel-header" style={{ padding: '16px', borderBottom: '1px solid #333' }}>
-            <h3 style={{ margin: 0, fontSize: '16px' }}>
+        <div className="panel" style={{ padding: '0', overflow: 'hidden' }}>
+          <div className="panel-header" style={{ margin: 0, padding: '16px' }}>
+            <h3 style={{ margin: 0, fontSize: '14px' }}>
               Correlated Event Stream ({sortedEvents.length} events)
             </h3>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#252525', textAlign: 'left' }}>
-                <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Camera</th>
-                <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Normalized Time (UTC)</th>
-                <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Recorder-Native & Raw</th>
-                <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Description</th>
-                <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Physical Offset</th>
-                <th style={{ padding: '12px 16px', borderBottom: '1px solid #333' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedEvents.map(evt => (
-                <tr
-                  key={evt.id}
-                  onClick={() => setSelectedEvent(evt)}
-                  style={{
-                    borderBottom: '1px solid #333',
-                    backgroundColor: selectedEvent?.id === evt.id ? '#1e3a5f33' : 'transparent',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <td style={{ padding: '12px 16px' }}>
-                    <span style={{
-                      padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold',
-                      backgroundColor: evt.channel === 1 ? '#1565c0' : evt.channel === 2 ? '#2e7d32' : '#e65100',
-                      color: 'white',
-                    }}>
-                      CH {evt.channel}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <div style={{ fontWeight: 'bold' }}>{evt.normalized_time}</div>
-                    {evt.timezone_state === 'Unknown' && (
-                      <span style={{ fontSize: '10px', color: '#ff9800', backgroundColor: '#ff980022', padding: '1px 4px', borderRadius: '2px' }}>
-                        ⚠️ Unknown TZ
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <div>{evt.native_time}</div>
-                    <div style={{ color: '#888', fontSize: '11px', fontFamily: 'monospace' }}>
-                      Raw: 0x{evt.raw_timestamp.toString(16)} ({evt.raw_format})
-                    </div>
-                  </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    {evt.description}
-                  </td>
-                  <td style={{ padding: '12px 16px', fontFamily: 'monospace', color: '#90caf9' }}>
-                    0x{evt.source_offset.toString(16).padStart(8, '0')}
-                  </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onNavigateToHex(evt.source_offset);
-                      }}
-                      style={{ background: '#2196f3', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
-                    >
-                      Hex
-                    </button>
-                  </td>
+          <div className="table-container" style={{ border: 'none', borderTop: '1px solid var(--border)', borderRadius: '0' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Camera</th>
+                  <th>Normalized Time (UTC)</th>
+                  <th>Recorder-Native & Raw</th>
+                  <th>Description</th>
+                  <th>Physical Offset</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedEvents.map(evt => (
+                  <tr
+                    key={evt.id}
+                    onClick={() => setSelectedEvent(evt)}
+                    style={{
+                      backgroundColor: selectedEvent?.id === evt.id ? 'var(--accent-light)' : 'transparent',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.1s',
+                    }}
+                  >
+                    <td>
+                      <span className="badge" style={{
+                        backgroundColor: evt.channel === 1 ? '#e0f2fe' : evt.channel === 2 ? '#dcfce7' : '#ffedd5',
+                        color: evt.channel === 1 ? '#0369a1' : evt.channel === 2 ? '#15803d' : '#c2410c',
+                        border: '1px solid',
+                        borderColor: evt.channel === 1 ? '#bae6fd' : evt.channel === 2 ? '#bbf7d0' : '#fed7aa',
+                      }}>
+                        CH {evt.channel}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{evt.normalized_time}</div>
+                      {evt.timezone_state === 'Unknown' && (
+                        <div className="mt-4"><span className="badge badge-review" style={{ fontSize: '9px' }}>
+                          ⚠️ Unknown TZ
+                        </span></div>
+                      )}
+                    </td>
+                    <td>
+                      <div>{evt.native_time}</div>
+                      <div className="text-muted mono" style={{ fontSize: '11px', marginTop: '2px' }}>
+                        Raw: 0x{evt.raw_timestamp.toString(16).toUpperCase()} ({evt.raw_format})
+                      </div>
+                    </td>
+                    <td>{evt.description}</td>
+                    <td className="mono" style={{ color: 'var(--accent)' }}>
+                      0x{evt.source_offset.toString(16).padStart(8, '0').toUpperCase()}
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onNavigateToHex(evt.source_offset);
+                        }}
+                      >
+                        Hex
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Provenance Detail Inspector Panel */}
         {selectedEvent && (
-          <div style={{ backgroundColor: '#1e1e1e', borderRadius: '8px', border: '1px solid #333', padding: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #333', paddingBottom: '8px' }}>
-              <h3 style={{ margin: 0, fontSize: '15px' }}>Lineage & Provenance</h3>
+          <div className="panel">
+            <div className="panel-header no-border">
+              <h3 style={{ margin: 0, fontSize: '14px' }}>Lineage & Provenance</h3>
               <button
                 onClick={() => setSelectedEvent(null)}
-                style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '14px' }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '14px' }}
               >
                 ✕
               </button>
             </div>
 
-            <div style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '16px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
-                <div style={{ color: '#888', marginBottom: '2px' }}>Event Target</div>
-                <div style={{ fontWeight: 'bold' }}>{selectedEvent.description} (CH {selectedEvent.channel})</div>
+                <div className="text-muted" style={{ fontWeight: 600, marginBottom: '2px' }}>Event Target</div>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{selectedEvent.description} (CH {selectedEvent.channel})</div>
               </div>
 
               <div>
-                <div style={{ color: '#888', marginBottom: '2px' }}>Producing Parser Component</div>
+                <div className="text-muted" style={{ fontWeight: 600, marginBottom: '2px' }}>Producing Parser Component</div>
                 <div>{selectedEvent.provenance.producing_component} (v{selectedEvent.provenance.component_version})</div>
               </div>
 
               <div>
-                <div style={{ color: '#888', marginBottom: '2px' }}>Applied OEM Profile</div>
+                <div className="text-muted" style={{ fontWeight: 600, marginBottom: '2px' }}>Applied OEM Profile</div>
                 <div>{selectedEvent.provenance.profile_id}</div>
-                <div style={{ fontFamily: 'monospace', fontSize: '10px', color: '#aaa', wordBreak: 'break-all' }}>
+                <div className="mono text-muted" style={{ fontSize: '10px', wordBreak: 'break-all', marginTop: '2px' }}>
                   Hash: {selectedEvent.provenance.profile_hash}
                 </div>
               </div>
 
               <div>
-                <div style={{ color: '#888', marginBottom: '2px' }}>Physical Evidence Region</div>
-                <div>Offset: 0x{selectedEvent.source_offset.toString(16)} ({selectedEvent.source_length} bytes)</div>
+                <div className="text-muted" style={{ fontWeight: 600, marginBottom: '2px' }}>Physical Evidence Region</div>
+                <div>Offset: <span className="mono">0x{selectedEvent.source_offset.toString(16).toUpperCase()}</span> ({selectedEvent.source_length} bytes)</div>
               </div>
 
               <div>
-                <div style={{ color: '#888', marginBottom: '2px' }}>Transformation Steps Applied</div>
-                <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                <div className="text-muted" style={{ fontWeight: 600, marginBottom: '2px' }}>Transformation Steps Applied</div>
+                <ul style={{ margin: '4px 0 0 16px', padding: 0, color: 'var(--text-primary)' }}>
                   {selectedEvent.provenance.transformations.map((t, idx) => (
-                    <li key={idx} style={{ color: '#90caf9' }}>{t}</li>
+                    <li key={idx}>{t}</li>
                   ))}
                 </ul>
               </div>
 
               <div>
-                <div style={{ color: '#888', marginBottom: '2px' }}>Artifact Classification</div>
-                <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '3px', backgroundColor: '#0d47a1', color: '#90caf9' }}>
-                  {selectedEvent.provenance.is_native ? 'Native Original Evidence' : 'Derived'}
-                </span>
+                <div className="text-muted" style={{ fontWeight: 600, marginBottom: '4px' }}>Artifact Classification</div>
+                {selectedEvent.provenance.is_native ? (
+                  <span className="badge badge-info">Native Original Evidence</span>
+                ) : (
+                  <span className="badge badge-unknown">Derived</span>
+                )}
               </div>
 
-              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #333' }}>
+              <div style={{ marginTop: '8px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' }}>
                 <button
                   onClick={() => onNavigateToHex(selectedEvent.source_offset)}
-                  style={{ width: '100%', background: '#1976d2', color: 'white', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                  className="btn btn-primary"
+                  style={{ width: '100%' }}
                 >
                   Inspect in Hex Viewer
                 </button>

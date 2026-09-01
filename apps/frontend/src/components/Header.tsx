@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, HardDrive, Terminal } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, HardDrive, Terminal } from 'lucide-react';
 
 import { Case, Evidence } from '../types';
 
@@ -9,6 +9,8 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ activeCase, activeEvidence }) => {
+  const isSourceSafe = activeEvidence?.source_state === 'read_only';
+
   return (
     <header className="top-header">
       <div className="logo-section">
@@ -17,24 +19,38 @@ export const Header: React.FC<HeaderProps> = ({ activeCase, activeEvidence }) =>
       </div>
 
       <div className="header-status">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
-          <ShieldCheck size={15} color="#166534" />
-          <span style={{ color: '#166534', fontWeight: 600 }}>Source Safety: Active</span>
+        <div className="header-context-item">
+          {activeEvidence ? (
+            isSourceSafe ? (
+              <>
+                <ShieldCheck size={15} className="text-success" style={{ color: 'var(--success)' }} />
+                <span className="header-context-label" style={{ color: 'var(--success)' }}>Source Safety: Active</span>
+              </>
+            ) : (
+              <>
+                <ShieldAlert size={15} className="text-danger" style={{ color: 'var(--danger)' }} />
+                <span className="header-context-label" style={{ color: 'var(--danger)' }}>Source Safety: Inactive</span>
+              </>
+            )
+          ) : (
+            <>
+              <ShieldCheck size={15} style={{ color: 'var(--unknown)' }} />
+              <span className="header-context-label" style={{ color: 'var(--unknown)' }}>Source Safety: N/A</span>
+            </>
+          )}
         </div>
 
-        {activeCase && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-            <Terminal size={14} />
-            <span>Case: <strong>{activeCase.name}</strong></span>
-          </div>
-        )}
+        <div className="header-context-item">
+          <Terminal size={14} />
+          <span className="header-context-label">Case:</span>
+          <span className="header-context-value">{activeCase ? activeCase.name : 'None'}</span>
+        </div>
 
-        {activeEvidence && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-            <HardDrive size={14} />
-            <span>Target: <strong>{activeEvidence.source_device}</strong></span>
-          </div>
-        )}
+        <div className="header-context-item">
+          <HardDrive size={14} />
+          <span className="header-context-label">Evidence:</span>
+          <span className="header-context-value">{activeEvidence ? activeEvidence.source_device : 'None'}</span>
+        </div>
       </div>
     </header>
   );

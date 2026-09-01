@@ -24,8 +24,12 @@ export const App: React.FC = () => {
   const [ingestHash, setIngestHash] = useState<string | null>(null);
   const [hexOffset, setHexOffset] = useState<number | undefined>(undefined);
 
-  const handleCaseCreated = (c: Case) => {
+  const handleCaseSelected = (c: Case) => {
     setActiveCase(c);
+    setActiveEvidence(null);
+    setAcquisition(null);
+    setSafetyReport(null);
+    setIngestHash(null);
     setActiveTab('evidence');
   };
 
@@ -37,6 +41,19 @@ export const App: React.FC = () => {
     }
     try {
       const report = await getSourceSafety(data.evidence.id);
+      setSafetyReport(report);
+    } catch {
+      // Fallback
+    }
+    setActiveTab('overview');
+  };
+
+  const handleEvidenceSelected = async (e: Evidence) => {
+    setActiveEvidence(e);
+    setAcquisition(null);
+    setIngestHash(null);
+    try {
+      const report = await getSourceSafety(e.id);
       setSafetyReport(report);
     } catch {
       // Fallback
@@ -67,11 +84,16 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'cases' && (
-          <CaseView activeCase={activeCase} onCaseCreated={handleCaseCreated} />
+          <CaseView activeCase={activeCase} onCaseSelected={handleCaseSelected} />
         )}
 
         {activeTab === 'evidence' && (
-          <EvidenceView activeCase={activeCase} onEvidenceRegistered={handleEvidenceRegistered} />
+          <EvidenceView 
+            activeCase={activeCase} 
+            activeEvidence={activeEvidence}
+            onEvidenceRegistered={handleEvidenceRegistered} 
+            onEvidenceSelected={handleEvidenceSelected}
+          />
         )}
 
         {activeTab === 'acquisition' && (
