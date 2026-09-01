@@ -1,0 +1,24 @@
+{
+  "case_id": "SYNTH-DAHUA-TRUNCATED-001",
+  "source_path": "synthetic_dahua_truncated_1.raw",
+  "source_hash": {
+    "algorithm": "sha256",
+    "value": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_type": "raw",
+  "expected_detection": "dahua",
+  "expected_detection_status": "confirmed",
+  "expected_classification": "confirmed",
+  "expected_attribution_status": "confirmed",
+  "expected_regions": [
+    {
+      "offset": 0,
+      "length": 512
+    }
+  ],
+  "expected_parser_state": "parsed",
+  "expected_recovery_state": "l1_carving_available",
+  "expected_validation_state": "review",
+  "expected_warnings": [],
+  "synthetic": true
+}

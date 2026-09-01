@@ -11,7 +11,9 @@
 //! * Fixtures are deterministic: the same generator inputs always produce the same bytes.
 //! * A fixture containing only a lone magic value must not pass OEM detection.
 //!
-//! Skeleton only — the generator and cross-crate suites land in later tasks. The workspace
-//! layout assertions for `P1-001` live in `tests/workspace_layout.rs`.
+//! The workspace layout assertions for `P1-001` live in `tests/workspace_layout.rs`.
 
 #![forbid(unsafe_code)]
+
+pub mod fixtures;
+pub mod corpus;

@@ -26,3 +26,7 @@
 //! Skeleton only — the parser lands in P3-012, its edge-case suite in P3-015.
 
 #![forbid(unsafe_code)]
+
+pub mod parser;
+
+pub use parser::UniviewParser;

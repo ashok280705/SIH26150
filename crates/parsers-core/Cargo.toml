@@ -1,0 +1,11 @@
+[package]
+name = "parsers-core"
+description = "Core parsing traits for OEM parsers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+forensic-core = { path = "../forensic-core" }
+evidence-reader = { path = "../evidence-reader" }

@@ -6,10 +6,29 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[lib]
+name = "forensic_api"
+path = "src/lib.rs"
+
 [[bin]]
 name = "forensic-api"
 path = "src/main.rs"
 
-# This is the ONLY workspace crate allowed network and database dependencies
-# (Axum, Tokio, sqlx/PostgreSQL). They are introduced by later Phase 1 tasks.
+
 [dependencies]
+forensic-core = { path = "../../crates/forensic-core" }
+evidence-reader = { path = "../../crates/evidence-reader" }
+hashing = { path = "../../crates/hashing" }
+detection = { path = "../../crates/detection" }
+confidence = { path = "../../crates/confidence" }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+hex = { workspace = true }

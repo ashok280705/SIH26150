@@ -233,7 +233,7 @@ because several implementation tasks depend on them.
   - **Tests:** CI build check that the workspace compiles; layout assertion test.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 25.1_
 
-- [-] 6. P1-002 — forensic-core domain types and ForensicError
+- [x] 6. P1-002 — forensic-core domain types and ForensicError
   - **Requirement Traceability:** Req 3.3, 5.4, 6.3, 6.4, 24.1
   - **Design Traceability:** forensic-core; Error Handling; Failure / Adversarial Handling
   - **Description:** Define shared identifiers (CaseId, EvidenceId, ExaminerId), `Hash`,
@@ -250,7 +250,7 @@ because several implementation tasks depend on them.
     calls on evidence paths.
   - _Requirements: 3.3, 5.4, 6.3, 6.4, 24.1_
 
-- [~] 7. P1-003 — Checked-arithmetic and bounds primitives (hostile input contract)
+- [x] 7. P1-003 — Checked-arithmetic and bounds primitives (hostile input contract)
   - **Requirement Traceability:** Req 24.1, 24.2, 24.4, 8.11
   - **Design Traceability:** Failure / Adversarial Handling; Component 1 (bounds); Honeywell
     bounds/arithmetic note
@@ -270,7 +270,7 @@ because several implementation tasks depend on them.
     end-past-source, and impossible-value cases.
   - _Requirements: 24.1, 24.2, 24.4, 8.11_
 
-- [~] 8. P1-004 — ValidationState enum with required reason
+- [x] 8. P1-004 — ValidationState enum with required reason
   - **Requirement Traceability:** Req 22.1, 22.2, 22.3
   - **Design Traceability:** Validation State; Data Models (`validation_states`)
   - **Description:** Implement `ValidationState { Pass, Review, Fail, Unknown }` together
@@ -287,7 +287,7 @@ because several implementation tasks depend on them.
     unexecuted operation `PASS` is impossible by construction/API.
   - _Requirements: 22.1, 22.2, 22.3_
 
-- [~] 9. P1-005 — Capability_Stage model (five independent dimensions)
+- [x] 9. P1-005 — Capability_Stage model (five independent dimensions)
   - **Requirement Traceability:** Req 3.6, 3.7, 21.1, 21.2, 21.3, 21.4
   - **Design Traceability:** Capability Maturity Model; Data Models (`capability_stages`)
   - **Description:** Implement `CapabilityStage { NotImplemented, Partial, Implemented }` and
@@ -306,7 +306,7 @@ because several implementation tasks depend on them.
     From/Into exists between CapabilityStage and ValidationState.
   - _Requirements: 3.6, 3.7, 21.1, 21.2, 21.3, 21.4_
 
-- [~] 10. P1-006 — Provenance and SourceRegion model
+- [x] 10. P1-006 — Provenance and SourceRegion model
   - **Requirement Traceability:** Req 5.4, 5.8
   - **Design Traceability:** Native vs Derived Artifacts (`Provenance`); Cross-Cutting
     (Provenance & Chain of Custody); Data Models (`provenance`, `source_regions`)
@@ -325,7 +325,7 @@ because several implementation tasks depend on them.
     (Property 10).
   - _Requirements: 5.4, 5.8_
 
-- [~] 11. P1-007 — Artifact model: native vs derived
+- [x] 11. P1-007 — Artifact model: native vs derived
   - **Requirement Traceability:** Req 5.8, 5.9
   - **Design Traceability:** Native vs Derived Artifacts (`Artifact`, `NativeArtifact`,
     `DerivedArtifact`); Data Models (`artifacts`)
@@ -343,7 +343,7 @@ because several implementation tasks depend on them.
     native artifact and its hash intact.
   - _Requirements: 5.8, 5.9_
 
-- [~] 12. P1-008 — Case and Evidence domain model
+- [x] 12. P1-008 — Case and Evidence domain model
   - **Requirement Traceability:** Req 7.1, 7.2, 7.3, 7.5, 7.6, 1.8
   - **Design Traceability:** Component 2 (Case & Evidence Model); Data Models (`cases`,
     `evidence`)
@@ -361,7 +361,7 @@ because several implementation tasks depend on them.
     is `unknown`.
   - _Requirements: 7.1, 7.2, 7.3, 7.5, 7.6, 1.8_
 
-- [~] 13. P1-009 — Acquisition model and AcquisitionStatus
+- [x] 13. P1-009 — Acquisition model and AcquisitionStatus
   - **Requirement Traceability:** Req 7.7, 7.8, 7.9, 23.1, 23.2, 23.3, 23.4
   - **Design Traceability:** Acquisition Verification; Component 2 (Acquisition); Data Models
     (`acquisitions`)
@@ -380,7 +380,7 @@ because several implementation tasks depend on them.
     `Complete`; unknown-info path yields `Unknown` not `Complete`.
   - _Requirements: 7.7, 7.8, 7.9, 23.1, 23.2, 23.3, 23.4_
 
-- [~] 14. P1-010 — EvidenceReader trait (read-only, no write API)
+- [x] 14. P1-010 — EvidenceReader trait (read-only, no write API)
   - **Requirement Traceability:** Req 1.1, 8.1, 8.7, 8.9
   - **Design Traceability:** Component 1 (Evidence Reader)
   - **Description:** Define the `EvidenceReader` trait: `len`, `read_at(offset, buf)`,
@@ -395,7 +395,7 @@ because several implementation tasks depend on them.
   - **Tests:** Compile-time check that no write method exists; trait-object usage test.
   - _Requirements: 1.1, 8.1, 8.7, 8.9_
 
-- [~] 15. P1-011 — Raw/.dd/.img backend with read-only OS handles
+- [x] 15. P1-011 — Raw/.dd/.img backend with read-only OS handles
   - **Requirement Traceability:** Req 1.1, 1.2, 1.6, 1.7, 8.1, 8.7
   - **Design Traceability:** Component 1; Cross-Cutting (Read-Only Enforcement); Source Safety
     (a) read-only OS handle
@@ -413,7 +413,7 @@ because several implementation tasks depend on them.
     handle-flag unit tests where feasible; E01 rejected as unsupported.
   - _Requirements: 1.1, 1.2, 1.6, 1.7, 8.1, 8.7_
 
-- [~] 16. P1-012 — Source safety inspection (SourceState, SafetyDecision, report)
+- [x] 16. P1-012 — Source safety inspection (SourceState, SafetyDecision, report)
   - **Requirement Traceability:** Req 1.8, 1.9, 1.10, 1.11, 1.12
   - **Design Traceability:** Source Safety (`inspect_source`, `SourceSafetyReport`); Data
     Models (`source_safety_reports`)
@@ -435,7 +435,7 @@ because several implementation tasks depend on them.
     rejected; undeterminable state recorded as `Unknown`; analysis blocked on rejection.
   - _Requirements: 1.8, 1.9, 1.10, 1.11, 1.12_
 
-- [~] 17. P1-013 — Bounded read_at and RegionScanner with searched/skipped accounting
+- [x] 17. P1-013 — Bounded read_at and RegionScanner with searched/skipped accounting
   - **Requirement Traceability:** Req 8.2, 8.3, 8.9, 13.9
   - **Design Traceability:** Component 1 (read_at, RegionScanner); Bounded Scanning;
     Cross-Cutting (bounded memory)
@@ -455,7 +455,7 @@ because several implementation tasks depend on them.
     fixture (Property 2); unit: searched/skipped accounting and termination reason.
   - _Requirements: 8.2, 8.3, 8.9, 13.9_
 
-- [~] 18. P1-014 — Sparse awareness, truncation reporting, and out-of-bounds rejection
+- [x] 18. P1-014 — Sparse awareness, truncation reporting, and out-of-bounds rejection
   - **Requirement Traceability:** Req 8.10, 8.11, 24.2
   - **Design Traceability:** Component 1 (sparse/out-of-bounds); Failure / Adversarial Handling
   - **Description:** Make the reader sparse-image aware: preserve logical offsets, distinguish
@@ -472,7 +472,7 @@ because several implementation tasks depend on them.
     input panics the reader.
   - _Requirements: 8.10, 8.11, 24.2_
 
-- [~] 19. P1-015 — Read-only memory-mapped region support
+- [x] 19. P1-015 — Read-only memory-mapped region support
   - **Requirement Traceability:** Req 8.4, 1.6
   - **Design Traceability:** Component 1 (mmap_region); Read-Only Enforcement
   - **Description:** Implement optional read-only memory mapping for bounded regions where
@@ -486,7 +486,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration: mmap region equals `read_at` output; read-only mapping assertion.
   - _Requirements: 8.4, 1.6_
 
-- [~] 20. P1-016 — Progress reporting and cancellation
+- [x] 20. P1-016 — Progress reporting and cancellation
   - **Requirement Traceability:** Req 8.5, 8.6, 24.3
   - **Design Traceability:** Component 1 (RegionScanner); Failure / Adversarial Handling
   - **Description:** Add progress reporting and cooperative cancellation to long
@@ -501,7 +501,7 @@ because several implementation tasks depend on them.
     interrupted read yields a defined error.
   - _Requirements: 8.5, 8.6, 24.3_
 
-- [~] 21. P1-017 — WriteGuard and write-denied chain-of-custody logging
+- [x] 21. P1-017 — WriteGuard and write-denied chain-of-custody logging
   - **Requirement Traceability:** Req 1.3, 1.4, 1.5
   - **Design Traceability:** Cross-Cutting (Read-Only Enforcement, secondary guard)
   - **Description:** Implement the secondary application-level WriteGuard: reject writes
@@ -518,7 +518,7 @@ because several implementation tasks depend on them.
     re-hash of evidence before/after operations is unchanged.
   - _Requirements: 1.3, 1.4, 1.5_
 
-- [~] 22. P1-018 — Streaming SHA-256 Hashing_Service with hash metadata
+- [x] 22. P1-018 — Streaming SHA-256 Hashing_Service with hash metadata
   - **Requirement Traceability:** Req 5.1, 5.6, 5.7
   - **Design Traceability:** Component 3 (Hashing); Data Models (`hashes`)
   - **Description:** Implement streaming SHA-256 over the reader in bounded windows,
@@ -534,7 +534,7 @@ because several implementation tasks depend on them.
     sparse fixture.
   - _Requirements: 5.1, 5.6, 5.7_
 
-- [~] 23. P1-019 — Chain_Of_Custody logging
+- [x] 23. P1-019 — Chain_Of_Custody logging
   - **Requirement Traceability:** Req 5.3, 5.5
   - **Design Traceability:** Cross-Cutting (Provenance & Chain of Custody); Data Models
     (`chain_of_custody`)
@@ -550,7 +550,7 @@ because several implementation tasks depend on them.
     assertion.
   - _Requirements: 5.3, 5.5_
 
-- [~] 24. P1-020 — Export provenance and hashing hooks (native vs derived)
+- [x] 24. P1-020 — Export provenance and hashing hooks (native vs derived)
   - **Requirement Traceability:** Req 5.2, 5.4, 5.8, 5.9
   - **Design Traceability:** Component 3; Native vs Derived Artifacts; Cross-Cutting
     (Provenance)
@@ -567,7 +567,7 @@ because several implementation tasks depend on them.
     native-artifact-preserved assertion.
   - _Requirements: 5.2, 5.4, 5.8, 5.9_
 
-- [~] 25. P1-021 — PostgreSQL schema and sqlx migrations (Phase 1 tables)
+- [x] 25. P1-021 — PostgreSQL schema and sqlx migrations (Phase 1 tables)
   - **Requirement Traceability:** Req 5.3, 5.4, 5.8, 5.9, 7.1, 7.2, 7.3, 7.7, 21.1, 22.1,
     23.1, 23.2
   - **Design Traceability:** Data Models; Database / Data Model (Extensions)
@@ -589,7 +589,7 @@ because several implementation tasks depend on them.
     constraint test that a validation_state row requires a reason.
   - _Requirements: 5.3, 5.4, 5.8, 5.9, 7.1, 7.2, 7.3, 7.7, 21.1, 22.1, 23.1, 23.2_
 
-- [~] 26. P1-022 — Case_Manager service, validation, and acquisition verification
+- [x] 26. P1-022 — Case_Manager service, validation, and acquisition verification
   - **Requirement Traceability:** Req 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 1.9, 1.11,
     23.1, 23.2, 23.4
   - **Design Traceability:** Component 2 (Case & Evidence Model); Acquisition Verification;
@@ -614,7 +614,7 @@ because several implementation tasks depend on them.
     incomplete-acquisition-not-complete test; acquisition-map-hash test.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 1.9, 1.11, 23.1, 23.2, 23.4_
 
-- [~] 27. P1-023 — Deterministic forensic-result comparison harness
+- [x] 27. P1-023 — Deterministic forensic-result comparison harness
   - **Requirement Traceability:** Req 20.1, 20.2, 20.3, 20.4
   - **Design Traceability:** Cross-Cutting (Determinism, bounded); Correctness Properties
     (Property 4)
@@ -634,7 +634,7 @@ because several implementation tasks depend on them.
     differing ConfidenceConfig hash or recovery configuration flagged as a different input set.
   - _Requirements: 20.1, 20.2, 20.3, 20.4_
 
-- [~] 28. P1-024 — Synthetic fixture generator (labeled synthetic)
+- [x] 28. P1-024 — Synthetic fixture generator (labeled synthetic)
   - **Requirement Traceability:** Req 19.7, 19.11
   - **Design Traceability:** Testing Strategy (synthetic fixture generator); Validation Corpus
   - **Description:** Build a generator that produces small deterministic images (including
@@ -652,7 +652,7 @@ because several implementation tasks depend on them.
     assertion.
   - _Requirements: 19.7, 19.11_
 
-- [~] 29. P1-025 — Machine-readable validation corpus
+- [x] 29. P1-025 — Machine-readable validation corpus
   - **Requirement Traceability:** Req 19.10, 19.11
   - **Design Traceability:** Validation Corpus; Data Models (`validation_corpus`)
   - **Description:** Implement the `validation_corpus/` layout and its machine-readable
@@ -672,7 +672,7 @@ because several implementation tasks depend on them.
     corpus load → DB round-trip; determinism of corpus case ordering.
   - _Requirements: 19.10, 19.11_
 
-- [~] 30. P1-026 — Phase 1 foundational test suite
+- [x] 30. P1-026 — Phase 1 foundational test suite
   - **Requirement Traceability:** Req 1.1, 1.4, 1.10, 8.2, 8.3, 8.6, 8.10, 8.11, 19.6, 20.1,
     24.1, 24.2, 24.3, 24.4
   - **Design Traceability:** Testing Strategy; Correctness Properties (P1–P4); Failure /
@@ -690,7 +690,7 @@ because several implementation tasks depend on them.
   - **Tests:** Property (1, 2, 3, 4) + adversarial + integration as listed above.
   - _Requirements: 1.1, 1.4, 1.10, 8.2, 8.3, 8.6, 8.10, 8.11, 19.6, 20.1, 24.1, 24.2, 24.3, 24.4_
 
-- [~] 31. P1-027 — Axum API skeleton: case, evidence, acquisition, source-safety endpoints
+- [x] 31. P1-027 — Axum API skeleton: case, evidence, acquisition, source-safety endpoints
   - **Requirement Traceability:** Req 7.1, 7.2, 7.4, 7.7, 1.10, 18.8
   - **Design Traceability:** System Topology (Rust Backend); Component 2; Data Models
     (Frontend byte access)
@@ -711,7 +711,7 @@ because several implementation tasks depend on them.
     rejected-source response; negative test that arbitrary-path reads are not exposed.
   - _Requirements: 7.1, 7.2, 7.4, 7.7, 1.10, 18.8_
 
-- [~] 32. P1-UI-001 — UI shell, navigation, Case/Evidence/Acquisition, Overview
+- [x] 32. P1-UI-001 — UI shell, navigation, Case/Evidence/Acquisition, Overview
   - **Requirement Traceability:** Req 18.1, 18.5, 18.7, 18.8
   - **Design Traceability:** Component 13 (UI & Hex Viewer); UI (Extensions)
   - **Description:** Build the React/TypeScript shell with navigation (Case, Evidence,
@@ -735,7 +735,7 @@ because several implementation tasks depend on them.
 
 ## Phase 2 — Detection
 
-- [~] 33. P2-001 — Evidence_Status domain type
+- [x] 33. P2-001 — Evidence_Status domain type
   - **Requirement Traceability:** Req 11.5, 11.6, 11.8
   - **Design Traceability:** Component 4 (OEM Profiles); Cross-Cutting (OEM Knowledge Safety)
   - **Description:** Implement the `EvidenceStatus` enum (`validated`, `provisional`,
@@ -749,7 +749,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit: parse/serialize all five values; reject unknown value.
   - _Requirements: 11.5, 11.6, 11.8_
 
-- [~] 34. P2-002 — OEM_Profile TOML schema and types (incl. applicability)
+- [x] 34. P2-002 — OEM_Profile TOML schema and types (incl. applicability)
   - **Requirement Traceability:** Req 11.1, 11.2, 11.7, 6.5, 6.6
   - **Design Traceability:** Component 4 (OEM Profiles); C-22 (applicability)
   - **Description:** Define the `OemProfile` types (`profile_id`, `profile_version`,
@@ -768,7 +768,7 @@ because several implementation tasks depend on them.
     round-trip.
   - _Requirements: 11.1, 11.2, 11.7, 6.5, 6.6_
 
-- [~] 35. P2-003 — Profile loader, strict validation, and applicability selection
+- [x] 35. P2-003 — Profile loader, strict validation, and applicability selection
   - **Requirement Traceability:** Req 6.1, 6.5, 6.6, 11.4, 11.5, 11.8
   - **Design Traceability:** Component 4 (profile loader); OEM Profile Directory
   - **Description:** Implement loading of versioned profiles from `profiles/` for all five
@@ -787,7 +787,7 @@ because several implementation tasks depend on them.
     malformed profile, unknown-model and unknown-firmware selection paths.
   - _Requirements: 6.1, 6.5, 6.6, 11.4, 11.5, 11.8_
 
-- [~] 36. P2-004 — Profile hashing and version recording
+- [x] 36. P2-004 — Profile hashing and version recording
   - **Requirement Traceability:** Req 11.2, 11.3
   - **Design Traceability:** Component 4; Data Models (`profiles`)
   - **Description:** Compute and record each loaded profile's `profile_version`,
@@ -802,7 +802,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration: load → profile row with version + hash; profile-version-change test.
   - _Requirements: 11.2, 11.3_
 
-- [~] 37. P2-005 — EvidenceItem model (rule_match_status vs evidence_status)
+- [x] 37. P2-005 — EvidenceItem model (rule_match_status vs evidence_status)
   - **Requirement Traceability:** Req 2.2, 2.8, 9.4, 10.8
   - **Design Traceability:** Component 5 (Detection, `EvidenceItem`); Data Models
     (`evidence_items`)
@@ -822,7 +822,7 @@ because several implementation tasks depend on them.
     provisional-rule-with-match cases.
   - _Requirements: 2.2, 2.8, 9.4, 10.8_
 
-- [~] 38. P2-006 — DetectorOutput model (no attribution, no confidence)
+- [x] 38. P2-006 — DetectorOutput model (no attribution, no confidence)
   - **Requirement Traceability:** Req 2.6, 2.7, 9.2, 9.3
   - **Design Traceability:** Component 5 (`DetectorOutput`, Attribution ownership)
   - **Description:** Implement `DetectorOutput { oem_key, storage_family, status:
@@ -839,7 +839,7 @@ because several implementation tasks depend on them.
     attribution/confidence/classification fields.
   - _Requirements: 2.6, 2.7, 9.2, 9.3_
 
-- [~] 39. P2-007 — ClassifiedDetectionResult model (Confidence_Engine output only)
+- [x] 39. P2-007 — ClassifiedDetectionResult model (Confidence_Engine output only)
   - **Requirement Traceability:** Req 2.6, 2.7, 9.6, 10.9
   - **Design Traceability:** Component 5 / 6 (`ClassifiedDetectionResult`)
   - **Description:** Implement `ClassifiedDetectionResult { detector_output, raw_score,
@@ -860,7 +860,7 @@ because several implementation tasks depend on them.
     construct it.
   - _Requirements: 2.6, 2.7, 9.6, 10.9_
 
-- [~] 40. P2-008 — Detector trait
+- [x] 40. P2-008 — Detector trait
   - **Requirement Traceability:** Req 3.1, 6.4, 2.5
   - **Design Traceability:** Component 5 (Detector trait; Detector/Parser content boundary)
   - **Description:** Define `Detector` with `oem_key` and `detect(reader, profile) ->
@@ -876,7 +876,7 @@ because several implementation tasks depend on them.
   - **Tests:** Compile + stub detector unit test; detector-does-not-interpret-content test.
   - _Requirements: 3.1, 6.4, 2.5_
 
-- [~] 41. P2-009 — Detection_Orchestrator (parallel, five OEMs, evidence-independent)
+- [x] 41. P2-009 — Detection_Orchestrator (parallel, five OEMs, evidence-independent)
   - **Requirement Traceability:** Req 6.2, 9.1, 9.2, 9.5, 25.1
   - **Design Traceability:** Component 5 (Detection_Orchestrator)
   - **Description:** Load all available profiles/detectors and run `detect` in parallel over
@@ -895,7 +895,7 @@ because several implementation tasks depend on them.
     (Property 5) and order-independence (Property 4); new-profile-joins test.
   - _Requirements: 6.2, 9.1, 9.2, 9.5, 25.1_
 
-- [~] 42. P2-010 — Storage Topology Profiler
+- [x] 42. P2-010 — Storage Topology Profiler
   - **Requirement Traceability:** Req 3.6, 8.9, 24.4, 19.6
   - **Design Traceability:** Storage Topology Profiler; Bounded Scanning; Honeywell flow
   - **Description:** Implement the common topology profiler that identifies, where applicable,
@@ -918,7 +918,7 @@ because several implementation tasks depend on them.
     largest-partition-is-not-proof; property: no input panics the profiler.
   - _Requirements: 3.6, 8.9, 24.4, 19.6_
 
-- [~] 43. P2-011 — Deterministic weighted evidence scoring
+- [x] 43. P2-011 — Deterministic weighted evidence scoring
   - **Requirement Traceability:** Req 10.5, 10.7, 10.8
   - **Design Traceability:** Component 6 (Confidence Engine, per-evidence/per-OEM score)
   - **Description:** Implement `evidence_score = signature_weight × validation_factor ×
@@ -936,7 +936,7 @@ because several implementation tasks depend on them.
     source-constant lint check.
   - _Requirements: 10.5, 10.7, 10.8_
 
-- [~] 44. P2-012 — Confidence normalization (score → confidence)
+- [x] 44. P2-012 — Confidence normalization (score → confidence)
   - **Requirement Traceability:** Req 10.5
   - **Design Traceability:** Component 6 (per-OEM confidence)
   - **Description:** Normalize `oem_score` to `confidence` in 0..1 via
@@ -950,7 +950,7 @@ because several implementation tasks depend on them.
     classification; margin computation.
   - _Requirements: 10.5_
 
-- [~] 45. P2-013 — Versioned ConfidenceConfig
+- [x] 45. P2-013 — Versioned ConfidenceConfig
   - **Requirement Traceability:** Req 10.7, 10.11, 20.1
   - **Design Traceability:** Component 6 (two configuration inputs); Data Models
     (`confidence_configs`)
@@ -968,7 +968,7 @@ because several implementation tasks depend on them.
     determinism-input test via P1-023.
   - _Requirements: 10.7, 10.11, 20.1_
 
-- [~] 46. P2-014 — Classification decision order
+- [x] 46. P2-014 — Classification decision order
   - **Requirement Traceability:** Req 2.3, 10.1, 10.2, 10.3, 10.4, 10.6, 10.10, 10.11
   - **Design Traceability:** Component 6 (Decision rules)
   - **Description:** Implement the Req 10.11 decision order exactly: (1) structurally
@@ -988,7 +988,7 @@ because several implementation tasks depend on them.
     unit: each classification branch and the exact ordering.
   - _Requirements: 2.3, 10.1, 10.2, 10.3, 10.4, 10.6, 10.10, 10.11_
 
-- [~] 47. P2-015 — Attribution_Status and detection Validation_State assignment
+- [x] 47. P2-015 — Attribution_Status and detection Validation_State assignment
   - **Requirement Traceability:** Req 2.6, 2.7, 9.6, 22.1, 22.2, 22.3
   - **Design Traceability:** Component 5 (Attribution ownership); Component 6; Validation State
   - **Description:** In the Confidence_Engine, derive `AttributionStatus` from the
@@ -1008,7 +1008,7 @@ because several implementation tasks depend on them.
     classification; adversarial: attempt to set attribution from a detector fails to compile.
   - _Requirements: 2.6, 2.7, 9.6, 22.1, 22.2, 22.3_
 
-- [~] 48. P2-016 — Deterministic detection result ordering
+- [x] 48. P2-016 — Deterministic detection result ordering
   - **Requirement Traceability:** Req 20.1, 20.3, 20.4
   - **Design Traceability:** Cross-Cutting (Determinism); Component 5
   - **Description:** Ensure orchestrator and confidence output (results, evidence items,
@@ -1023,7 +1023,7 @@ because several implementation tasks depend on them.
     adversarial test.
   - _Requirements: 20.1, 20.3, 20.4_
 
-- [~] 49. P2-017 — CP Plus/UBS attribution rule enforcement
+- [x] 49. P2-017 — CP Plus/UBS attribution rule enforcement
   - **Requirement Traceability:** Req 2.4
   - **Design Traceability:** Component 5 (CP Plus/UBS); Cross-Cutting (OEM Knowledge Safety)
   - **Description:** Enforce that, absent OEM_Exclusive_Evidence, a UBS result is reported as
@@ -1038,7 +1038,7 @@ because several implementation tasks depend on them.
     (Property 7).
   - _Requirements: 2.4_
 
-- [~] 50. P2-018 — Dahua detector (profile-driven)
+- [x] 50. P2-018 — Dahua detector (profile-driven)
   - **Requirement Traceability:** Req 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3
   - **Design Traceability:** Component 5 (Dahua pipeline); OEM Spec → Dahua
   - **Description:** Implement the Dahua detector as generic interpretation logic consuming the
@@ -1060,7 +1060,7 @@ because several implementation tasks depend on them.
     valid-signature-with-corrupted-surroundings.
   - _Requirements: 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3_
 
-- [~] 51. P2-019 — Hikvision detector (profile-driven)
+- [x] 51. P2-019 — Hikvision detector (profile-driven)
   - **Requirement Traceability:** Req 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3
   - **Design Traceability:** Component 5 (Hikvision pipeline); OEM Spec → Hikvision
   - **Description:** Implement the Hikvision detector consuming its profile: candidate →
@@ -1078,7 +1078,7 @@ because several implementation tasks depend on them.
     offset, boundary mismatch, lone magic.
   - _Requirements: 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3_
 
-- [~] 52. P2-020 — Honeywell detector (profile-driven, topology-aware)
+- [x] 52. P2-020 — Honeywell detector (profile-driven, topology-aware)
   - **Requirement Traceability:** Req 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3, 24.4
   - **Design Traceability:** Component 5 (Honeywell pipeline); OEM Spec → Honeywell; Storage
     Topology Profiler
@@ -1099,7 +1099,7 @@ because several implementation tasks depend on them.
     non-512 sector, invalid sector size, partition beyond image, largest-partition-not-proof.
   - _Requirements: 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3, 24.4_
 
-- [~] 53. P2-021 — CP Plus/UBS detector (profile-driven)
+- [x] 53. P2-021 — CP Plus/UBS detector (profile-driven)
   - **Requirement Traceability:** Req 2.1, 2.2, 2.4, 2.5, 2.8, 3.1, 9.1, 11.3
   - **Design Traceability:** Component 5 (CP Plus/UBS pipeline); OEM Spec → CP Plus / UBS
   - **Description:** Implement the CP Plus/UBS detector consuming its profile: UBS partition
@@ -1118,7 +1118,7 @@ because several implementation tasks depend on them.
     superblock, invalid page size, overlapping OEM signatures, unknown firmware.
   - _Requirements: 2.1, 2.2, 2.4, 2.5, 2.8, 3.1, 9.1, 11.3_
 
-- [~] 54. P2-022 — Uniview detector (profile-driven, bounded initial scan)
+- [x] 54. P2-022 — Uniview detector (profile-driven, bounded initial scan)
   - **Requirement Traceability:** Req 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3, 25.1, 25.2, 25.3,
     25.4
   - **Design Traceability:** Component 5 (Uniview bullet); OEM Spec → Uniview; Bounded Scanning
@@ -1148,7 +1148,7 @@ because several implementation tasks depend on them.
     EcPortId (full suite in P2-023).
   - _Requirements: 2.1, 2.2, 2.5, 2.8, 3.1, 9.1, 11.3, 25.1, 25.2, 25.3, 25.4_
 
-- [~] 55. P2-023 — Detection-phase migrations
+- [x] 55. P2-023 — Detection-phase migrations
   - **Requirement Traceability:** Req 2.6, 2.8, 9.3, 9.6, 10.7, 11.2, 11.3, 19.10
   - **Design Traceability:** Data Models (`detection_results`, `evidence_items`, `profiles`,
     `confidence_configs`, `validation_corpus`); Attribution ownership in the schema
@@ -1169,7 +1169,7 @@ because several implementation tasks depend on them.
     test.
   - _Requirements: 2.6, 2.8, 9.3, 9.6, 10.7, 11.2, 11.3, 19.10_
 
-- [~] 56. P2-024 — Adversarial detection test suite (five OEMs)
+- [x] 56. P2-024 — Adversarial detection test suite (five OEMs)
   - **Requirement Traceability:** Req 2.3, 19.6, 19.8, 19.9
   - **Design Traceability:** Testing Strategy (adversarial cases); Validation Corpus
   - **Description:** Implement detection adversarial tests across all five OEMs: lone magic
@@ -1188,7 +1188,8 @@ because several implementation tasks depend on them.
   - **Tests:** Adversarial + property (determinism, confidence honesty, attribution honesty).
   - _Requirements: 2.3, 19.6, 19.8, 19.9_
 
-- [~] 57. P2-025 — Uniview detection edge-case and adversarial suite
+- [x] 57. P2-025 — Uniview detection edge-case and adversarial suite
+
   - **Requirement Traceability:** Req 25.7, 19.9, 24.1, 24.2, 24.4
   - **Design Traceability:** OEM Spec → Uniview (Edge cases); Failure / Adversarial Handling
   - **Description:** Implement the Uniview-specific edge-case suite over synthetic fixtures:
@@ -1207,7 +1208,7 @@ because several implementation tasks depend on them.
   - **Tests:** Adversarial suite as listed; property: no Uniview input panics the detector.
   - _Requirements: 25.7, 19.9, 24.1, 24.2, 24.4_
 
-- [~] 58. P2-026 — Capability stage derivation and reporting service
+- [x] 58. P2-026 — Capability stage derivation and reporting service
   - **Requirement Traceability:** Req 3.6, 3.7, 21.1, 21.2, 21.3, 21.4
   - **Design Traceability:** Capability Maturity Model; Data Models (`capability_stages`)
   - **Description:** Implement the service that derives and persists the five per-OEM
@@ -1229,7 +1230,7 @@ because several implementation tasks depend on them.
     `IMPLEMENTED`.
   - _Requirements: 3.6, 3.7, 21.1, 21.2, 21.3, 21.4_
 
-- [~] 59. P2-027 — Detection API endpoints
+- [x] 59. P2-027 — Detection API endpoints
   - **Requirement Traceability:** Req 9.1, 9.2, 9.3, 9.6, 18.8
   - **Design Traceability:** System Topology; Component 5 / 6; UI (Extensions)
   - **Description:** Add endpoints to trigger detection and fetch `ClassifiedDetectionResult`s
@@ -1248,7 +1249,7 @@ because several implementation tasks depend on them.
     both status axes and capability stages.
   - _Requirements: 9.1, 9.2, 9.3, 9.6, 18.8_
 
-- [~] 60. P2-UI-001 — Detection screen (evidence-backed)
+- [x] 60. P2-UI-001 — Detection screen (evidence-backed)
   - **Requirement Traceability:** Req 18.2, 18.7, 18.8
   - **Design Traceability:** Component 13 (UI); UI (Extensions)
   - **Description:** Build the Detection screen showing, per OEM, the attribution status,
@@ -1266,7 +1267,7 @@ because several implementation tasks depend on them.
     percentage-only path.
   - _Requirements: 18.2, 18.7, 18.8_
 
-- [~] 61. P2-UI-002 — Hex Viewer (bytes only via API/EvidenceReader)
+- [x] 61. P2-UI-002 — Hex Viewer (bytes only via API/EvidenceReader)
   - **Requirement Traceability:** Req 18.3, 18.4, 18.6
   - **Design Traceability:** Component 13 (Hex Viewer); Data Models (Frontend byte access)
   - **Description:** Implement the Hex Viewer: selecting an Evidence_Item resolves evidence id +
@@ -1283,7 +1284,7 @@ because several implementation tasks depend on them.
     component test for hex/ASCII rendering; negative test that path-based reads are impossible.
   - _Requirements: 18.3, 18.4, 18.6_
 
-- [~] 62. P2-UI-003 — Capability matrix, validation status, and storage topology views
+- [x] 62. P2-UI-003 — Capability matrix, validation status, and storage topology views
   - **Requirement Traceability:** Req 18.8, 18.9, 21.2, 22.1
   - **Design Traceability:** UI (Extensions); Capability Maturity Model; Validation State;
     Storage Topology Profiler
@@ -1309,7 +1310,7 @@ because several implementation tasks depend on them.
 
 ## Phase 3 — Parsing
 
-- [~] 63. P3-001 — Parser trait (common interface, no attribution/timeline/recovery ownership)
+- [x] 63. P3-001 — Parser trait (common interface, no attribution/timeline/recovery ownership)
   - **Requirement Traceability:** Req 3.2, 3.3, 3.4, 3.5, 6.3, 12.1, 12.5
   - **Design Traceability:** Component 7 (Parsers; Responsibility boundary)
   - **Description:** Define the `Parser` trait shared by all five OEM parsers:
@@ -1328,7 +1329,7 @@ because several implementation tasks depend on them.
     or recovery-level API.
   - _Requirements: 3.2, 3.3, 3.4, 3.5, 6.3, 12.1, 12.5_
 
-- [~] 64. P3-002 — TimeEvidence model (replaces TimestampPair)
+- [x] 64. P3-002 — TimeEvidence model (replaces TimestampPair)
   - **Requirement Traceability:** Req 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7
   - **Design Traceability:** Component 7 (`TimeEvidence`, `TimeZoneState`, `ClockCorrection`);
     Time Evidence
@@ -1353,7 +1354,7 @@ because several implementation tasks depend on them.
     correction; unit: unknown-timezone test, correction fields, impossible-timestamp handling.
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
-- [~] 65. P3-003 — Recording model and integrity
+- [x] 65. P3-003 — Recording model and integrity
   - **Requirement Traceability:** Req 12.2, 12.4
   - **Design Traceability:** Component 7 (`Recording`); Data Models (`recordings`)
   - **Description:** Implement `Recording { channel, time: TimeEvidence, source_image,
@@ -1371,7 +1372,7 @@ because several implementation tasks depend on them.
     construction succeeds.
   - _Requirements: 12.2, 12.4_
 
-- [~] 66. P3-004 — Filesystem/metadata/recording interpretation scaffolding
+- [x] 66. P3-004 — Filesystem/metadata/recording interpretation scaffolding
   - **Requirement Traceability:** Req 12.1, 12.3, 6.3
   - **Design Traceability:** Component 7 (Parsers)
   - **Description:** Implement the generic interpretation scaffolding that applies the detected
@@ -1386,7 +1387,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit against synthetic profile-shaped fixtures; out-of-bounds structure test.
   - _Requirements: 12.1, 12.3, 6.3_
 
-- [~] 67. P3-005 — TimelineEvent extraction interface
+- [x] 67. P3-005 — TimelineEvent extraction interface
   - **Requirement Traceability:** Req 15.5, 15.2
   - **Design Traceability:** Component 10 (Timeline); Component 7
   - **Description:** Implement `extract_timeline_events` producing `TimelineEvent` candidates
@@ -1401,7 +1402,7 @@ because several implementation tasks depend on them.
     timeline aggregation occurs in the parser.
   - _Requirements: 15.5, 15.2_
 
-- [~] 68. P3-006 — Parser provenance, parser_runs, and validation state
+- [x] 68. P3-006 — Parser provenance, parser_runs, and validation state
   - **Requirement Traceability:** Req 5.4, 5.8, 12.2, 22.1, 22.2, 22.3
   - **Design Traceability:** Cross-Cutting (Provenance); Component 7; Data Models
     (`parser_runs`); Validation State
@@ -1418,7 +1419,7 @@ because several implementation tasks depend on them.
     test including the unrun path.
   - _Requirements: 5.4, 5.8, 12.2, 22.1, 22.2, 22.3_
 
-- [~] 69. P3-007 — Hostile-input parser contract (no panic, checked arithmetic)
+- [x] 69. P3-007 — Hostile-input parser contract (no panic, checked arithmetic)
   - **Requirement Traceability:** Req 24.1, 24.2, 24.3, 24.4
   - **Design Traceability:** Failure / Adversarial Handling; Error Handling
   - **Description:** Establish and enforce the shared hostile-input contract for all parsers:
@@ -1440,7 +1441,7 @@ because several implementation tasks depend on them.
     class including cyclic index and excessive candidate count; cancellation mid-parse.
   - _Requirements: 24.1, 24.2, 24.3, 24.4_
 
-- [~] 70. P3-008 — Dahua parser
+- [x] 70. P3-008 — Dahua parser
   - **Requirement Traceability:** Req 12.1, 12.2, 12.3, 12.4, 12.5, 24.1
   - **Design Traceability:** Component 7 (parsers/dahua); OEM Spec → Dahua (Parser flow)
   - **Description:** Implement the Dahua parser using the Dahua profile: filesystem → metadata →
@@ -1457,7 +1458,7 @@ because several implementation tasks depend on them.
     false-positive); adversarial malformed-structure tests.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 24.1_
 
-- [~] 71. P3-009 — Hikvision parser
+- [x] 71. P3-009 — Hikvision parser
   - **Requirement Traceability:** Req 12.1, 12.2, 12.3, 12.4, 12.5, 24.1
   - **Design Traceability:** Component 7 (parsers/hikvision); OEM Spec → Hikvision (Parser flow)
   - **Description:** Implement the Hikvision parser per its profile: storage structures →
@@ -1474,7 +1475,7 @@ because several implementation tasks depend on them.
     variant, corrupted index, boundary mismatch.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 24.1_
 
-- [~] 72. P3-010 — Honeywell parser
+- [x] 72. P3-010 — Honeywell parser
   - **Requirement Traceability:** Req 12.1, 12.2, 12.3, 12.4, 12.5, 24.4
   - **Design Traceability:** Component 7 (parsers/honeywell); OEM Spec → Honeywell (Parser flow)
   - **Description:** Implement the Honeywell parser per its profile: candidate region →
@@ -1493,7 +1494,7 @@ because several implementation tasks depend on them.
     sector size, partition beyond image, corrupted metadata.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 24.4_
 
-- [~] 73. P3-011 — CP Plus/UBS parser
+- [x] 73. P3-011 — CP Plus/UBS parser
   - **Requirement Traceability:** Req 12.1, 12.2, 12.3, 12.4, 12.5, 24.1
   - **Design Traceability:** Component 7 (parsers/cpplus-ubs); OEM Spec → CP Plus / UBS
     (Parser flow)
@@ -1512,7 +1513,7 @@ because several implementation tasks depend on them.
     firmware.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 24.1_
 
-- [~] 74. P3-012 — Uniview parser
+- [x] 74. P3-012 — Uniview parser
   - **Requirement Traceability:** Req 12.1, 12.2, 12.3, 12.4, 12.5, 25.1, 25.3, 25.5, 24.1,
     24.4
   - **Design Traceability:** Component 7 (parsers/uniview); OEM Spec → Uniview (Parser flow,
@@ -1540,7 +1541,7 @@ because several implementation tasks depend on them.
     region-identification test; adversarial cases covered in P3-015.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 25.1, 25.3, 25.5, 24.1, 24.4_
 
-- [~] 75. P3-013 — Phase 3 migrations (parser runs, recordings, timeline events)
+- [x] 75. P3-013 — Phase 3 migrations (parser runs, recordings, timeline events)
   - **Requirement Traceability:** Req 4.5, 4.6, 4.7, 12.2, 15.2, 22.1
   - **Design Traceability:** Data Models (`parser_runs`, `recordings`, `timeline_events`)
   - **Description:** Add sqlx migrations for `parser_runs` (parser id/version, profile version +
@@ -1558,7 +1559,7 @@ because several implementation tasks depend on them.
     query "which bytes produced this recording".
   - _Requirements: 4.5, 4.6, 4.7, 12.2, 15.2, 22.1_
 
-- [~] 76. P3-014 — Parser test corpus (five OEMs)
+- [x] 76. P3-014 — Parser test corpus (five OEMs)
   - **Requirement Traceability:** Req 19.1, 19.3, 19.9, 19.10
   - **Design Traceability:** Testing Strategy; Validation Corpus
   - **Description:** Assemble, for each of the five OEMs, parser fixtures and tests covering
@@ -1576,7 +1577,7 @@ because several implementation tasks depend on them.
     success rate.
   - _Requirements: 19.1, 19.3, 19.9, 19.10_
 
-- [~] 77. P3-015 — Uniview parser edge-case and adversarial suite
+- [x] 77. P3-015 — Uniview parser edge-case and adversarial suite
   - **Requirement Traceability:** Req 25.7, 19.9, 24.1, 24.2, 24.4
   - **Design Traceability:** OEM Spec → Uniview (Edge cases); Failure / Adversarial Handling
   - **Description:** Implement the Uniview parser-side edge-case suite: missing superblock,
@@ -1595,7 +1596,7 @@ because several implementation tasks depend on them.
     parser.
   - _Requirements: 25.7, 19.9, 24.1, 24.2, 24.4_
 
-- [~] 78. P3-UI-001 — Parsing screen (parser status and time classes)
+- [x] 78. P3-UI-001 — Parsing screen (parser status and time classes)
   - **Requirement Traceability:** Req 18.1, 18.8
   - **Design Traceability:** Component 13 (UI); UI (Extensions)
   - **Description:** Build the Parsing screen (filesystem/profile and applicability, channels,
@@ -1616,7 +1617,7 @@ because several implementation tasks depend on them.
 
 ## Phase 4 — Recovery + Video Reconstruction
 
-- [~] 79. P4-001 — DataState and RecoveryStatus types (independent)
+- [x] 79. P4-001 — DataState and RecoveryStatus types (independent)
   - **Requirement Traceability:** Req 13.2, 13.6, 13.7, 13.8
   - **Design Traceability:** Component 8 (two-dimensional model)
   - **Description:** Implement `DataState { Active, Deleted, Orphaned, Corrupted, Overwritten }`
@@ -1632,7 +1633,7 @@ because several implementation tasks depend on them.
     no-conversion check.
   - _Requirements: 13.2, 13.6, 13.7, 13.8_
 
-- [~] 80. P4-002 — RecoveryCandidate model
+- [x] 80. P4-002 — RecoveryCandidate model
   - **Requirement Traceability:** Req 13.5, 5.4
   - **Design Traceability:** Component 8 (`RecoveryCandidate`); Data Models
     (`recovery_candidates`)
@@ -1647,7 +1648,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit: construction + serde; both-dimensions-present assertion.
   - _Requirements: 13.5, 5.4_
 
-- [~] 81. P4-003 — RecoveryBounds and RecoveryRun (REVIEW when truncated)
+- [x] 81. P4-003 — RecoveryBounds and RecoveryRun (REVIEW when truncated)
   - **Requirement Traceability:** Req 13.9, 13.10, 22.1, 22.2, 8.5, 8.6
   - **Design Traceability:** Recovery Engine (Expanded) (`RecoveryBounds`, `RecoveryRun`);
     Bounded Scanning; Data Models (`recovery_runs`)

@@ -1,0 +1,24 @@
+{
+  "case_id": "SYNTH-CPPLUS_UBS-OVERLAPPING_SIGNATURE-001",
+  "source_path": "synthetic_cpplus_ubs_overlapping_signature_1.raw",
+  "source_hash": {
+    "algorithm": "sha256",
+    "value": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_type": "raw",
+  "expected_detection": "cpplus_ubs",
+  "expected_detection_status": "confirmed",
+  "expected_classification": "confirmed",
+  "expected_attribution_status": "confirmed",
+  "expected_regions": [
+    {
+      "offset": 0,
+      "length": 512
+    }
+  ],
+  "expected_parser_state": "parsed",
+  "expected_recovery_state": "l1_carving_available",
+  "expected_validation_state": "review",
+  "expected_warnings": [],
+  "synthetic": true
+}

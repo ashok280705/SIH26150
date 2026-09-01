@@ -8,3 +8,6 @@ publish.workspace = true
 
 # Pure core crate: no network, no database.
 [dependencies]
+forensic-core = { path = "../forensic-core" }
+evidence-reader = { path = "../evidence-reader" }
+parsers-core = { path = "../parsers-core" }

@@ -1,0 +1,21 @@
+config_id = "classification"
+config_version = "classification-1.0.0"
+status = "provisional"
+
+[thresholds]
+min_confidence = 0.65
+min_margin = 0.20
+min_quality = 0.50
+
+[validation_factors]
+validated = 1.00
+provisional = 0.80
+model_specific = 0.70
+firmware_specific = 0.60
+unvalidated = 0.40
+
+[quality_factors]
+match = 1.00
+partial = 0.50
+mismatch = 0.00
+absent = 0.00

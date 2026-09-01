@@ -1,0 +1,45 @@
+profile_id = "cpplus-ubs-v1.0"
+profile_version = "1.0.0"
+schema_version = "1.0"
+oem = "cpplus_ubs"
+storage_family = "CPPLUS_UBS"
+
+[applicability]
+models = ["CP-UVR", "CP-PLUS-ORANGE", "UBS-OEM"]
+firmwares = []
+storage_variants = ["single_disk"]
+reference = "CP Plus UBS Storage Structure Analysis 2024"
+
+[[signatures]]
+name = "ubs_partition_marker"
+pattern_hex = "55 42 53 5F" # "UBS_"
+evidence_status = "provisional"
+weight = 0.70
+is_exclusive = false # Req 2.4: UBS alone does not confirm CP Plus!
+explanation = "Universal Block Storage header marker (compatible with CP Plus)"
+
+[[signatures.offset_constraints]]
+type = "exact"
+offset = 0
+
+[[signatures]]
+name = "cpplus_oem_string"
+pattern_hex = "43 50 50 4C 55 53" # "CPPLUS"
+evidence_status = "model_specific"
+weight = 0.50
+is_exclusive = true # Exclusive CP Plus vendor string
+explanation = "CP Plus explicit OEM branding identifier in descriptor table"
+
+[[signatures.offset_constraints]]
+type = "aligned_range"
+start = 0
+end = 1048576
+alignment = 512
+
+[confidence_weights]
+max_possible_score = 1.20
+min_threshold = 0.60
+
+[layout]
+superblock_size = 512
+cpplus_marker_start = 512

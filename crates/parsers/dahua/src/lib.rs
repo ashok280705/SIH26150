@@ -16,3 +16,7 @@
 //! Skeleton only — the parser lands in P3-008.
 
 #![forbid(unsafe_code)]
+
+pub mod parser;
+
+pub use parser::DahuaParser;

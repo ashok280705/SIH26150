@@ -8,3 +8,12 @@ publish.workspace = true
 
 # Pure core crate: no network, no database. OEM facts come from profiles/honeywell/.
 [dependencies]
+forensic-core = { path = "../../forensic-core" }
+evidence-reader = { path = "../../evidence-reader" }
+parsers-core = { path = "../../parsers-core" }
+hex = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+forensic-tests = { path = "../../../tests" }
+tempfile = "3"

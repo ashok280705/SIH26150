@@ -16,6 +16,22 @@
 //!   requests are rejected with `OutOfBounds` (Req 8.9–8.11).
 //! * `.raw`, `.dd`, `.img`, and physical disks are in scope. `.E01` stays a planned,
 //!   dependency-gated integration and is not implemented by assumption (Req 8.8; OPEN-1).
-//!
-//! Skeleton only — the reader lands in later Phase 1 tasks. Note this crate deliberately
-//! does not `forbid(unsafe_code)`: read-only memory maps may require `unsafe`.
+
+// This crate deliberately does not `forbid(unsafe_code)`: read-only memory maps may
+// require `unsafe`.
+
+pub mod reader;
+pub mod config;
+pub mod raw;
+pub mod source_safety;
+pub mod progress;
+pub mod scanner;
+pub mod mmap;
+
+pub use reader::{EvidenceReader, SourceKind};
+pub use config::ReaderConfig;
+pub use raw::RawReader;
+pub use source_safety::{SafetyDecision, SourceSafetyReport, inspect_source};
+pub use progress::{CancellationToken, ProgressCallback, ProgressInfo};
+pub use scanner::{RegionScanner, ScanOptions, ScanReport, TerminationReason};
+pub use mmap::ReadOnlyMmap;
