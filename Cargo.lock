@@ -749,6 +749,16 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "recovery"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "evidence-reader",
+ "forensic-core",
+ "parser-uniview",
+ "parsers-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "redox_syscall"
@@ -762,6 +772,13 @@ dependencies = [
 [[package]]
 name = "reporting"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "forensic-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "rustix"
@@ -1000,6 +1017,12 @@ dependencies = [
 [[package]]
 name = "timeline"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "forensic-core",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "tokio"

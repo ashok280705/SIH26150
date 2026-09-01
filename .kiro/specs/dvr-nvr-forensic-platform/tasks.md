@@ -1671,7 +1671,7 @@ because several implementation tasks depend on them.
     no truncated run claims a global optimum.
   - _Requirements: 13.9, 13.10, 22.1, 22.2, 8.5, 8.6_
 
-- [~] 82. P4-004 — Recovery_Engine orchestration
+- [x] 82. P4-004 — Recovery_Engine orchestration
   - **Requirement Traceability:** Req 13.1, 13.5, 12.1
   - **Design Traceability:** Component 8 (Recovery Engine owns orchestration); Recovery Engine
     (Expanded)
@@ -1690,7 +1690,7 @@ because several implementation tasks depend on them.
     assertion that the parser never drives level selection.
   - _Requirements: 13.1, 13.5, 12.1_
 
-- [~] 83. P4-005 — Level 1 indexed recovery
+- [x] 83. P4-005 — Level 1 indexed recovery
   - **Requirement Traceability:** Req 13.1
   - **Design Traceability:** Component 8 (Level 1)
   - **Description:** Implement indexed recovery: valid filesystem/index → recording entry →
@@ -1703,7 +1703,7 @@ because several implementation tasks depend on them.
   - **Tests:** Fixture-based L1 test; adversarial: index entry pointing out of bounds.
   - _Requirements: 13.1_
 
-- [~] 84. P4-006 — Level 2 orphan/slack recovery
+- [x] 84. P4-006 — Level 2 orphan/slack recovery
   - **Requirement Traceability:** Req 13.1, 13.4
   - **Design Traceability:** Component 8 (Level 2)
   - **Description:** Implement orphan/slack recovery: metadata missing, payload remains →
@@ -1717,7 +1717,7 @@ because several implementation tasks depend on them.
     not `Overwritten`.
   - _Requirements: 13.1, 13.4_
 
-- [~] 85. P4-007 — Level 3 raw carving (bounded, cancellable)
+- [x] 85. P4-007 — Level 3 raw carving (bounded, cancellable)
   - **Requirement Traceability:** Req 13.1, 13.9, 13.10, 8.2
   - **Design Traceability:** Component 8 (Level 3); Bounded Scanning
   - **Description:** Implement raw carving via windowed, bounded, cancellable,
@@ -1734,7 +1734,7 @@ because several implementation tasks depend on them.
     excessive candidate count bounded and reported.
   - _Requirements: 13.1, 13.9, 13.10, 8.2_
 
-- [~] 86. P4-008 — Candidate frame validation
+- [x] 86. P4-008 — Candidate frame validation
   - **Requirement Traceability:** Req 13.4
   - **Design Traceability:** Component 8 (candidate validation); Codec / Media Validation
   - **Description:** Validate candidate frames against OEM signatures, structure, timestamps,
@@ -1750,7 +1750,7 @@ because several implementation tasks depend on them.
     does not validate a candidate.
   - _Requirements: 13.4_
 
-- [~] 87. P4-009 — Overwritten/unrecoverable classification rules
+- [x] 87. P4-009 — Overwritten/unrecoverable classification rules
   - **Requirement Traceability:** Req 13.3, 13.7, 13.8, 13.11
   - **Design Traceability:** Component 8 (two-dimensional model)
   - **Description:** Implement the classification rules: physical overwrite sets
@@ -1771,7 +1771,7 @@ because several implementation tasks depend on them.
     (Property 9).
   - _Requirements: 13.3, 13.7, 13.8, 13.11_
 
-- [~] 88. P4-010 — Reconstruction hypothesis model with deterministic tie-break
+- [x] 88. P4-010 — Reconstruction hypothesis model with deterministic tie-break
   - **Requirement Traceability:** Req 13.9, 13.10, 14.2, 20.1, 20.4, 22.1, 22.2
   - **Design Traceability:** Reconstruction Graph / Hypothesis Model
   - **Description:** Implement the generic reconstruction abstraction supporting competing
@@ -1795,7 +1795,7 @@ because several implementation tasks depend on them.
     hypothesis-count test.
   - _Requirements: 13.9, 13.10, 14.2, 20.1, 20.4, 22.1, 22.2_
 
-- [~] 89. P4-011 — Fragmented recording handling
+- [x] 89. P4-011 — Fragmented recording handling
   - **Requirement Traceability:** Req 19.6, 14.3, 24.2
   - **Design Traceability:** Component 8 / 9; Failure / Adversarial Handling
   - **Description:** Handle fragmented recordings by reassembling validated fragments or marking
@@ -1809,7 +1809,7 @@ because several implementation tasks depend on them.
   - **Tests:** Adversarial: fragmented recording; pathological fragmentation bounded.
   - _Requirements: 19.6, 14.3, 24.2_
 
-- [~] 90. P4-012 — Circular/wrap storage handling
+- [x] 90. P4-012 — Circular/wrap storage handling
   - **Requirement Traceability:** Req 14.8, 13.11, 15.6
   - **Design Traceability:** Component 9 (`circular/wrap storage`); Time Evidence
   - **Description:** Handle circular/wrap storage explicitly: detect wrap boundaries from
@@ -1827,7 +1827,7 @@ because several implementation tasks depend on them.
     wrap-without-overwrite-evidence test.
   - _Requirements: 14.8, 13.11, 15.6_
 
-- [~] 91. P4-013 — FFmpeg integration for remux/transmux
+- [x] 91. P4-013 — FFmpeg integration for remux/transmux
   - **Requirement Traceability:** Req 14.4, 14.9
   - **Design Traceability:** Component 9 (Video Reconstruction); OPEN-3
   - **Description:** Integrate FFmpeg per OPEN-3 for remux/transmux, preferring remux over
@@ -1842,7 +1842,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration: remux path; absence path returns `UNKNOWN`/`REVIEW`, never `PASS`.
   - _Requirements: 14.4, 14.9_
 
-- [~] 92. P4-014 — Frame/GOP validation and ordering
+- [x] 92. P4-014 — Frame/GOP validation and ordering
   - **Requirement Traceability:** Req 14.1, 14.2, 14.7
   - **Design Traceability:** Component 9; Codec / Media Validation
   - **Description:** Validate frame headers, sizes, timestamps, channels, and sequence, and
@@ -1858,7 +1858,7 @@ because several implementation tasks depend on them.
     independence test.
   - _Requirements: 14.1, 14.2, 14.7_
 
-- [~] 93. P4-015 — Gap marking
+- [x] 93. P4-015 — Gap marking
   - **Requirement Traceability:** Req 14.3
   - **Design Traceability:** Component 9
   - **Description:** Detect missing frames and mark gaps; never synthesize fill content.
@@ -1871,7 +1871,7 @@ because several implementation tasks depend on them.
     exceeds validated frames.
   - _Requirements: 14.3_
 
-- [~] 94. P4-016 — Codec and media validation (codec identity ≠ OEM identity)
+- [x] 94. P4-016 — Codec and media validation (codec identity ≠ OEM identity)
   - **Requirement Traceability:** Req 14.5, 14.6, 14.7
   - **Design Traceability:** Codec / Media Validation
   - **Description:** Implement media inspection (FFprobe-style), frame-count validation,
@@ -1889,7 +1889,7 @@ because several implementation tasks depend on them.
     native-vs-derived separation assertion.
   - _Requirements: 14.5, 14.6, 14.7_
 
-- [~] 95. P4-017 — Video_Reconstructor Validation_State assignment
+- [x] 95. P4-017 — Video_Reconstructor Validation_State assignment
   - **Requirement Traceability:** Req 14.9, 14.10, 22.1, 22.2, 22.3
   - **Design Traceability:** Component 9; Validation State
   - **Description:** Assign every reconstruction a `Validation_State` with a reason: `PASS` only
@@ -1909,7 +1909,7 @@ because several implementation tasks depend on them.
     yields `FAIL`.
   - _Requirements: 14.9, 14.10, 22.1, 22.2, 22.3_
 
-- [~] 96. P4-018 — Native vs derived artifact production in reconstruction
+- [x] 96. P4-018 — Native vs derived artifact production in reconstruction
   - **Requirement Traceability:** Req 5.8, 5.9, 14.6
   - **Design Traceability:** Native vs Derived Artifacts; Component 9
   - **Description:** Produce and persist reconstruction outputs as explicit artifact classes:
@@ -1927,7 +1927,7 @@ because several implementation tasks depend on them.
     derived production does not overwrite or invalidate the native artifact.
   - _Requirements: 5.8, 5.9, 14.6_
 
-- [~] 97. P4-019 — Decode validation and export hashing
+- [x] 97. P4-019 — Decode validation and export hashing
   - **Requirement Traceability:** Req 14.5, 5.2, 22.1
   - **Design Traceability:** Component 9; Component 3; Validation State
   - **Description:** Run a decode test on reconstructed output, record the decode result as part
@@ -1941,7 +1941,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration: decode test + export hash/provenance; unrun-decode yields `UNKNOWN`.
   - _Requirements: 14.5, 5.2, 22.1_
 
-- [~] 98. P4-020 — Uniview L1/L2/L3 recovery application
+- [x] 98. P4-020 — Uniview L1/L2/L3 recovery application
   - **Requirement Traceability:** Req 25.6, 13.1, 13.2, 13.9, 13.10
   - **Design Traceability:** OEM Spec → Uniview (Recovery interaction); Recovery Engine
     (Expanded)
@@ -1962,7 +1962,7 @@ because several implementation tasks depend on them.
     truncated carve → `REVIEW`, out-of-bounds block.
   - _Requirements: 25.6, 13.1, 13.2, 13.9, 13.10_
 
-- [~] 99. P4-021 — Phase 4 migrations (recovery runs, candidates, artifacts/provenance)
+- [x] 99. P4-021 — Phase 4 migrations (recovery runs, candidates, artifacts/provenance)
   - **Requirement Traceability:** Req 13.5, 13.9, 5.8, 5.9, 22.1
   - **Design Traceability:** Data Models (`recovery_candidates`, `recovery_runs`, `artifacts`,
     `provenance`)
@@ -1982,7 +1982,7 @@ because several implementation tasks depend on them.
     "which bytes were searched and which were skipped".
   - _Requirements: 13.5, 13.9, 5.8, 5.9, 22.1_
 
-- [~] 100. P4-022 — Recovery and reconstruction test suite
+- [x] 100. P4-022 — Recovery and reconstruction test suite
   - **Requirement Traceability:** Req 19.3, 19.6, 19.9, 13.10, 14.10
   - **Design Traceability:** Testing Strategy; Validation Corpus
   - **Description:** Assemble recovery/reconstruction tests across all five OEMs: overwritten
@@ -2000,7 +2000,7 @@ because several implementation tasks depend on them.
   - **Tests:** Adversarial + benchmark, corpus-driven (Property 9).
   - _Requirements: 19.3, 19.6, 19.9, 13.10, 14.10_
 
-- [~] 101. P4-023 — Adversarial recovery hostile-input suite
+- [x] 101. P4-023 — Adversarial recovery hostile-input suite
   - **Requirement Traceability:** Req 24.1, 24.2, 24.3, 24.4
   - **Design Traceability:** Failure / Adversarial Handling; Recovery Engine (Expanded)
   - **Description:** Implement the recovery-side hostile-input suite: integer/offset/length
@@ -2019,7 +2019,7 @@ because several implementation tasks depend on them.
     resource-bound assertions.
   - _Requirements: 24.1, 24.2, 24.3, 24.4_
 
-- [~] 102. P4-UI-001 — Recovery screen (states, bounds, reconstruction status)
+- [x] 102. P4-UI-001 — Recovery screen (states, bounds, reconstruction status)
   - **Requirement Traceability:** Req 18.1, 18.8
   - **Design Traceability:** Component 13 (UI); UI (Extensions)
   - **Description:** Build the Recovery screen (active/orphaned/deleted/slack/carved/partial/
@@ -2043,7 +2043,7 @@ because several implementation tasks depend on them.
 
 ## Phase 5 — Timeline
 
-- [~] 103. P5-001 — TimelineEvent model
+- [x] 103. P5-001 — TimelineEvent model
   - **Requirement Traceability:** Req 15.2
   - **Design Traceability:** Component 10 (Timeline); Data Models (`timeline_events`)
   - **Description:** Implement the `TimelineEvent` model (camera, `TimeEvidence`, recording id,
@@ -2056,7 +2056,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit: construction + serde; time-class preservation.
   - _Requirements: 15.2_
 
-- [~] 104. P5-002 — Timeline_Engine unified timeline construction
+- [x] 104. P5-002 — Timeline_Engine unified timeline construction
   - **Requirement Traceability:** Req 15.1, 15.5
   - **Design Traceability:** Component 10 (Timeline_Engine owns unified timeline)
   - **Description:** Build the unified cross-camera timeline spanning all cameras in a case from
@@ -2070,7 +2070,7 @@ because several implementation tasks depend on them.
     check.
   - _Requirements: 15.1, 15.5_
 
-- [~] 105. P5-003 — Normalized ordering with raw and recorder-native preservation
+- [x] 105. P5-003 — Normalized ordering with raw and recorder-native preservation
   - **Requirement Traceability:** Req 15.3, 4.3, 4.5, 4.6
   - **Design Traceability:** Component 10; Time Evidence
   - **Description:** Order events by `Normalized_Timestamp` while retaining each event's
@@ -2085,7 +2085,7 @@ because several implementation tasks depend on them.
     correctness; unknown-timezone flagging.
   - _Requirements: 15.3, 4.3, 4.5, 4.6_
 
-- [~] 106. P5-004 — Distinguishable physical, recorder-native, and normalized order
+- [x] 106. P5-004 — Distinguishable physical, recorder-native, and normalized order
   - **Requirement Traceability:** Req 15.6, 14.7
   - **Design Traceability:** Component 10; Time Evidence; Component 9 (physical order)
   - **Description:** Represent and expose three distinguishable orderings of the same events:
@@ -2101,7 +2101,7 @@ because several implementation tasks depend on them.
     physical-order-is-not-chronological assertion.
   - _Requirements: 15.6, 14.7_
 
-- [~] 107. P5-005 — Cross-camera correlation
+- [x] 107. P5-005 — Cross-camera correlation
   - **Requirement Traceability:** Req 15.4
   - **Design Traceability:** Component 10 (correlation)
   - **Description:** Correlate events across cameras by normalized time windows, linking
@@ -2116,7 +2116,7 @@ because several implementation tasks depend on them.
     uncertainty flag.
   - _Requirements: 15.4_
 
-- [~] 108. P5-006 — Timeline test suite
+- [x] 108. P5-006 — Timeline test suite
   - **Requirement Traceability:** Req 19.4, 20.1, 15.6
   - **Design Traceability:** Testing Strategy
   - **Description:** Implement timeline tests including timestamp-accuracy measurement,
@@ -2130,7 +2130,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration + property (determinism, Property 8) + benchmark recording.
   - _Requirements: 19.4, 20.1, 15.6_
 
-- [~] 109. P5-UI-001 — Timeline and Evidence/Provenance screens
+- [x] 109. P5-UI-001 — Timeline and Evidence/Provenance screens
   - **Requirement Traceability:** Req 18.1, 18.8
   - **Design Traceability:** Component 13 (UI); UI (Extensions)
   - **Description:** Build the Timeline screen (unified, cross-camera, with selectable physical /
@@ -2152,7 +2152,7 @@ because several implementation tasks depend on them.
 
 ## Phase 6 — Reporting
 
-- [~] 110. P6-001 — Report model
+- [x] 110. P6-001 — Report model
   - **Requirement Traceability:** Req 17.2, 17.5
   - **Design Traceability:** Component 12 (Reporting)
   - **Description:** Define the report model aggregating case info, evidence info, acquisition
@@ -2173,7 +2173,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit: model completeness against the Req 17.2/17.5 field list.
   - _Requirements: 17.2, 17.5_
 
-- [~] 111. P6-002 — JSON report export
+- [x] 111. P6-002 — JSON report export
   - **Requirement Traceability:** Req 17.1, 17.2
   - **Design Traceability:** Component 12
   - **Description:** Implement JSON export of the report model.
@@ -2185,7 +2185,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit: JSON schema/content check; determinism of serialized forensic fields.
   - _Requirements: 17.1, 17.2_
 
-- [~] 112. P6-003 — CSV report export
+- [x] 112. P6-003 — CSV report export
   - **Requirement Traceability:** Req 17.1, 17.2
   - **Design Traceability:** Component 12
   - **Description:** Implement CSV export for the tabular report sections (recordings, recovery
@@ -2199,7 +2199,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit: CSV content and column-presence checks.
   - _Requirements: 17.1, 17.2_
 
-- [~] 113. P6-004 — PDF report export
+- [x] 113. P6-004 — PDF report export
   - **Requirement Traceability:** Req 17.1, 17.2
   - **Design Traceability:** Component 12
   - **Description:** Implement PDF export presenting the report sections in the
@@ -2213,7 +2213,7 @@ because several implementation tasks depend on them.
     admissibility.
   - _Requirements: 17.1, 17.2_
 
-- [~] 114. P6-005 — Report hashing, provenance, and chain of custody
+- [x] 114. P6-005 — Report hashing, provenance, and chain of custody
   - **Requirement Traceability:** Req 17.3, 5.2, 5.8
   - **Design Traceability:** Component 12; Component 3; Native vs Derived Artifacts
   - **Description:** Hash each generated report (SHA-256) and record its `Provenance`, artifact
@@ -2226,7 +2226,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration: report → hash + provenance + artifact class + COC.
   - _Requirements: 17.3, 5.2, 5.8_
 
-- [~] 115. P6-006 — Limitations section
+- [x] 115. P6-006 — Limitations section
   - **Requirement Traceability:** Req 17.4
   - **Design Traceability:** Component 12
   - **Description:** Include an explicit limitations section in every report: attribution
@@ -2242,7 +2242,7 @@ because several implementation tasks depend on them.
   - **Tests:** Unit: limitations present and complete in JSON/CSV/PDF.
   - _Requirements: 17.4_
 
-- [~] 116. P6-007 — Capability and validation honesty in reporting
+- [x] 116. P6-007 — Capability and validation honesty in reporting
   - **Requirement Traceability:** Req 17.5, 17.6, 21.3, 22.3
   - **Design Traceability:** Component 12; Capability Maturity Model; Validation State
   - **Description:** Implement the reporting guards that state which capabilities were actually
@@ -2265,7 +2265,7 @@ because several implementation tasks depend on them.
     present.
   - _Requirements: 17.5, 17.6, 21.3, 22.3_
 
-- [~] 117. P6-008 — Reporting test suite
+- [x] 117. P6-008 — Reporting test suite
   - **Requirement Traceability:** Req 19.5, 17.5, 17.6
   - **Design Traceability:** Testing Strategy; Testing and QA (Release Gates)
   - **Description:** Tests validating report content and completeness, hashing, provenance,
@@ -2278,7 +2278,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration + unit as listed.
   - _Requirements: 19.5, 17.5, 17.6_
 
-- [~] 118. P6-UI-001 — Reports screen
+- [x] 118. P6-UI-001 — Reports screen
   - **Requirement Traceability:** Req 18.1, 18.8
   - **Design Traceability:** Component 13 (UI)
   - **Description:** Build the Reports screen to request PDF/JSON/CSV and show the hash,
@@ -2295,7 +2295,7 @@ because several implementation tasks depend on them.
 
 ## Phase 7 — AI (Optional)
 
-- [~] 119. P7-001 — Python/FastAPI AI service scaffold
+- [x] 119. P7-001 — Python/FastAPI AI service scaffold
   - **Requirement Traceability:** Req 16.1
   - **Design Traceability:** Component 11 (AI Analytics)
   - **Description:** Scaffold the optional Python/FastAPI service (OpenCV/PyTorch) invoked over
@@ -2309,7 +2309,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration: health check; negative test that evidence paths are not accepted.
   - _Requirements: 16.1_
 
-- [~] 120. P7-002 — Validated-evidence boundary
+- [x] 120. P7-002 — Validated-evidence boundary
   - **Requirement Traceability:** Req 16.1, 16.6
   - **Design Traceability:** Component 11
   - **Description:** Ensure AI operates only on parser-validated evidence, rejecting
@@ -2323,7 +2323,7 @@ because several implementation tasks depend on them.
   - **Tests:** Integration: non-validated input rejected; write-attempt from AI path denied.
   - _Requirements: 16.1, 16.6_
 
-- [~] 121. P7-003 — AI finding model as Derived_Artifact with provenance and labeling
+- [x] 121. P7-003 — AI finding model as Derived_Artifact with provenance and labeling
   - **Requirement Traceability:** Req 16.2, 16.3, 16.4, 16.6, 5.9
   - **Design Traceability:** Component 11; Native vs Derived Artifacts; Data Models
     (`ai_findings`)
@@ -2341,7 +2341,7 @@ because several implementation tasks depend on them.
     attribution or replace a native artifact.
   - _Requirements: 16.2, 16.3, 16.4, 16.6, 5.9_
 
-- [~] 122. P7-004 — Graceful degradation and disabled path
+- [x] 122. P7-004 — Graceful degradation and disabled path
   - **Requirement Traceability:** Req 16.5
   - **Design Traceability:** Component 11 (graceful degradation)
   - **Description:** When AI is disabled or unavailable, the platform completes parsing,
@@ -2355,7 +2355,7 @@ because several implementation tasks depend on them.
     reported as not executed.
   - _Requirements: 16.5_
 
-- [~] 123. P7-005 — AI test suite
+- [x] 123. P7-005 — AI test suite
   - **Requirement Traceability:** Req 16.2, 16.3, 16.4, 16.5, 16.6
   - **Design Traceability:** Testing Strategy
   - **Description:** Tests for the validated-evidence boundary, provenance, AI-assisted labeling,

@@ -21,5 +21,15 @@
 #![forbid(unsafe_code)]
 
 pub mod engine;
+pub mod levels;
+pub mod validation;
+pub mod classification;
+pub mod hypothesis;
+pub mod fragmentation;
+pub mod wrap_storage;
+pub mod video;
+pub mod reconstructor;
 
 pub use engine::RecoveryEngine;
+pub use classification::classify_recovery;
+pub use reconstructor::{VideoCodec, MediaMetadata, ReconstructionOutput, VideoReconstructor};

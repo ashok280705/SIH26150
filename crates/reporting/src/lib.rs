@@ -13,6 +13,16 @@
 //!   unsupported or did not run. An operation that did not run is never `PASS` (Req 21, 22).
 //! * A profile-only match is never presented as a reconstruction.
 //!
-//! Skeleton only — the service lands in Phase 6.
-
 #![forbid(unsafe_code)]
+
+pub mod model;
+pub mod json;
+pub mod csv;
+pub mod formatted;
+pub mod provenance;
+
+pub use model::ForensicReport;
+pub use json::JsonReportExporter;
+pub use csv::CsvReportExporter;
+pub use formatted::FormattedReportExporter;
+pub use provenance::ReportAuditor;

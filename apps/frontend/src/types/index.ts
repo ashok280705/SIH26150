@@ -189,3 +189,35 @@ export interface DeletedCandidate {
   reason: string;
   validation: ValidationState;
 }
+
+export type DataState = 'Active' | 'Deleted' | 'Orphaned' | 'Corrupted' | 'Overwritten';
+export type RecoveryStatus = 'Recoverable' | 'PartiallyRecoverable' | 'Unrecoverable';
+export type RecoveryLevel = 'L1' | 'L2' | 'L3';
+
+export interface RecoveryCandidateUI {
+  id: string;
+  channel: number;
+  time_native: string;
+  duration_sec: number;
+  data_state: DataState;
+  recovery_status: RecoveryStatus;
+  recovery_level: RecoveryLevel;
+  source_offset: number;
+  source_length: number;
+  integrity_status: string;
+  codec: string;
+  validation: ValidationState;
+  has_native_artifact: boolean;
+  has_derived_artifact: boolean;
+}
+
+export interface RecoveryRunUI {
+  searched_bytes: number;
+  total_bytes: number;
+  skipped_bytes: number;
+  candidate_count: number;
+  accepted: number;
+  rejected: number;
+  truncated: boolean;
+  validation_state: ValidationState;
+}

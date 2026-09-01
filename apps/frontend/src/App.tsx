@@ -6,9 +6,11 @@ import { CaseView } from './views/CaseView';
 import { EvidenceView } from './views/EvidenceView';
 import { AcquisitionView } from './views/AcquisitionView';
 import { CustodyView } from './views/CustodyView';
-import { PhasePlaceholderView } from './views/PhasePlaceholderView';
 import { DetectionView } from './views/DetectionView';
 import { ParsingView } from './views/ParsingView';
+import { RecoveryView } from './views/RecoveryView';
+import { TimelineView } from './views/TimelineView';
+import { ReportsView } from './views/ReportsView';
 import { HexViewer } from './components/HexViewer';
 import { Case, Evidence, Acquisition, SourceSafetyReport } from './types';
 import { getSourceSafety } from './services/api';
@@ -101,43 +103,15 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'recovery' && (
-          <PhasePlaceholderView
-            phaseNumber={4}
-            title="Deep Recovery & Video Reconstruction"
-            description="L1 Header Carving, L2 Index Reconstruction, and L3 Fragment Stitching with Video Reconstruction"
-            features={[
-              "Independent DataState & RecoveryStatus tracking",
-              "Bounded Candidate Hypotheses & Search Extents",
-              "H.264/H.265 Elementary Stream validation & Remuxing",
-              "Native vs Derived Artifact lineage preservation",
-            ]}
-          />
+          <RecoveryView evidence={activeEvidence} onNavigateToHex={handleNavigateToHex} />
         )}
 
         {activeTab === 'timeline' && (
-          <PhasePlaceholderView
-            phaseNumber={5}
-            title="Forensic Timeline Engine"
-            description="Multi-camera timestamp correlation, clock-drift calibration, and gap visualization"
-            features={[
-              "Deterministic TimelineEvent extraction",
-              "Recorder Clock Calibration with delta adjustments",
-              "Gap Analysis and non-overwritten evidence interval validation",
-            ]}
-          />
+          <TimelineView evidence={activeEvidence} onNavigateToHex={handleNavigateToHex} />
         )}
 
         {activeTab === 'reports' && (
-          <PhasePlaceholderView
-            phaseNumber={6}
-            title="Court-Admissible Forensic Reporting"
-            description="Comprehensive PDF, JSON, and CSV export with full cryptographic provenance and validation states"
-            features={[
-              "Complete Derivation Lineage & SHA-256 Hashes",
-              "Independent Capability Maturity Matrix display",
-              "Per-operation ValidationState (Pass / Review / Fail / Unknown) with mandatory explanations",
-            ]}
-          />
+          <ReportsView evidence={activeEvidence} />
         )}
       </div>
     </div>

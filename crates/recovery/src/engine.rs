@@ -1,5 +1,5 @@
 use forensic_core::{
-    ForensicError, OemProfile, RecoveryBounds, RecoveryCandidate, RecoveryLevel,
+    ForensicError, OemProfile, RecoveryBounds, RecoveryCandidate,
     RecoveryRun, Region, ValidationState, ValidationStateKind,
 };
 use evidence_reader::EvidenceReader;
@@ -38,7 +38,7 @@ impl RecoveryEngine {
             reason: String::new(),
         };
 
-        let mut candidates = Vec::new();
+        let candidates = Vec::new();
         let start_time = Instant::now();
 
         // Very basic mock scanning loop for the Engine orchestrator
@@ -87,10 +87,8 @@ impl RecoveryEngine {
                     // Candidate identified, perform structural validation
                     run.candidate_count += 1;
                     match parser.validate_structure(reader, profile) {
-                        Ok(mut states) => {
+                        Ok(_states) => {
                             run.accepted += 1;
-                            // In a full implementation, these states are mapped to a RecoveryCandidate.
-                            // The actual candidate generation happens here.
                         }
                         Err(_) => {
                             run.rejected += 1;

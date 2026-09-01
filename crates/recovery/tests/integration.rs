@@ -1,0 +1,235 @@
+use forensic_core::{
+    CancelToken, ForensicError, OemProfile, ParserRun, RecoveryBounds, Recording,
+    TimelineEvent, ValidationStateKind,
+};
+use evidence_reader::{EvidenceReader, SourceKind};
+use parsers_core::parser::Parser;
+use recovery::RecoveryEngine;
+
+/// Mock EvidenceReader that returns a fixed length.
+struct MockReader {
+    len: u64,
+}
+
+impl EvidenceReader for MockReader {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
+        if offset >= self.len {
+            return Err(ForensicError::out_of_bounds("MockReader", offset, buf.len() as u64, self.len));
+        }
+        let available = ((self.len - offset) as usize).min(buf.len());
+        for b in &mut buf[..available] { *b = 0; }
+        Ok(available)
+    }
+
+    fn source_kind(&self) -> SourceKind {
+        SourceKind::Raw
+    }
+
+    fn source_path(&self) -> &str {
+        "mock://test"
+    }
+}
+
+/// Mock Parser that always recognizes a candidate.
+struct AlwaysRecognizeParser;
+
+impl Parser for AlwaysRecognizeParser {
+    fn id(&self) -> &str { "mock-always" }
+    fn version(&self) -> &str { "1.0.0" }
+    fn parse_filesystem(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+        Ok(vec![])
+    }
+    fn parse_metadata(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+        Ok(vec![])
+    }
+    fn parse_recordings(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<Recording>, Vec<ParserRun>), ForensicError> {
+        Ok((vec![], vec![]))
+    }
+    fn extract_timeline_events(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<TimelineEvent>, Vec<ParserRun>), ForensicError> {
+        Ok((vec![], vec![]))
+    }
+    fn validate_structure(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+        Ok(vec![])
+    }
+    fn recognize_candidate(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<bool, ForensicError> {
+        Ok(true)
+    }
+}
+
+/// Mock Parser that never recognizes a candidate.
+struct NeverRecognizeParser;
+
+impl Parser for NeverRecognizeParser {
+    fn id(&self) -> &str { "mock-never" }
+    fn version(&self) -> &str { "1.0.0" }
+    fn parse_filesystem(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+        Ok(vec![])
+    }
+    fn parse_metadata(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+        Ok(vec![])
+    }
+    fn parse_recordings(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<Recording>, Vec<ParserRun>), ForensicError> {
+        Ok((vec![], vec![]))
+    }
+    fn extract_timeline_events(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<TimelineEvent>, Vec<ParserRun>), ForensicError> {
+        Ok((vec![], vec![]))
+    }
+    fn validate_structure(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+        Ok(vec![])
+    }
+    fn recognize_candidate(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<bool, ForensicError> {
+        Ok(false)
+    }
+}
+
+fn make_mock_profile() -> OemProfile {
+    let toml_str = r#"
+profile_id = "mock-fs-v1.0"
+profile_version = "1.0.0"
+schema_version = "1.0"
+oem = "MOCK"
+storage_family = "MOCK_FS"
+
+[applicability]
+models = []
+firmwares = []
+storage_variants = []
+reference = "Mock profile for testing"
+
+[[signatures]]
+name = "mock_sig"
+pattern_hex = "4D 4F 43 4B"
+evidence_status = "validated"
+weight = 0.5
+is_exclusive = false
+explanation = "Mock signature for testing"
+
+[confidence_weights]
+max_possible_score = 0.5
+"#;
+    OemProfile::from_toml_str(toml_str).expect("Failed to parse mock profile")
+}
+
+#[test]
+fn test_engine_truncation_on_byte_limit() {
+    let engine = RecoveryEngine::new();
+    let reader = MockReader { len: 10 * 1024 * 1024 }; // 10 MB
+    let profile = make_mock_profile();
+    let parser = NeverRecognizeParser;
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: 2 * 1024 * 1024, // 2 MB limit
+        max_scan_regions: 100,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    
+    assert!(run.truncated, "Run should be truncated when byte limit is reached");
+    assert_eq!(run.validation_state.state, ValidationStateKind::Review, "Truncated run must be REVIEW");
+}
+
+#[test]
+fn test_engine_truncation_on_candidate_limit() {
+    let engine = RecoveryEngine::new();
+    let reader = MockReader { len: 10 * 1024 * 1024 };
+    let profile = make_mock_profile();
+    let parser = AlwaysRecognizeParser; // every chunk produces a candidate
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: 100,
+        max_candidates: 2, // only 2 candidates allowed
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    
+    assert!(run.truncated, "Run should be truncated when candidate limit is reached");
+    assert_eq!(run.validation_state.state, ValidationStateKind::Review);
+}
+
+#[test]
+fn test_engine_cancellation_yields_review() {
+    let engine = RecoveryEngine::new();
+    let reader = MockReader { len: 10 * 1024 * 1024 };
+    let profile = make_mock_profile();
+    let parser = NeverRecognizeParser;
+    let cancel = CancelToken::new();
+    cancel.cancel(); // pre-cancelled
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: 100,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel,
+        time_limit: None,
+    };
+
+    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    
+    assert!(run.cancelled, "Run should be cancelled");
+    assert_eq!(run.validation_state.state, ValidationStateKind::Review);
+}
+
+#[test]
+fn test_engine_full_scan_pass() {
+    let engine = RecoveryEngine::new();
+    let reader = MockReader { len: 1024 * 1024 }; // 1 MB -- small enough to complete
+    let profile = make_mock_profile();
+    let parser = NeverRecognizeParser;
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: 100,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    
+    assert!(!run.truncated, "Run should NOT be truncated");
+    assert!(!run.cancelled, "Run should NOT be cancelled");
+    assert_eq!(run.validation_state.state, ValidationStateKind::Pass, "Complete run should be PASS");
+}
+
+#[test]
+fn test_engine_parser_never_drives_level_selection() {
+    // This test asserts that the engine, not the parser, decides the scanning loop.
+    let engine = RecoveryEngine::new();
+    let reader = MockReader { len: 3 * 1024 * 1024 };
+    let profile = make_mock_profile();
+    let parser = AlwaysRecognizeParser;
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: 100,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    
+    // The engine drove all 3 chunks (3 MB / 1 MB chunk = 3 regions)
+    assert_eq!(run.searched_regions.len(), 3, "Engine should have driven 3 scan regions");
+    assert_eq!(run.candidate_count, 3, "All 3 regions should have produced candidates");
+}

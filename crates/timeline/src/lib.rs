@@ -16,3 +16,9 @@
 //! Skeleton only — the engine lands in Phase 5.
 
 #![forbid(unsafe_code)]
+
+pub mod engine;
+pub mod correlation;
+
+pub use engine::{TimelineEngine, TimelineOrdering, UnifiedTimeline};
+pub use correlation::{CrossCameraCorrelator, CorrelatedEventGroup};

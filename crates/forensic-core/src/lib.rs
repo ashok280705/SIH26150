@@ -49,6 +49,8 @@ pub mod time_evidence;
 pub mod recording;
 pub mod timeline_event;
 pub mod parser_run;
+pub mod ai;
+pub mod ai_pipeline;
 
 // --- Determinism harness (Req 20) ---
 pub mod determinism;
@@ -58,9 +60,11 @@ pub use error::ForensicError;
 pub use identifiers::{
     AcquisitionId, ArtifactId, CaseId, EvidenceId, ExaminerId, ProfileId,
 };
+pub use ai::AiFinding;
+pub use ai_pipeline::AiPipeline;
 pub use hash::{Hash, HashAlgorithm};
 pub use region::Region;
-pub use recovery::{DataState, RecoveryStatus, RecoveryAssessment, RecoveryLevel, FrameValidationReport, RecoveryCandidate};
+pub use recovery::{DataState, RecoveryStatus, RecoveryAssessment, RecoveryLevel, FrameValidationReport, RecoveryCandidate, RecoveryBounds, RecoveryRun, CancelToken};
 pub use validation::{ValidationState, ValidationStateKind};
 pub use capability::{CapabilityStage, CapabilityStages};
 pub use evidence_status::EvidenceStatus;

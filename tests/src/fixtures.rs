@@ -481,8 +481,8 @@ mod tests {
     }
 
     #[test]
-    fn eight_fixture_shapes_available() {
-        assert_eq!(FixtureShape::all().len(), 8);
+    fn all_fixture_shapes_available() {
+        assert_eq!(FixtureShape::all().len(), 17);
     }
 
     #[test]
