@@ -3,19 +3,34 @@ import { FolderPlus, FolderCheck, AlertCircle, CheckCircle2, List } from 'lucide
 import { createCase, listCases } from '../services/api';
 import { Case } from '../types';
 
+import { loadStorage, saveStorage, removeStorage } from '../utils/storage';
+
 interface CaseViewProps {
   activeCase: Case | null;
-  onCaseSelected: (c: Case) => void;
+  onCaseSelected?: (c: Case) => void;
+  onCaseCreated?: (c: Case) => void;
 }
 
-export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected }) => {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [examiner, setExaminer] = useState('');
+export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected, onCaseCreated }) => {
+  const [name, setName] = useState(() => loadStorage('forensic_draft_case_name', ''));
+  const [description, setDescription] = useState(() => loadStorage('forensic_draft_case_desc', ''));
+  const [examiner, setExaminer] = useState(() => loadStorage('forensic_draft_case_examiner', ''));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [cases, setCases] = useState<Case[]>([]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_case_name', name);
+  }, [name]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_case_desc', description);
+  }, [description]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_case_examiner', examiner);
+  }, [examiner]);
 
   useEffect(() => {
     fetchCases();
@@ -48,10 +63,15 @@ export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected }
     try {
       const created = await createCase({ name, description, examiner });
       setCases(prev => [created, ...prev]);
-      onCaseSelected(created);
+      const selectCallback = onCaseSelected || onCaseCreated;
+      if (selectCallback) {
+        selectCallback(created);
+      }
       setSuccess(`Case '${created.name}' created successfully.`);
       setName('');
       setDescription('');
+      removeStorage('forensic_draft_case_name');
+      removeStorage('forensic_draft_case_desc');
     } catch (err: any) {
       setError(err.message || 'Failed to create case');
     } finally {
@@ -207,7 +227,10 @@ export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected }
                         <button 
                           className="btn btn-secondary" 
                           style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                          onClick={() => onCaseSelected(c)}
+                          onClick={() => {
+                            const selectCallback = onCaseSelected || onCaseCreated;
+                            if (selectCallback) selectCallback(c);
+                          }}
                           disabled={activeCase?.id === c.id}
                         >
                           {activeCase?.id === c.id ? 'Active' : 'Load'}

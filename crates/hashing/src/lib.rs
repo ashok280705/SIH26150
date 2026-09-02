@@ -191,6 +191,67 @@ mod tests {
     }
 
     #[test]
+    fn known_vector_empty_sha256() {
+        // "" -> e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        let data = b"".to_vec();
+        let reader = MockReader { data };
+
+        let record = HashingService::hash_reader(&reader, 1024, None, None).unwrap();
+        assert_eq!(
+            record.value.hex(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(record.bytes_hashed, 0);
+    }
+
+    #[test]
+    fn same_file_same_hash_across_window_sizes() {
+        let data = (0..65536).map(|i| (i % 256) as u8).collect::<Vec<u8>>();
+        let reader = MockReader { data: data.clone() };
+
+        // Test varying window sizes from 4KB to 64KB
+        let windows = [4096, 8192, 16384, 32768, 65536];
+        let base_record = HashingService::hash_reader(&reader, windows[0], None, None).unwrap();
+        let in_mem_record = HashingService::hash_bytes(&data, "mem_test").unwrap();
+
+        assert_eq!(base_record.value, in_mem_record.value, "Streaming and in-memory must match exactly");
+
+        for &w in &windows[1..] {
+            let record = HashingService::hash_reader(&reader, w, None, None).unwrap();
+            assert_eq!(
+                record.value, base_record.value,
+                "Hash must be strictly identical regardless of streaming window size (window: {w})"
+            );
+            assert_eq!(record.bytes_hashed, data.len() as u64);
+        }
+    }
+
+    #[test]
+    fn different_files_produce_different_hashes() {
+        let file_a = vec![0x42u8; 1024];
+        let mut file_b = vec![0x42u8; 1024];
+        // Flip a single bit in the last byte
+        file_b[1023] ^= 0x01;
+
+        let mut file_c = vec![0x42u8; 1024];
+        // Flip a single bit in the first byte
+        file_c[0] ^= 0x01;
+
+        // Truncated version
+        let file_d = vec![0x42u8; 1023];
+
+        let hash_a = HashingService::hash_bytes(&file_a, "file_a").unwrap().value;
+        let hash_b = HashingService::hash_bytes(&file_b, "file_b").unwrap().value;
+        let hash_c = HashingService::hash_bytes(&file_c, "file_c").unwrap().value;
+        let hash_d = HashingService::hash_bytes(&file_d, "file_d").unwrap().value;
+
+        assert_ne!(hash_a, hash_b, "Flipping a single bit at the end must produce a different hash");
+        assert_ne!(hash_a, hash_c, "Flipping a single bit at the start must produce a different hash");
+        assert_ne!(hash_b, hash_c, "Different bit modifications must produce distinct hashes");
+        assert_ne!(hash_a, hash_d, "Different length files must produce distinct hashes");
+    }
+
+    #[test]
     fn bounded_streaming_hash_large_fixture() {
         let data = vec![0xAA; 65536];
         let reader = MockReader { data: data.clone() };

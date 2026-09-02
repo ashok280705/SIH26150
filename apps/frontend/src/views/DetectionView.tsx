@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Search, Activity, Shield, CheckCircle, AlertCircle, HardDrive, Cpu, AlignLeft } from 'lucide-react';
 import { Evidence, ClassifiedDetectionResult, CapabilityStages, StorageTopology } from '../types';
 import { runDetection, getCapabilities, getTopology } from '../services/api';
+import { loadStorage, saveStorage } from '../utils/storage';
 
 interface DetectionViewProps {
   evidence: Evidence | null;
@@ -17,6 +18,18 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
   useEffect(() => {
     fetchCapabilities();
   }, []);
+
+  useEffect(() => {
+    if (evidence) {
+      const savedRes = loadStorage<ClassifiedDetectionResult[]>(`forensic_det_results_${evidence.id}`, []);
+      const savedTop = loadStorage<StorageTopology | null>(`forensic_det_topology_${evidence.id}`, null);
+      setResults(savedRes);
+      setTopology(savedTop);
+    } else {
+      setResults([]);
+      setTopology(null);
+    }
+  }, [evidence?.id]);
 
   const fetchCapabilities = async () => {
     try {
@@ -38,6 +51,8 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
       ]);
       setTopology(topRes);
       setResults(detRes);
+      saveStorage(`forensic_det_topology_${evidence.id}`, topRes);
+      saveStorage(`forensic_det_results_${evidence.id}`, detRes);
     } catch (err: any) {
       setError(err.message || 'Detection failed');
     } finally {
@@ -269,8 +284,12 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
                   </div>
                   <div>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>Engine Configuration</div>
-                    <div style={{ fontSize: '13px', fontFamily: 'monospace' }}>Profile: {res.profile_version || '1.0.0'} ({String(res.profile_hash || '').substring(0, 8) || 'N/A'})</div>
-                    <div style={{ fontSize: '13px', fontFamily: 'monospace', marginTop: '4px' }}>Config: {res.config_version || '1.0.0'} ({String(res.config_hash || '').substring(0, 8) || 'N/A'})</div>
+                    <div style={{ fontSize: '13px', fontFamily: 'monospace' }}>
+                      Profile: {res.profile_version || '1.0.0'} ({typeof res.profile_hash === 'object' && (res.profile_hash as any)?.value ? String((res.profile_hash as any).value).substring(0, 8) : String(res.profile_hash || '').substring(0, 8) || 'N/A'})
+                    </div>
+                    <div style={{ fontSize: '13px', fontFamily: 'monospace', marginTop: '4px' }}>
+                      Config: {res.config_version || '1.0.0'} ({typeof res.config_hash === 'object' && (res.config_hash as any)?.value ? String((res.config_hash as any).value).substring(0, 8) : String(res.config_hash || '').substring(0, 8) || 'N/A'})
+                    </div>
                   </div>
                 </div>
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { OverviewView } from './views/OverviewView';
@@ -14,15 +14,44 @@ import { ReportsView } from './views/ReportsView';
 import { HexViewer } from './components/HexViewer';
 import { Case, Evidence, Acquisition, SourceSafetyReport } from './types';
 import { getSourceSafety } from './services/api';
+import { loadStorage, saveStorage } from './utils/storage';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
-  const [activeCase, setActiveCase] = useState<Case | null>(null);
-  const [activeEvidence, setActiveEvidence] = useState<Evidence | null>(null);
-  const [acquisition, setAcquisition] = useState<Acquisition | null>(null);
-  const [safetyReport, setSafetyReport] = useState<SourceSafetyReport | null>(null);
-  const [ingestHash, setIngestHash] = useState<string | null>(null);
-  const [hexOffset, setHexOffset] = useState<number | undefined>(undefined);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => loadStorage('forensic_active_tab', 'overview'));
+  const [activeCase, setActiveCase] = useState<Case | null>(() => loadStorage('forensic_active_case', null));
+  const [activeEvidence, setActiveEvidence] = useState<Evidence | null>(() => loadStorage('forensic_active_evidence', null));
+  const [acquisition, setAcquisition] = useState<Acquisition | null>(() => loadStorage('forensic_acquisition', null));
+  const [safetyReport, setSafetyReport] = useState<SourceSafetyReport | null>(() => loadStorage('forensic_safety_report', null));
+  const [ingestHash, setIngestHash] = useState<string | null>(() => loadStorage('forensic_ingest_hash', null));
+  const [hexOffset, setHexOffset] = useState<number | undefined>(() => loadStorage('forensic_hex_offset', undefined));
+
+  useEffect(() => {
+    saveStorage('forensic_active_tab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    saveStorage('forensic_active_case', activeCase);
+  }, [activeCase]);
+
+  useEffect(() => {
+    saveStorage('forensic_active_evidence', activeEvidence);
+  }, [activeEvidence]);
+
+  useEffect(() => {
+    saveStorage('forensic_acquisition', acquisition);
+  }, [acquisition]);
+
+  useEffect(() => {
+    saveStorage('forensic_safety_report', safetyReport);
+  }, [safetyReport]);
+
+  useEffect(() => {
+    saveStorage('forensic_ingest_hash', ingestHash);
+  }, [ingestHash]);
+
+  useEffect(() => {
+    saveStorage('forensic_hex_offset', hexOffset);
+  }, [hexOffset]);
 
   const handleCaseSelected = (c: Case) => {
     setActiveCase(c);

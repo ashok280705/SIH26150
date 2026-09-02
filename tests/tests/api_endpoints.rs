@@ -13,7 +13,8 @@ use forensic_tests::fixtures::{generate_fixture, FixtureShape, OemShape};
 
 #[tokio::test]
 async fn test_api_case_creation_and_evidence_flow() {
-    let state = AppState::new();
+    let pool = forensic_api::db::connection::init_pool("sqlite::memory:").await.unwrap();
+    let state = AppState::new(pool);
     let app = app_router(state);
 
     // 1. Create Case

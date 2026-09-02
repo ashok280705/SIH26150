@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { HardDriveDownload, AlertCircle, CheckCircle2, FileWarning, List } from 'lucide-react';
 import { registerEvidence, listCaseEvidence } from '../services/api';
 import { Case, Evidence, Acquisition } from '../types';
+import { loadStorage, saveStorage, removeStorage } from '../utils/storage';
 
 interface EvidenceViewProps {
   activeCase: Case | null;
@@ -11,17 +12,17 @@ interface EvidenceViewProps {
 }
 
 export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEvidence, onEvidenceRegistered, onEvidenceSelected }) => {
-  const [sourceDevice, setSourceDevice] = useState('');
-  const [capacityValue, setCapacityValue] = useState<string>('1');
-  const [capacityUnit, setCapacityUnit] = useState<'B' | 'MB' | 'GB' | 'TB'>('GB');
-  const [imageFormat, setImageFormat] = useState('raw');
-  const [examiner, setExaminer] = useState('');
-  const [acquisitionTool, setAcquisitionTool] = useState('dd');
+  const [sourceDevice, setSourceDevice] = useState(() => loadStorage('forensic_draft_ev_device', ''));
+  const [capacityValue, setCapacityValue] = useState<string>(() => loadStorage('forensic_draft_ev_cap_val', '1'));
+  const [capacityUnit, setCapacityUnit] = useState<'B' | 'MB' | 'GB' | 'TB'>(() => loadStorage('forensic_draft_ev_cap_unit', 'GB'));
+  const [imageFormat, setImageFormat] = useState(() => loadStorage('forensic_draft_ev_format', 'raw'));
+  const [examiner, setExaminer] = useState(() => loadStorage('forensic_draft_ev_examiner', ''));
+  const [acquisitionTool, setAcquisitionTool] = useState(() => loadStorage('forensic_draft_ev_tool', 'dd'));
 
-  const [acquisitionToolVer, setAcquisitionToolVer] = useState('8.32');
-  const [path, setPath] = useState('');
-  const [sourceState, setSourceState] = useState<'read_only' | 'read_write' | 'unknown'>('read_only');
-  const [acquisitionStatus, setAcquisitionStatus] = useState<'complete' | 'partial' | 'unknown'>('complete');
+  const [acquisitionToolVer, setAcquisitionToolVer] = useState(() => loadStorage('forensic_draft_ev_tool_ver', '8.32'));
+  const [path, setPath] = useState(() => loadStorage('forensic_draft_ev_path', ''));
+  const [sourceState, setSourceState] = useState<'read_only' | 'read_write' | 'unknown'>(() => loadStorage('forensic_draft_ev_state', 'read_only'));
+  const [acquisitionStatus, setAcquisitionStatus] = useState<'complete' | 'partial' | 'unknown'>(() => loadStorage('forensic_draft_ev_status', 'complete'));
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +31,50 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
   const [evidenceList, setEvidenceList] = useState<Evidence[]>([]);
 
   useEffect(() => {
+    saveStorage('forensic_draft_ev_device', sourceDevice);
+  }, [sourceDevice]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_cap_val', capacityValue);
+  }, [capacityValue]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_cap_unit', capacityUnit);
+  }, [capacityUnit]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_format', imageFormat);
+  }, [imageFormat]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_examiner', examiner);
+  }, [examiner]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_tool', acquisitionTool);
+  }, [acquisitionTool]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_tool_ver', acquisitionToolVer);
+  }, [acquisitionToolVer]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_path', path);
+  }, [path]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_state', sourceState);
+  }, [sourceState]);
+
+  useEffect(() => {
+    saveStorage('forensic_draft_ev_status', acquisitionStatus);
+  }, [acquisitionStatus]);
+
+  useEffect(() => {
     if (activeCase) {
-      setExaminer(activeCase.examiner);
+      if (!examiner) {
+        setExaminer(activeCase.examiner);
+      }
       fetchEvidence();
     } else {
       setEvidenceList([]);
@@ -91,6 +134,8 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
       // Reset form
       setSourceDevice('');
       setPath('');
+      removeStorage('forensic_draft_ev_device');
+      removeStorage('forensic_draft_ev_path');
     } catch (err: any) {
       setError(err.message || 'Failed to register evidence');
     } finally {
