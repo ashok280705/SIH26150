@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FileSpreadsheet, HardDrive } from 'lucide-react';
 import { Evidence } from '../types';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface ReportsViewProps {
   evidence: Evidence | null;
@@ -19,10 +20,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   if (!evidence) {
     return (
-      <div className="view-container">
+      <div className="view-container" data-tour="reports-view-panel">
         <div className="view-header">
           <div>
-            <h1 className="view-title">Court-Admissible Forensic Reporting</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h1 className="view-title">Forensic Documentation & Reporting</h1>
+              <ContextHelp
+                title="Forensic Reporting"
+                content="Generates comprehensive forensic documentation (PDF, JSON, CSV) with cryptographic lineage hashes, validation outcomes, examiner notes, and stated forensic limitations."
+              />
+            </div>
             <p className="view-subtitle">Select an evidence target to generate forensic examination reports.</p>
           </div>
         </div>
@@ -39,10 +46,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const reportHash = '9e107d9d372bb6826bd81d3542a419d6dae4e1e4649b934ca495991b7852b855';
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="reports-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Court-Admissible Forensic Reporting</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Forensic Documentation & Reporting</h1>
+            <ContextHelp
+              title="Forensic Reporting"
+              content="Generates comprehensive forensic documentation (PDF, JSON, CSV) with cryptographic lineage hashes, validation outcomes, examiner notes, and stated forensic limitations."
+            />
+          </div>
           <p className="view-subtitle">Comprehensive forensic documentation with cryptographic hashes, provenance, and stated limitations (Phase 6 / Req 17)</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>

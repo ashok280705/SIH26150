@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ScrollText, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
 import { getCustodyLog } from '../services/api';
 import { CustodyEvent } from '../types';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface CustodyViewProps {
   caseId: string | null;
@@ -31,10 +32,16 @@ export const CustodyView: React.FC<CustodyViewProps> = ({ caseId }) => {
   }, [caseId]);
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="custody-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Append-Only Chain of Custody Audit Log</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Append-Only Chain of Custody Audit Log</h1>
+            <ContextHelp
+              title="Chain of Custody & Findings"
+              content="Immutable chronological audit trail of all forensic operations, ingest actions, examiner entries, and write denials. Ensures unbroken chain of custody."
+            />
+          </div>
           <p className="view-subtitle">Immutable chronological audit trail of all forensic operations, ingest actions, and write-denials (Req 5.3, 5.5)</p>
         </div>
         {caseId && (

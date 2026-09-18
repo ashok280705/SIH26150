@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { FolderPlus, FolderCheck, AlertCircle, CheckCircle2, List } from 'lucide-react';
 import { createCase, listCases } from '../services/api';
 import { Case } from '../types';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 import { loadStorage, saveStorage, removeStorage } from '../utils/storage';
 
@@ -81,10 +82,16 @@ export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected, 
   };
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="case-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Forensic Case Management</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Forensic Case Management</h1>
+            <ContextHelp
+              title="Case Scope"
+              content="Cases organize evidence and analysis for a single investigation. Case metadata establishes the context in which evidence, findings, and reports are documented."
+            />
+          </div>
           <p className="view-subtitle">Register new investigative cases, assign examiners, and manage forensic scopes</p>
         </div>
       </div>

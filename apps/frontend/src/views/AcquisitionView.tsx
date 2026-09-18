@@ -1,6 +1,7 @@
 import React from 'react';
 import { FileCheck2, AlertTriangle, CheckCircle2, XCircle, HelpCircle } from 'lucide-react';
 import { Acquisition } from '../types';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface AcquisitionViewProps {
   acquisition: Acquisition | null;
@@ -21,10 +22,16 @@ export const AcquisitionView: React.FC<AcquisitionViewProps> = ({ acquisition })
   };
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="acquisition-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Acquisition Verification & Gaps Audit</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Acquisition Verification & Gaps Audit</h1>
+            <ContextHelp
+              title="Acquisition Safety"
+              content="Working evidence is treated as strictly read-only. Acquisition accounts for imaging completeness, bad sector gaps, and SHA-256 integrity baseline hashes."
+            />
+          </div>
           <p className="view-subtitle">Detailed imaging completeness, bad sector accounting, and verification validation state (Req 7.7–7.9, 23.1–23.4)</p>
         </div>
       </div>

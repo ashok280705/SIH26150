@@ -12,9 +12,21 @@ import { RecoveryView } from './views/RecoveryView';
 import { TimelineView } from './views/TimelineView';
 import { ReportsView } from './views/ReportsView';
 import { HexViewer } from './components/HexViewer';
+import { WelcomeModal } from './components/onboarding/WelcomeModal';
+import { TourOverlay } from './components/onboarding/TourOverlay';
+import { HelpModal } from './components/onboarding/HelpModal';
 import { Case, Evidence, Acquisition, SourceSafetyReport } from './types';
+import { OnboardingState, TourContext } from './types/onboarding';
 import { getSourceSafety, getCase, listCaseEvidence } from './services/api';
 import { loadStorage, saveStorage, removeStorage } from './utils/storage';
+import { 
+  getOnboardingState, 
+  setOnboardingState, 
+  getOnboardingStep, 
+  setOnboardingStep, 
+  resetOnboarding, 
+  TOUR_STEPS 
+} from './utils/onboarding';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => loadStorage('forensic_active_tab', 'overview'));
@@ -25,6 +37,11 @@ export const App: React.FC = () => {
   const [safetyReport, setSafetyReport] = useState<SourceSafetyReport | null>(() => loadStorage('forensic_safety_report', null));
   const [ingestHash, setIngestHash] = useState<string | null>(() => loadStorage('forensic_ingest_hash', null));
   const [hexOffset, setHexOffset] = useState<number | undefined>(() => loadStorage('forensic_hex_offset', undefined));
+
+  // Onboarding state management
+  const [onboardingState, setOnboardingStateLocal] = useState<OnboardingState>(() => getOnboardingState());
+  const [onboardingStepIndex, setOnboardingStepIndexLocal] = useState<number>(() => getOnboardingStep());
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const handleUnloadCase = () => {
     setActiveCase(null);
@@ -90,6 +107,24 @@ export const App: React.FC = () => {
     saveStorage('forensic_hex_offset', hexOffset);
   }, [hexOffset]);
 
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setIsHelpOpen((prev) => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
   const handleCaseSelected = (c: Case) => {
     setActiveCase(c);
     setActiveEvidence(null);
@@ -132,9 +167,69 @@ export const App: React.FC = () => {
     setActiveTab('hex_viewer');
   };
 
+  // Onboarding handlers
+  const handleStartTour = () => {
+    setOnboardingState('onboarding_in_progress');
+    setOnboardingStep(0);
+    setOnboardingStateLocal('onboarding_in_progress');
+    setOnboardingStepIndexLocal(0);
+    setActiveTab(TOUR_STEPS[0].tab);
+  };
+
+  const handleSkipTour = (dontShowAgain: boolean) => {
+    const nextState = dontShowAgain ? 'onboarding_dismissed' : 'onboarding_dismissed';
+    setOnboardingState(nextState);
+    setOnboardingStateLocal(nextState);
+  };
+
+  const handleNextTourStep = () => {
+    const nextIndex = onboardingStepIndex + 1;
+    if (nextIndex < TOUR_STEPS.length) {
+      setOnboardingStep(nextIndex);
+      setOnboardingStepIndexLocal(nextIndex);
+      setActiveTab(TOUR_STEPS[nextIndex].tab);
+    } else {
+      handleFinishTour();
+    }
+  };
+
+  const handlePrevTourStep = () => {
+    const prevIndex = onboardingStepIndex - 1;
+    if (prevIndex >= 0) {
+      setOnboardingStep(prevIndex);
+      setOnboardingStepIndexLocal(prevIndex);
+      setActiveTab(TOUR_STEPS[prevIndex].tab);
+    }
+  };
+
+  const handleFinishTour = () => {
+    setOnboardingState('onboarding_completed');
+    setOnboardingStateLocal('onboarding_completed');
+  };
+
+  const handleRestartTour = () => {
+    resetOnboarding();
+    setOnboardingStateLocal('onboarding_in_progress');
+    setOnboardingStepIndexLocal(0);
+    setActiveTab(TOUR_STEPS[0].tab);
+    setIsHelpOpen(false);
+  };
+
+  const tourContext: TourContext = {
+    activeCase,
+    activeEvidence,
+    evidenceList: caseEvidenceList,
+  };
+
+  const currentTourStep = TOUR_STEPS[onboardingStepIndex] || TOUR_STEPS[0];
+
   return (
     <div className="app-container">
-      <Sidebar activeTab={activeTab} onSelectTab={setActiveTab} />
+      <Sidebar 
+        activeTab={activeTab} 
+        onSelectTab={setActiveTab}
+        onOpenHelp={() => setIsHelpOpen(true)}
+      />
       
       <div className="main-content">
         <Header 
@@ -142,7 +237,8 @@ export const App: React.FC = () => {
           activeEvidence={activeEvidence} 
           evidenceList={caseEvidenceList}
           onSelectEvidence={handleEvidenceSelected}
-          onUnloadCase={handleUnloadCase} 
+          onUnloadCase={handleUnloadCase}
+          onOpenHelp={() => setIsHelpOpen(true)}
         />
 
         {activeTab === 'overview' && (
@@ -162,7 +258,7 @@ export const App: React.FC = () => {
         {activeTab === 'evidence' && (
           <EvidenceView 
             activeCase={activeCase} 
-            activeEvidence={activeEvidence}
+            activeEvidence={activeEvidence} 
             onEvidenceRegistered={handleEvidenceRegistered} 
             onEvidenceSelected={handleEvidenceSelected}
           />
@@ -173,7 +269,7 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'hex_viewer' && (
-          <div className="view-container">
+          <div className="view-container" data-tour="hex-viewer-panel">
             <div className="view-header">
               <div>
                 <h1 className="view-title">Raw Byte & Offset Inspector</h1>
@@ -231,6 +327,36 @@ export const App: React.FC = () => {
           />
         )}
       </div>
+
+      {/* First-Time User Welcome Modal */}
+      <WelcomeModal
+        isOpen={onboardingState === 'onboarding_not_started'}
+        onStartTour={handleStartTour}
+        onSkipTour={handleSkipTour}
+      />
+
+      {/* Guided Tour Interactive Spotlight Overlay */}
+      {onboardingState === 'onboarding_in_progress' && (
+        <TourOverlay
+          step={currentTourStep}
+          context={tourContext}
+          onNext={handleNextTourStep}
+          onPrev={handlePrevTourStep}
+          onSkip={() => handleSkipTour(true)}
+          onFinish={handleFinishTour}
+        />
+      )}
+
+      {/* Persistent Help & Guide Center */}
+      <HelpModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        onRestartTour={handleRestartTour}
+        onNavigateTab={(tab) => {
+          setActiveTab(tab);
+          setIsHelpOpen(false);
+        }}
+      />
     </div>
   );
 };

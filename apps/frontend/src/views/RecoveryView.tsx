@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Video, HardDrive, Search, RefreshCw } from 'lucide-react';
 import { Evidence, RecoveryCandidateUI, RecoveryRunUI } from '../types';
 import { runDetection } from '../services/api';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface RecoveryViewProps {
   evidence: Evidence | null;
@@ -236,10 +237,16 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
 
   if (!evidence) {
     return (
-      <div className="view-container">
+      <div className="view-container" data-tour="recovery-view-panel">
         <div className="view-header">
           <div>
-            <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
+              <ContextHelp
+                title="Video Recovery"
+                content="Reconstructs video streams from detected structures and frame headers. Distinguishes active recordings from orphaned or carved unallocated fragments with independent validation outcomes."
+              />
+            </div>
             <p className="view-subtitle">Select an evidence target to execute recovery and reconstruction.</p>
           </div>
         </div>
@@ -255,10 +262,16 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
   const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="recovery-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
+            <ContextHelp
+              title="Video Recovery"
+              content="Reconstructs video streams from detected structures and frame headers. Distinguishes active recordings from orphaned or carved unallocated fragments with independent validation outcomes."
+            />
+          </div>
           <p className="view-subtitle">Multi-level indexed, orphan/slack, and raw carving reconstruction (Phase 4 / Req 13, 14)</p>
         </div>
         <div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, ShieldAlert, HardDrive, Terminal } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, HardDrive, Terminal, HelpCircle } from 'lucide-react';
 
 import { Case, Evidence } from '../types';
 
@@ -9,6 +9,7 @@ interface HeaderProps {
   evidenceList?: Evidence[];
   onSelectEvidence?: (e: Evidence) => void;
   onUnloadCase?: () => void;
+  onOpenHelp?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
@@ -16,7 +17,8 @@ export const Header: React.FC<HeaderProps> = ({
   activeEvidence, 
   evidenceList = [], 
   onSelectEvidence, 
-  onUnloadCase 
+  onUnloadCase,
+  onOpenHelp
 }) => {
   const isSourceSafe = activeEvidence?.source_state === 'read_only';
 
@@ -27,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
         <span className="app-title">Multi-Vendor DVR/NVR Forensic Platform</span>
       </div>
 
-      <div className="header-status">
+      <div className="header-status" data-tour="header-status">
         <div className="header-context-item">
           {activeEvidence ? (
             isSourceSafe ? (
@@ -88,6 +90,21 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="header-context-value">{activeEvidence ? activeEvidence.source_device : 'None'}</span>
           )}
         </div>
+
+        {onOpenHelp && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={onOpenHelp}
+            data-tour="help-center-btn"
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', fontSize: '12px', height: '28px' }}
+            title="Help & Guide (?)"
+          >
+            <HelpCircle size={14} color="var(--accent)" />
+            <span>Help & Guide</span>
+            <span style={{ fontSize: '10px', opacity: 0.7, border: '1px solid var(--border)', borderRadius: '3px', padding: '0 3px' }}>?</span>
+          </button>
+        )}
       </div>
     </header>
   );

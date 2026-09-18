@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Binary, ArrowRight, RefreshCw, AlertCircle, Search } from 'lucide-react';
 import { readEvidenceBytes, searchEvidence } from '../services/api';
 import { HexChunkResponse } from '../types';
+import { ContextHelp } from './onboarding/ContextHelp';
 
 interface HexViewerProps {
   evidenceId: string | null;
@@ -110,11 +111,15 @@ export const HexViewer: React.FC<HexViewerProps> = ({ evidenceId, initialOffset 
   };
 
   return (
-    <div className="panel">
+    <div className="panel" data-tour="hex-viewer-panel">
       <div className="panel-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Binary size={16} style={{ color: 'var(--accent)' }} />
           <span>Evidence Byte Inspector (Read-Only via EvidenceReader)</span>
+          <ContextHelp
+            title="Read-Only Byte Inspector"
+            content="Inspect raw evidence bytes and hex offsets directly. Reads stream strictly through the EvidenceReader without touching or modifying source media."
+          />
         </div>
         {chunk && (
           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>

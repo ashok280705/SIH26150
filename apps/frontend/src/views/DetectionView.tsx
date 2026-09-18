@@ -3,6 +3,7 @@ import { Search, Activity, Shield, CheckCircle, AlertCircle, HardDrive, Cpu, Ali
 import { Evidence, ClassifiedDetectionResult, CapabilityStages, StorageTopology } from '../types';
 import { runDetection, getCapabilities, getTopology } from '../services/api';
 import { loadStorage, saveStorage } from '../utils/storage';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface DetectionViewProps {
   evidence: Evidence | null;
@@ -87,10 +88,16 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
   };
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="detection-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Multi-Vendor Storage Detection</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Multi-Vendor Storage Detection</h1>
+            <ContextHelp
+              title="Storage Attribution"
+              content="Detection analyzes storage characteristics and signatures to score candidate vendor profiles. Attribution is an analytical guide and should be validated against raw evidence bytes."
+            />
+          </div>
           <p className="view-subtitle">Parallel deterministic orchestration, topology profiling, and confidence-scored attribution</p>
         </div>
       </div>

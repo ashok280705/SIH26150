@@ -29,9 +29,10 @@ export type ActiveTab =
 interface SidebarProps {
   activeTab: ActiveTab;
   onSelectTab: (tab: ActiveTab) => void;
+  onOpenHelp?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, onOpenHelp }) => {
   return (
     <aside className="sidebar">
       <div className="nav-section-title">Core & Ingest</div>
@@ -40,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`}
             onClick={() => onSelectTab('overview')}
+            data-tour="nav-overview"
           >
             <LayoutDashboard size={16} />
             <span>Overview</span>
@@ -49,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'cases' ? 'active' : ''}`}
             onClick={() => onSelectTab('cases')}
+            data-tour="nav-cases"
           >
             <FolderPlus size={16} />
             <span>Cases</span>
@@ -58,6 +61,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'evidence' ? 'active' : ''}`}
             onClick={() => onSelectTab('evidence')}
+            data-tour="nav-evidence"
           >
             <HardDriveDownload size={16} />
             <span>Evidence</span>
@@ -67,6 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'acquisition' ? 'active' : ''}`}
             onClick={() => onSelectTab('acquisition')}
+            data-tour="nav-acquisition"
           >
             <FileCheck2 size={16} />
             <span>Acquisition</span>
@@ -76,6 +81,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'hex_viewer' ? 'active' : ''}`}
             onClick={() => onSelectTab('hex_viewer')}
+            data-tour="nav-hex_viewer"
           >
             <Binary size={16} />
             <span>Byte Inspector</span>
@@ -86,6 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'custody' ? 'active' : ''}`}
             onClick={() => onSelectTab('custody')}
+            data-tour="nav-custody"
           >
             <ScrollText size={16} />
             <span>Chain of Custody</span>
@@ -99,6 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'detection' ? 'active' : ''}`}
             onClick={() => onSelectTab('detection')}
+            data-tour="nav-detection"
           >
             <ScanSearch size={16} />
             <span>Detection</span>
@@ -109,6 +117,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'parsing' ? 'active' : ''}`}
             onClick={() => onSelectTab('parsing')}
+            data-tour="nav-parsing"
           >
             <FileCode2 size={16} />
             <span>Parsing</span>
@@ -119,6 +128,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'recovery' ? 'active' : ''}`}
             onClick={() => onSelectTab('recovery')}
+            data-tour="nav-recovery"
           >
             <Video size={16} />
             <span>Recovery & Video</span>
@@ -129,6 +139,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'timeline' ? 'active' : ''}`}
             onClick={() => onSelectTab('timeline')}
+            data-tour="nav-timeline"
           >
             <Clock size={16} />
             <span>Timeline</span>
@@ -139,6 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           <div
             className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`}
             onClick={() => onSelectTab('reports')}
+            data-tour="nav-reports"
           >
             <FileSpreadsheet size={16} />
             <span>Forensic Reports</span>
@@ -146,6 +158,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
           </div>
         </li>
       </ul>
+
+      {onOpenHelp && (
+        <div style={{ marginTop: 'auto', padding: '12px 8px', borderTop: '1px solid var(--border-subtle)' }}>
+          <div
+            className="nav-item"
+            onClick={onOpenHelp}
+            data-tour="nav-help"
+            style={{ color: 'var(--accent)' }}
+          >
+            <ScrollText size={16} />
+            <span>Help & Guide</span>
+            <span className="nav-badge" style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>?</span>
+          </div>
+        </div>
+      )}
     </aside>
   );
 };

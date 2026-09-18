@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { HardDriveDownload, AlertCircle, CheckCircle2, FileWarning, List } from 'lucide-react';
 import { registerEvidence, listCaseEvidence } from '../services/api';
 import { Case, Evidence, Acquisition } from '../types';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { loadStorage, saveStorage, removeStorage } from '../utils/storage';
 
 interface EvidenceViewProps {
@@ -145,10 +146,16 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
 
   if (!activeCase) {
     return (
-      <div className="view-container">
+      <div className="view-container" data-tour="evidence-view-panel">
         <div className="view-header">
           <div>
-            <h1 className="view-title">Evidence Ingest & Registration</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h1 className="view-title">Evidence Ingest & Registration</h1>
+              <ContextHelp
+                title="Evidence Source"
+                content="Evidence represents the DVR/NVR storage media being examined. Multiple evidence sources can be registered under a single case."
+              />
+            </div>
             <p className="view-subtitle">Register raw forensic images and perform source-safety inspection</p>
           </div>
         </div>
@@ -162,10 +169,16 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
   }
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="evidence-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Evidence Ingest & Registration</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Evidence Ingest & Registration</h1>
+            <ContextHelp
+              title="Evidence Source"
+              content="Evidence represents the DVR/NVR storage media being examined. Multiple evidence sources (.raw, .dd, .img) can be registered under a single case."
+            />
+          </div>
           <p className="view-subtitle">Register raw forensic images, compute initial cryptographic hash, and perform source-safety inspection (Req 1.8–1.12, 7.1–7.9)</p>
         </div>
       </div>

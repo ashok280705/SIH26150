@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { FileCode2, Play, RefreshCw, AlertCircle, HardDrive } from 'lucide-react';
 import { Evidence, ParserRun, Recording, DeletedCandidate, TimeEvidence } from '../types';
 import { runDetection, runParsing } from '../services/api';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface ParsingViewProps {
   evidence: Evidence | null;
@@ -158,10 +159,16 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
 
   if (!evidence) {
     return (
-      <div className="view-container">
+      <div className="view-container" data-tour="parsing-view-panel">
         <div className="view-header">
           <div>
-            <h1 className="view-title">Storage & Recording Parsers</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h1 className="view-title">Storage & Recording Parsers</h1>
+              <ContextHelp
+                title="Proprietary Parsing"
+                content="After OEM format detection, proprietary parsers extract video recording tables, channels, and frame boundaries, linking each record to disk offsets."
+              />
+            </div>
             <p className="view-subtitle">Select an evidence item to view parsed data.</p>
           </div>
         </div>
@@ -177,10 +184,16 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
   const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="parsing-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Storage & Recording Parsers</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Storage & Recording Parsers</h1>
+            <ContextHelp
+              title="Proprietary Parsing"
+              content="After OEM format detection, proprietary parsers extract video recording tables, channels, and frame boundaries, linking each record to disk offsets."
+            />
+          </div>
           <p className="view-subtitle">High-speed extraction of recordings and video index tables</p>
         </div>
         <div>

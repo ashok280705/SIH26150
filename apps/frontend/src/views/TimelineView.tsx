@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Clock, Layers, ShieldCheck, HardDrive, RefreshCw } from 'lucide-react';
 import { Evidence } from '../types';
 import { runDetection } from '../services/api';
+import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface TimelineViewProps {
   evidence: Evidence | null;
@@ -145,10 +146,16 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   if (!evidence) {
     return (
-      <div className="view-container">
+      <div className="view-container" data-tour="timeline-view-panel">
         <div className="view-header">
           <div>
-            <h1 className="view-title">Forensic Timeline & Provenance</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h1 className="view-title">Forensic Timeline & Provenance</h1>
+              <ContextHelp
+                title="Forensic Timeline"
+                content="The timeline aligns multi-channel recordings chronologically with ordering modes (Normalized UTC, Native, Physical offset) and explicit timezone state flags."
+              />
+            </div>
             <p className="view-subtitle">Select an evidence target to view unified cross-camera timeline.</p>
           </div>
         </div>
@@ -175,10 +182,16 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   });
 
   return (
-    <div className="view-container">
+    <div className="view-container" data-tour="timeline-view-panel">
       <div className="view-header">
         <div>
-          <h1 className="view-title">Unified Forensic Timeline & Lineage</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 className="view-title">Unified Forensic Timeline & Lineage</h1>
+            <ContextHelp
+              title="Forensic Timeline"
+              content="The timeline aligns multi-channel recordings chronologically with ordering modes (Normalized UTC, Native, Physical offset) and explicit timezone state flags."
+            />
+          </div>
           <p className="view-subtitle">Cross-camera temporal correlation with full provenance and raw timestamp preservation (Phase 5 / Req 15, 4)</p>
         </div>
         <div>
