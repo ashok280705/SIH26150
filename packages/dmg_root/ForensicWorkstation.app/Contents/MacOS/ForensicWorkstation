@@ -1,0 +1,15 @@
+#!/bin/bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+RESOURCES_DIR="$DIR/../Resources"
+cd "$RESOURCES_DIR"
+
+# Kill any previous instance running on port 3000
+lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+
+"$RESOURCES_DIR/forensic-api" &
+API_PID=$!
+
+sleep 1
+open "http://localhost:3000"
+
+wait $API_PID

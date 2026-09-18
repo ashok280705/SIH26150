@@ -6,9 +6,15 @@ import { loadStorage, saveStorage } from '../utils/storage';
 
 interface DetectionViewProps {
   evidence: Evidence | null;
+  evidenceList?: Evidence[];
+  onSelectEvidence?: (e: Evidence) => void;
 }
 
-export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
+export const DetectionView: React.FC<DetectionViewProps> = ({ 
+  evidence, 
+  evidenceList = [], 
+  onSelectEvidence 
+}) => {
   const [capabilities, setCapabilities] = useState<Record<string, CapabilityStages>>({});
   const [results, setResults] = useState<ClassifiedDetectionResult[]>([]);
   const [topology, setTopology] = useState<StorageTopology | null>(null);
@@ -89,6 +95,75 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
         </div>
       </div>
 
+      {/* Target Evidence Selector Bar */}
+      <div className="panel" style={{ padding: '16px', marginBottom: '20px', backgroundColor: 'var(--surface)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <HardDrive size={18} style={{ color: 'var(--accent)' }} />
+            <div>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>
+                Active Target Evidence
+              </div>
+              {evidence ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                  <strong style={{ fontSize: '14px' }}>{evidence.source_device}</strong>
+                  <span className="badge badge-info">{evidence.image_format}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    ({(evidence.capacity / (1024 * 1024)).toFixed(2)} MB)
+                  </span>
+                </div>
+              ) : (
+                <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '2px' }}>
+                  No evidence selected. Please register or select an evidence target.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {evidenceList && evidenceList.length > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Switch Target:
+                </label>
+                <select
+                  className="form-select"
+                  style={{ width: '220px', padding: '6px 10px', fontSize: '12px' }}
+                  value={evidence?.id || ''}
+                  onChange={(e) => {
+                    const found = evidenceList.find((item) => item.id === e.target.value);
+                    if (found && onSelectEvidence) onSelectEvidence(found);
+                  }}
+                >
+                  {evidenceList.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.source_device} ({(item.capacity / (1024 * 1024)).toFixed(0)}MB)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <button 
+              className="btn btn-primary" 
+              onClick={handleRunDetection} 
+              disabled={!evidence || loading}
+              style={{ padding: '8px 16px' }}
+            >
+              {loading ? <Activity size={16} className="spin" /> : <Search size={16} />}
+              <span>{loading ? 'Running Analysis...' : 'Run Detection & Profiling'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ color: '#991b1b', background: '#fee2e2', padding: '12px 16px', borderRadius: '6px', marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <AlertCircle size={16} style={{ flexShrink: 0 }} />
+          <span>{error}</span>
+        </div>
+      )}
+
       {/* Capability Matrix (Req 3.6, 21.2) */}
       <div className="panel mb-4">
         <div className="panel-header">
@@ -123,23 +198,6 @@ export const DetectionView: React.FC<DetectionViewProps> = ({ evidence }) => {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '16px', marginBottom: '24px' }}>
-        <button 
-          className="btn btn-primary" 
-          onClick={handleRunDetection} 
-          disabled={!evidence || loading}
-        >
-          {loading ? <Activity size={16} className="spin" /> : <Search size={16} />}
-          <span>Run Detection & Profiling</span>
-        </button>
-        {!evidence && (
-          <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
-            <AlertCircle size={14} style={{ marginRight: '6px' }} />
-            Select an evidence item first
-          </span>
-        )}
       </div>
 
       {error && (

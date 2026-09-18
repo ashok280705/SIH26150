@@ -1,0 +1,45 @@
+profile_id = "hikvision-hik-v1.0"
+profile_version = "1.0.0"
+schema_version = "1.0"
+oem = "hikvision"
+storage_family = "HIKVISION_FS"
+
+[applicability]
+models = ["DS-7200", "DS-7600", "DS-8600"]
+firmwares = []
+storage_variants = ["single_disk", "raid"]
+reference = "Hikvision Forensic Storage Specifications 2024"
+
+[[signatures]]
+name = "hik_magic"
+pattern_hex = "48 49 4B 5F" # "HIK_"
+evidence_status = "validated"
+weight = 0.85
+is_exclusive = true
+explanation = "Hikvision proprietary header signature at offset 0"
+
+[[signatures.offset_constraints]]
+type = "exact"
+offset = 0
+
+[[signatures]]
+name = "hik_segment_tag"
+pattern_hex = "48 4B 53 45 47" # "HKSEG"
+evidence_status = "provisional"
+weight = 0.45
+is_exclusive = false
+explanation = "Hikvision recording segment index descriptor"
+
+[[signatures.offset_constraints]]
+type = "aligned_range"
+start = 0
+end = 10485760
+alignment = 512
+
+[confidence_weights]
+max_possible_score = 1.30
+min_threshold = 0.65
+
+[layout]
+superblock_size = 512
+hkseg_start = 512

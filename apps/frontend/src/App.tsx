@@ -13,17 +13,54 @@ import { TimelineView } from './views/TimelineView';
 import { ReportsView } from './views/ReportsView';
 import { HexViewer } from './components/HexViewer';
 import { Case, Evidence, Acquisition, SourceSafetyReport } from './types';
-import { getSourceSafety } from './services/api';
-import { loadStorage, saveStorage } from './utils/storage';
+import { getSourceSafety, getCase, listCaseEvidence } from './services/api';
+import { loadStorage, saveStorage, removeStorage } from './utils/storage';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => loadStorage('forensic_active_tab', 'overview'));
   const [activeCase, setActiveCase] = useState<Case | null>(() => loadStorage('forensic_active_case', null));
   const [activeEvidence, setActiveEvidence] = useState<Evidence | null>(() => loadStorage('forensic_active_evidence', null));
+  const [caseEvidenceList, setCaseEvidenceList] = useState<Evidence[]>([]);
   const [acquisition, setAcquisition] = useState<Acquisition | null>(() => loadStorage('forensic_acquisition', null));
   const [safetyReport, setSafetyReport] = useState<SourceSafetyReport | null>(() => loadStorage('forensic_safety_report', null));
   const [ingestHash, setIngestHash] = useState<string | null>(() => loadStorage('forensic_ingest_hash', null));
   const [hexOffset, setHexOffset] = useState<number | undefined>(() => loadStorage('forensic_hex_offset', undefined));
+
+  const handleUnloadCase = () => {
+    setActiveCase(null);
+    setActiveEvidence(null);
+    setCaseEvidenceList([]);
+    setAcquisition(null);
+    setSafetyReport(null);
+    setIngestHash(null);
+    setHexOffset(undefined);
+    removeStorage('forensic_active_case');
+    removeStorage('forensic_active_evidence');
+    removeStorage('forensic_acquisition');
+    removeStorage('forensic_safety_report');
+    removeStorage('forensic_ingest_hash');
+    removeStorage('forensic_hex_offset');
+    setActiveTab('cases');
+  };
+
+  useEffect(() => {
+    if (activeCase?.id) {
+      getCase(activeCase.id).catch(() => {
+        handleUnloadCase();
+      });
+
+      listCaseEvidence(activeCase.id)
+        .then((list) => {
+          setCaseEvidenceList(list);
+          if (list.length > 0 && (!activeEvidence || !list.some((e) => e.id === activeEvidence.id))) {
+            setActiveEvidence(list[0]);
+          }
+        })
+        .catch(() => setCaseEvidenceList([]));
+    } else {
+      setCaseEvidenceList([]);
+    }
+  }, [activeCase?.id]);
 
   useEffect(() => {
     saveStorage('forensic_active_tab', activeTab);
@@ -64,6 +101,7 @@ export const App: React.FC = () => {
 
   const handleEvidenceRegistered = async (data: { evidence: Evidence; acquisition?: Acquisition; ingest_hash: string }) => {
     setActiveEvidence(data.evidence);
+    setCaseEvidenceList((prev) => [...prev.filter((e) => e.id !== data.evidence.id), data.evidence]);
     setIngestHash(data.ingest_hash);
     if (data.acquisition) {
       setAcquisition(data.acquisition);
@@ -87,7 +125,6 @@ export const App: React.FC = () => {
     } catch {
       // Fallback
     }
-    setActiveTab('overview');
   };
 
   const handleNavigateToHex = (offset: number) => {
@@ -100,7 +137,13 @@ export const App: React.FC = () => {
       <Sidebar activeTab={activeTab} onSelectTab={setActiveTab} />
       
       <div className="main-content">
-        <Header activeCase={activeCase} activeEvidence={activeEvidence} />
+        <Header 
+          activeCase={activeCase} 
+          activeEvidence={activeEvidence} 
+          evidenceList={caseEvidenceList}
+          onSelectEvidence={handleEvidenceSelected}
+          onUnloadCase={handleUnloadCase} 
+        />
 
         {activeTab === 'overview' && (
           <OverviewView
@@ -113,7 +156,7 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'cases' && (
-          <CaseView activeCase={activeCase} onCaseSelected={handleCaseSelected} />
+          <CaseView activeCase={activeCase} onCaseSelected={handleCaseSelected} onCaseUnloaded={handleUnloadCase} />
         )}
 
         {activeTab === 'evidence' && (
@@ -146,23 +189,46 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'detection' && (
-          <DetectionView evidence={activeEvidence} />
+          <DetectionView 
+            evidence={activeEvidence} 
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+          />
         )}
 
         {activeTab === 'parsing' && (
-          <ParsingView evidence={activeEvidence} onNavigateToHex={handleNavigateToHex} />
+          <ParsingView 
+            evidence={activeEvidence} 
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+            onNavigateToHex={handleNavigateToHex} 
+          />
         )}
 
         {activeTab === 'recovery' && (
-          <RecoveryView evidence={activeEvidence} onNavigateToHex={handleNavigateToHex} />
+          <RecoveryView 
+            evidence={activeEvidence} 
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+            onNavigateToHex={handleNavigateToHex} 
+          />
         )}
 
         {activeTab === 'timeline' && (
-          <TimelineView evidence={activeEvidence} onNavigateToHex={handleNavigateToHex} />
+          <TimelineView 
+            evidence={activeEvidence} 
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+            onNavigateToHex={handleNavigateToHex} 
+          />
         )}
 
         {activeTab === 'reports' && (
-          <ReportsView evidence={activeEvidence} />
+          <ReportsView 
+            evidence={activeEvidence} 
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+          />
         )}
       </div>
     </div>

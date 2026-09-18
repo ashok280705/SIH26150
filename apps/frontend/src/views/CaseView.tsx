@@ -9,9 +9,10 @@ interface CaseViewProps {
   activeCase: Case | null;
   onCaseSelected?: (c: Case) => void;
   onCaseCreated?: (c: Case) => void;
+  onCaseUnloaded?: () => void;
 }
 
-export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected, onCaseCreated }) => {
+export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected, onCaseCreated, onCaseUnloaded }) => {
   const [name, setName] = useState(() => loadStorage('forensic_draft_case_name', ''));
   const [description, setDescription] = useState(() => loadStorage('forensic_draft_case_desc', ''));
   const [examiner, setExaminer] = useState(() => loadStorage('forensic_draft_case_examiner', ''));
@@ -157,12 +158,21 @@ export const CaseView: React.FC<CaseViewProps> = ({ activeCase, onCaseSelected, 
         {/* Current Active Case Card & Case List */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div className="panel">
-            <div className="panel-header">
+            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <FolderCheck size={15} color="var(--accent-primary)" />
                 <span>Active Case Context</span>
+                {activeCase && <span className="badge badge-pass" style={{ marginLeft: '6px' }}>Loaded</span>}
               </div>
-              {activeCase && <span className="badge badge-pass">Loaded</span>}
+              {activeCase && onCaseUnloaded && (
+                <button
+                  onClick={onCaseUnloaded}
+                  className="btn btn-secondary"
+                  style={{ padding: '2px 8px', fontSize: '0.8rem' }}
+                >
+                  Unload Case
+                </button>
+              )}
             </div>
 
             {activeCase ? (

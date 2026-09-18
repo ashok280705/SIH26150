@@ -6,9 +6,18 @@ import { Case, Evidence } from '../types';
 interface HeaderProps {
   activeCase: Case | null;
   activeEvidence: Evidence | null;
+  evidenceList?: Evidence[];
+  onSelectEvidence?: (e: Evidence) => void;
+  onUnloadCase?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeCase, activeEvidence }) => {
+export const Header: React.FC<HeaderProps> = ({ 
+  activeCase, 
+  activeEvidence, 
+  evidenceList = [], 
+  onSelectEvidence, 
+  onUnloadCase 
+}) => {
   const isSourceSafe = activeEvidence?.source_state === 'read_only';
 
   return (
@@ -40,16 +49,44 @@ export const Header: React.FC<HeaderProps> = ({ activeCase, activeEvidence }) =>
           )}
         </div>
 
-        <div className="header-context-item">
+        <div className="header-context-item" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <Terminal size={14} />
           <span className="header-context-label">Case:</span>
           <span className="header-context-value">{activeCase ? activeCase.name : 'None'}</span>
+          {activeCase && onUnloadCase && (
+            <button
+              onClick={onUnloadCase}
+              className="btn btn-secondary"
+              style={{ padding: '2px 6px', fontSize: '0.75rem', height: 'auto', marginLeft: '4px' }}
+              title="Unload / Close Case"
+            >
+              Close
+            </button>
+          )}
         </div>
 
-        <div className="header-context-item">
+        <div className="header-context-item" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <HardDrive size={14} />
           <span className="header-context-label">Evidence:</span>
-          <span className="header-context-value">{activeEvidence ? activeEvidence.source_device : 'None'}</span>
+          {evidenceList && evidenceList.length > 1 ? (
+            <select
+              className="form-select"
+              style={{ padding: '2px 8px', fontSize: '0.75rem', height: '24px', fontWeight: 600, maxWidth: '200px' }}
+              value={activeEvidence?.id || ''}
+              onChange={(e) => {
+                const found = evidenceList.find((item) => item.id === e.target.value);
+                if (found && onSelectEvidence) onSelectEvidence(found);
+              }}
+            >
+              {evidenceList.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.source_device}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="header-context-value">{activeEvidence ? activeEvidence.source_device : 'None'}</span>
+          )}
         </div>
       </div>
     </header>

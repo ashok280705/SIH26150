@@ -1,14 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { FileCode2, Play, RefreshCw, AlertCircle } from 'lucide-react';
+import { FileCode2, Play, RefreshCw, AlertCircle, HardDrive } from 'lucide-react';
 import { Evidence, ParserRun, Recording, DeletedCandidate, TimeEvidence } from '../types';
 import { runDetection } from '../services/api';
 
 interface ParsingViewProps {
   evidence: Evidence | null;
+  evidenceList?: Evidence[];
+  onSelectEvidence?: (e: Evidence) => void;
   onNavigateToHex: (offset: number) => void;
 }
 
-export const ParsingView: React.FC<ParsingViewProps> = ({ evidence, onNavigateToHex }) => {
+export const ParsingView: React.FC<ParsingViewProps> = ({ 
+  evidence, 
+  evidenceList = [], 
+  onSelectEvidence, 
+  onNavigateToHex 
+}) => {
   const [loading, setLoading] = useState(false);
   const [detectedOem, setDetectedOem] = useState<string | null>(null);
   const [storageFamily, setStorageFamily] = useState<string | null>(null);
@@ -26,7 +33,7 @@ export const ParsingView: React.FC<ParsingViewProps> = ({ evidence, onNavigateTo
       setDeletedCandidates([]);
       setParserRuns([]);
     }
-  }, [evidence]);
+  }, [evidence?.id]);
 
   const mockTime = (raw: number, native: string, utc: string | null, ref: string | null, tz: 'known' | 'unknown' | 'inferred'): TimeEvidence => ({
     raw_value: raw,
@@ -178,6 +185,8 @@ export const ParsingView: React.FC<ParsingViewProps> = ({ evidence, onNavigateTo
     );
   }
 
+  const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
+
   return (
     <div className="view-container">
       <div className="view-header">
@@ -190,6 +199,50 @@ export const ParsingView: React.FC<ParsingViewProps> = ({ evidence, onNavigateTo
             {loading ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
             <span>{loading ? 'Analyzing Storage...' : 'Re-parse Evidence'}</span>
           </button>
+        </div>
+      </div>
+
+      {/* Target Evidence Selector Bar */}
+      <div className="panel" style={{ padding: '16px', marginBottom: '20px', backgroundColor: 'var(--surface)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <HardDrive size={18} style={{ color: 'var(--accent)' }} />
+            <div>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>
+                Active Target Evidence
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                <strong style={{ fontSize: '14px' }}>{evidence.source_device}</strong>
+                <span className="badge badge-info">{evidence.image_format}</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  ({capacityMb} MB)
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {evidenceList && evidenceList.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Switch Target:
+              </label>
+              <select
+                className="form-select"
+                style={{ width: '220px', padding: '6px 10px', fontSize: '12px' }}
+                value={evidence.id}
+                onChange={(e) => {
+                  const found = evidenceList.find((item) => item.id === e.target.value);
+                  if (found && onSelectEvidence) onSelectEvidence(found);
+                }}
+              >
+                {evidenceList.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.source_device} ({(item.capacity / (1024 * 1024)).toFixed(0)}MB)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
       
@@ -218,7 +271,7 @@ export const ParsingView: React.FC<ParsingViewProps> = ({ evidence, onNavigateTo
         <div className="stat-card">
           <div className="stat-label">Evidence Capacity</div>
           <div className="stat-value" style={{ fontSize: '16px' }}>
-            {(evidence.capacity / (1024 * 1024)).toFixed(2)} MB
+            {capacityMb} MB
           </div>
           <div className="stat-sub">Format: {evidence.image_format}</div>
         </div>

@@ -170,72 +170,73 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
         </div>
       </div>
 
-      <div className="grid-2">
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(460px, 520px) 1fr', gap: '24px', alignItems: 'start' }}>
+        {/* Left Form Panel */}
         <div className="panel">
           <div className="panel-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <HardDriveDownload size={15} color="var(--accent-primary)" />
-              <span>Register Evidence Image for Case: <strong>{activeCase.name}</strong></span>
+              <span>Register Evidence Image for: <strong>{activeCase.name}</strong></span>
             </div>
           </div>
 
           {error && (
-            <div style={{ color: '#991b1b', background: '#fee2e2', padding: '10px', borderRadius: '4px', marginBottom: '14px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <AlertCircle size={14} />
+            <div style={{ color: '#991b1b', background: '#fee2e2', padding: '10px 14px', borderRadius: '6px', marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12.5px' }}>
+              <AlertCircle size={15} style={{ flexShrink: 0 }} />
               <span>{error}</span>
             </div>
           )}
 
           {success && (
-            <div style={{ color: '#166534', background: '#dcfce7', padding: '10px', borderRadius: '4px', marginBottom: '14px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <CheckCircle2 size={14} />
+            <div style={{ color: '#166534', background: '#dcfce7', padding: '10px 14px', borderRadius: '6px', marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12.5px' }}>
+              <CheckCircle2 size={15} style={{ flexShrink: 0 }} />
               <span>{success}</span>
             </div>
           )}
 
-          <form onSubmit={handleRegister}>
-            <div className="grid-2">
-              <div className="form-group">
-                <label className="form-label">Source Device / Model Name *</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. Western Digital 2TB WD20PURX (Evidence Tag #1042)"
-                  value={sourceDevice}
-                  onChange={(e) => setSourceDevice(e.target.value)}
-                  required
-                />
-              </div>
+          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Source Device / Model Name *</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Western Digital 2TB WD20PURX (Evidence Tag #1042)"
+                value={sourceDevice}
+                onChange={(e) => setSourceDevice(e.target.value)}
+                required
+              />
+            </div>
 
-              <div className="form-group">
-                <label className="form-label">Evidence File Path (Local Server Path) *</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. /evidence/dahua_disk.raw"
-                  value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  required
-                />
-              </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Evidence File Path (Local Server Path) *</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. /Users/anuj/Downloads/sih2026/evidence_samples/dahua_dhfs_sample.raw"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                required
+              />
+            </div>
 
-              <div className="form-group">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">Storage Capacity</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '6px' }}>
                   <input
                     type="number"
                     step="any"
                     min="0.001"
                     className="form-input"
                     style={{ flex: 1 }}
-                    placeholder="e.g. 500 or 2"
+                    placeholder="e.g. 1"
                     value={capacityValue}
                     onChange={(e) => setCapacityValue(e.target.value)}
                     required
                   />
                   <select
                     className="form-select"
-                    style={{ width: '90px' }}
+                    style={{ width: '80px', flexShrink: 0 }}
                     value={capacityUnit}
                     onChange={(e) => setCapacityUnit(e.target.value as any)}
                   >
@@ -245,122 +246,130 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
                     <option value="B">Bytes</option>
                   </select>
                 </div>
-                <div className="text-muted" style={{ fontSize: '11px', marginTop: '4px' }}>
-                  {(() => {
-                    const multipliers: Record<string, number> = {
-                      B: 1,
-                      MB: 1024 * 1024,
-                      GB: 1024 * 1024 * 1024,
-                      TB: 1024 * 1024 * 1024 * 1024,
-                    };
-                    const bytes = Math.floor((parseFloat(capacityValue) || 0) * (multipliers[capacityUnit] || 1));
-                    return `≈ ${bytes.toLocaleString()} bytes (Auto-detected from file if left blank)`;
-                  })()}
-                </div>
               </div>
 
-              <div className="form-group">
+              <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">Image Format</label>
                 <select className="form-select" value={imageFormat} onChange={(e) => setImageFormat(e.target.value)}>
-                  <option value="raw">Raw Binary Image (.raw)</option>
-                  <option value="dd">dd Raw Image (.dd)</option>
+                  <option value="raw">Raw Binary (.raw)</option>
+                  <option value="dd">dd Image (.dd)</option>
                   <option value="img">Disk Image (.img)</option>
                   <option value="physical_disk">Physical Block Device</option>
                 </select>
               </div>
+            </div>
 
-              <div className="form-group">
-                <label className="form-label">Source Safety Inspection State (Req 1.8)</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Source Safety (Req 1.8)</label>
                 <select className="form-select" value={sourceState} onChange={(e) => setSourceState(e.target.value as any)}>
-                  <option value="read_only">Read-Only (Hardware Write-Blocker Attached)</option>
-                  <option value="unknown">Unknown / Unverified (Defaults to Unknown)</option>
-                  <option value="read_write">Read-Write (Will be rejected by safety audit)</option>
+                  <option value="read_only">Read-Only (Write Blocker)</option>
+                  <option value="unknown">Unknown / Unverified</option>
+                  <option value="read_write">Read-Write (Rejected)</option>
                 </select>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Acquisition Status (Honest Reporting — Req 7.8, 7.9)</label>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Acquisition Status (Req 7.8)</label>
                 <select className="form-select" value={acquisitionStatus} onChange={(e) => setAcquisitionStatus(e.target.value as any)}>
-                  <option value="complete">Complete (No bad sectors or gaps)</option>
-                  <option value="partial">Partial (Contains bad sectors / truncated)</option>
-                  <option value="unknown">Unknown (Missing imaging receipt)</option>
+                  <option value="complete">Complete (Clean)</option>
+                  <option value="partial">Partial (Bad Blocks)</option>
+                  <option value="unknown">Unknown</option>
                 </select>
               </div>
+            </div>
 
-              <div className="form-group">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">Acquisition Tool</label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="e.g. FTK Imager, dd, Atola Insight"
+                  placeholder="e.g. dd, FTK Imager"
                   value={acquisitionTool}
                   onChange={(e) => setAcquisitionTool(e.target.value)}
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Acquisition Tool Version</label>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Tool Version</label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="e.g. 4.7.1"
+                  placeholder="e.g. 8.32"
                   value={acquisitionToolVer}
                   onChange={(e) => setAcquisitionToolVer(e.target.value)}
                 />
               </div>
             </div>
 
-            <div style={{ marginTop: '10px' }}>
-              <button type="submit" className="btn btn-primary" disabled={loading}>
-                <HardDriveDownload size={14} />
-                <span>{loading ? 'Streaming SHA-256 Hash & Ingesting...' : 'Register Evidence'}</span>
+            <div style={{ marginTop: '8px' }}>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '10px' }} disabled={loading}>
+                <HardDriveDownload size={15} />
+                <span>{loading ? 'Streaming SHA-256 Hash & Ingesting...' : 'Register Forensic Evidence'}</span>
               </button>
             </div>
           </form>
         </div>
 
+        {/* Right Registered Evidence Panel */}
         <div className="panel">
           <div className="panel-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <List size={15} color="var(--text-secondary)" />
-              <span>Evidence Items for Case: <strong>{activeCase.name}</strong></span>
+              <span>Registered Evidence ({evidenceList.length})</span>
             </div>
           </div>
           
           {evidenceList.length === 0 ? (
-            <p style={{ color: 'var(--text-muted)', padding: '16px', textAlign: 'center' }}>
-              No evidence registered for this case.
-            </p>
+            <div style={{ textAlign: 'center', padding: '36px 16px', color: 'var(--text-muted)' }}>
+              <p>No evidence registered under case <strong>{activeCase.name}</strong> yet.</p>
+              <p style={{ fontSize: '12px', marginTop: '4px' }}>Use the form on the left to register a raw forensic disk image.</p>
+            </div>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Device</th>
+                  <th>Device / Path</th>
                   <th>Format</th>
-                  <th>Path</th>
+                  <th>Capacity</th>
+                  <th>Status</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {evidenceList.map((e) => (
-                  <tr key={e.id}>
-                    <td><strong>{e.source_device}</strong></td>
-                    <td><span className="badge badge-info">{e.image_format}</span></td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      {e.path}
-                    </td>
-                    <td>
-                      <button 
-                        className="btn btn-secondary" 
-                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                        onClick={() => onEvidenceSelected(e)}
-                        disabled={activeEvidence?.id === e.id}
-                      >
-                        {activeEvidence?.id === e.id ? 'Active' : 'Load'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {evidenceList.map((e) => {
+                  const isLoaded = activeEvidence?.id === e.id;
+                  return (
+                    <tr key={e.id} style={{ backgroundColor: isLoaded ? 'var(--accent-light)' : undefined }}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{e.source_device}</div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px', wordBreak: 'break-all' }}>
+                          {e.path}
+                        </div>
+                      </td>
+                      <td><span className="badge badge-info">{e.image_format}</span></td>
+                      <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                        {(e.capacity / (1024 * 1024)).toFixed(2)} MB
+                      </td>
+                      <td>
+                        <span className={`badge ${e.source_state === 'read_only' ? 'badge-pass' : 'badge-warning'}`}>
+                          {e.source_state.replace('_', '-')}
+                        </span>
+                      </td>
+                      <td>
+                        <button 
+                          className={`btn ${isLoaded ? 'btn-primary' : 'btn-secondary'}`}
+                          style={{ padding: '4px 10px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                          onClick={() => onEvidenceSelected(e)}
+                          disabled={isLoaded}
+                        >
+                          {isLoaded ? 'Active' : 'Load'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

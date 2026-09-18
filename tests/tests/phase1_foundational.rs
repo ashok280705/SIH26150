@@ -7,13 +7,11 @@
 //! - Property 4: Determinism repeat check
 //! - Hostile input contract: no panic on extreme offsets or malformed inputs
 
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::Path;
+use std::fs;
 
 use evidence_reader::{
-    inspect_source, CancellationToken, EvidenceReader, RawReader, ReadOnlyMmap, RegionScanner,
-    SafetyDecision, ScanOptions, SourceKind,
+    inspect_source, EvidenceReader, RawReader, RegionScanner,
+    SafetyDecision, ScanOptions,
 };
 use forensic_core::case::SourceState;
 use forensic_core::chain_of_custody::{CustodyAction, CustodyLog};
@@ -23,7 +21,7 @@ use forensic_core::determinism::{
     ResultMetadata,
 };
 use forensic_core::write_guard::WriteGuard;
-use forensic_core::{CaseId, ExaminerId, ForensicError, Hash, Region};
+use forensic_core::{CaseId, ExaminerId, Hash, Region};
 use forensic_tests::fixtures::{generate_fixture, FixtureShape, OemShape};
 use hashing::HashingService;
 

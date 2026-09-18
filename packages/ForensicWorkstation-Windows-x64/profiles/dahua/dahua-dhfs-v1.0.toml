@@ -1,0 +1,46 @@
+profile_id = "dahua-dhfs-v1.0"
+profile_version = "1.0.0"
+schema_version = "1.0"
+oem = "dahua"
+storage_family = "DHFS"
+
+[applicability]
+models = ["XVR", "NVR", "DVR"]
+firmwares = []
+storage_variants = ["single_disk", "jbod"]
+reference = "Dahua Forensics Research & DHFS Specification 2024"
+
+[[signatures]]
+name = "dhfs_magic"
+pattern_hex = "44 48 46 53" # "DHFS"
+evidence_status = "validated"
+weight = 0.85
+is_exclusive = true
+explanation = "Dahua file system superblock magic identifier at sector 0"
+
+[[signatures.offset_constraints]]
+type = "exact"
+offset = 0
+
+[[signatures]]
+name = "dhav_tag"
+pattern_hex = "44 48 41 56" # "DHAV"
+evidence_status = "provisional"
+weight = 0.40
+is_exclusive = false
+explanation = "Dahua container stream packet header tag"
+
+[[signatures.offset_constraints]]
+type = "aligned_range"
+start = 0
+end = 10485760 # 10 MiB
+alignment = 512
+
+[confidence_weights]
+max_possible_score = 1.25
+min_threshold = 0.65
+
+[layout]
+superblock_size = 512
+dhav_start = 512
+

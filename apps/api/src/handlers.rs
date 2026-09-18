@@ -242,6 +242,35 @@ pub async fn get_custody_log(
     Ok(Json(serde_json::to_value(events).unwrap()))
 }
 
+pub async fn get_or_open_reader(
+    state: &AppState,
+    evidence_id: &EvidenceId,
+) -> Result<Arc<dyn evidence_reader::EvidenceReader>, ApiError> {
+    let readers_read = state.readers.read().await;
+    if let Some(r) = readers_read.get(evidence_id) {
+        return Ok(r.clone());
+    }
+    drop(readers_read);
+
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
+
+    let reader = RawReader::open(&evidence.path).map_err(|e| ApiError {
+        error: format!("failed to open evidence at '{}': {e}", evidence.path),
+        details: None,
+    })?;
+
+    let reader_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(reader);
+    let mut readers_write = state.readers.write().await;
+    readers_write.insert(*evidence_id, reader_arc.clone());
+    Ok(reader_arc)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ByteReadQuery {
     pub offset: u64, // Supports large offsets natively via u64 (up to 16 EB)
@@ -257,30 +286,7 @@ pub async fn read_evidence_bytes(
     Query(params): Query<ByteReadQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let evidence_id = EvidenceId(id);
-
-    // Ensure the reader is loaded if it's not in memory (since backend restarts clear the in-memory map)
-    let readers_read = state.readers.read().await;
-    let reader = if let Some(r) = readers_read.get(&evidence_id) {
-        r.clone()
-    } else {
-        // Drop lock before doing async ops
-        drop(readers_read);
-        let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
-            .await
-            .map_err(map_err)?
-            .ok_or_else(|| ApiError {
-                error: format!("evidence '{evidence_id}' not found"),
-                details: None,
-            })?;
-        let reader = RawReader::open(&evidence.path).map_err(|e| ApiError {
-            error: format!("failed to open evidence at '{}': {e}", evidence.path),
-            details: None,
-        })?;
-        let reader_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(reader);
-        let mut readers_write = state.readers.write().await;
-        readers_write.insert(evidence_id, reader_arc.clone());
-        reader_arc
-    };
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
 
     // Limit maximum read window to 64 KiB for interactive hex view
     let max_len = 65536;
@@ -339,27 +345,7 @@ pub async fn search_evidence(
         params.term.as_bytes().to_vec()
     };
 
-    let readers_read = state.readers.read().await;
-    let reader = if let Some(r) = readers_read.get(&evidence_id) {
-        r.clone()
-    } else {
-        drop(readers_read);
-        let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
-            .await
-            .map_err(map_err)?
-            .ok_or_else(|| ApiError {
-                error: format!("evidence '{evidence_id}' not found"),
-                details: None,
-            })?;
-        let r = RawReader::open(&evidence.path).map_err(|e| ApiError {
-            error: format!("failed to open evidence: {e}"),
-            details: None,
-        })?;
-        let r_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(r);
-        let mut readers_write = state.readers.write().await;
-        readers_write.insert(evidence_id, r_arc.clone());
-        r_arc
-    };
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
 
     // Use RegionScanner to search up to 1GB forward
     let max_len = 1024 * 1024 * 1024; // 1GB bound
@@ -402,11 +388,7 @@ pub async fn run_detection(
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let evidence_id = EvidenceId(id);
-    let readers = state.readers.read().await;
-    let reader = readers.get(&evidence_id).ok_or_else(|| ApiError {
-        error: format!("reader for evidence '{evidence_id}' not active"),
-        details: None,
-    })?;
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
 
     let orchestrator = DetectionOrchestrator::new();
     let detector_outputs = orchestrator
@@ -429,11 +411,7 @@ pub async fn get_topology(
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let evidence_id = EvidenceId(id);
-    let readers = state.readers.read().await;
-    let reader = readers.get(&evidence_id).ok_or_else(|| ApiError {
-        error: format!("reader for evidence '{evidence_id}' not active"),
-        details: None,
-    })?;
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
 
     let topology = StorageTopologyProfiler::profile(reader.as_ref(), None).map_err(map_err)?;
 

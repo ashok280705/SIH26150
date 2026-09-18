@@ -1,0 +1,43 @@
+profile_id = "uniview-ubifs-v1.0"
+profile_version = "1.0.0"
+schema_version = "1.0"
+oem = "uniview"
+storage_family = "UNIVIEW_UBIFS"
+
+[applicability]
+models = ["UNV-NVR", "UNV-XVR", "NVR301"]
+firmwares = []
+storage_variants = ["single_disk"]
+reference = "Uniview UBIFS Storage Layout Analysis 2024"
+
+[[signatures]]
+name = "uniview_super_magic"
+pattern_hex = "55 4E 49 56" # "UNIV"
+evidence_status = "validated"
+weight = 0.85
+is_exclusive = true
+explanation = "Uniview filesystem superblock magic identifier"
+
+[[signatures.offset_constraints]]
+type = "exact"
+offset = 0
+
+[[signatures]]
+name = "ec_port_id"
+pattern_hex = "45 43 31 30 30 31" # "EC1001"
+evidence_status = "model_specific"
+weight = 0.35
+is_exclusive = false # Corroborating evidence only (Req 25.4)
+explanation = "Uniview camera channel port descriptor identifier"
+
+[[signatures.offset_constraints]]
+type = "header_window"
+max_offset = 65536
+
+[confidence_weights]
+max_possible_score = 1.20
+min_threshold = 0.65
+
+[layout]
+superblock_size = 512
+ec1001_start = 512

@@ -1,0 +1,41 @@
+profile_id = "honeywell-maxpro-v1.0"
+profile_version = "1.0.0"
+schema_version = "1.0"
+oem = "honeywell"
+storage_family = "MAXPRO_NVR"
+
+[applicability]
+models = ["MAXPRO", "HNVR"]
+firmwares = []
+storage_variants = ["partitioned", "single_disk"]
+reference = "Honeywell MAXPRO NVR Forensic Storage Topology Reference"
+
+[[signatures]]
+name = "honeywell_header_magic"
+pattern_hex = "48 4F 4E 45 59 57 45 4C 4C" # "HONEYWELL"
+evidence_status = "validated"
+weight = 0.90
+is_exclusive = true
+explanation = "Honeywell primary NVR partition volume header"
+
+[[signatures.offset_constraints]]
+type = "aligned_range"
+start = 0
+end = 67108864 # 64 MiB
+alignment = 512
+
+[[signatures]]
+name = "maxpro_stream_marker"
+pattern_hex = "4D 50 52 4F" # "MPRO"
+evidence_status = "model_specific"
+weight = 0.40
+is_exclusive = false
+explanation = "Honeywell MAXPRO stream segment marker"
+
+[confidence_weights]
+max_possible_score = 1.30
+min_threshold = 0.70
+
+[layout]
+sector_size = 512
+mpro_start = 512

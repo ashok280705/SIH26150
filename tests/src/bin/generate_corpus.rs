@@ -45,7 +45,7 @@ fn main() {
 
     for &oem in OemShape::all() {
         for &shape in FixtureShape::all() {
-            let fixture = generate_fixture(oem, shape, 1);
+            let _fixture = generate_fixture(oem, shape, 1);
             let case_id = format!("SYNTH-{}-{}-001", oem.name().to_uppercase(), shape.name().to_uppercase());
             
             // Dummy hash for synthetic bytes

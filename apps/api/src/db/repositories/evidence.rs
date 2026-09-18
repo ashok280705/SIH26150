@@ -1,6 +1,5 @@
 use forensic_core::{CaseId, Evidence, EvidenceId, ExaminerId, ForensicError, ImageFormat, SourceState};
 use sqlx::{SqlitePool, Row};
-use chrono::{DateTime, Utc};
 
 pub async fn create_evidence(
     pool: &SqlitePool,

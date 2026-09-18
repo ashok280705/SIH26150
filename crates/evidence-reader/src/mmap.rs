@@ -10,12 +10,14 @@
 use forensic_core::checked::validate_region_bounds;
 use forensic_core::{ForensicError, Region};
 use std::fs::File;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
 
 /// A bounded, read-only memory-mapped region.
 pub struct ReadOnlyMmap {
     ptr: NonNull<u8>,
+    #[allow(dead_code)]
     mapped_len: usize,
     region: Region,
     offset_in_map: usize,
@@ -29,7 +31,7 @@ impl ReadOnlyMmap {
     /// Map a bounded region of a file read-only.
     ///
     /// Validates bounds against the total file length before mapping.
-    pub fn map_region(file: &File, region: Region, total_len: u64) -> Result<Self, ForensicError> {
+    pub fn map_region(_file: &File, region: Region, total_len: u64) -> Result<Self, ForensicError> {
         validate_region_bounds(&region, total_len)?;
 
         if region.length == 0 {
@@ -38,6 +40,7 @@ impl ReadOnlyMmap {
 
         #[cfg(unix)]
         {
+            let file = _file;
             let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 };
             let page_size = if page_size == 0 { 4096 } else { page_size };
 

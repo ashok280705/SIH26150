@@ -5,7 +5,7 @@
 //! and separation properties (Req 4.5).
 
 use forensic_core::{
-    TimeEvidence, RawTimestamp, RecorderNativeTime, NormalizedTime, ClockCorrection,
+    TimeEvidence, RecorderNativeTime, NormalizedTime, ClockCorrection,
     Provenance, ForensicError, Region, EvidenceId, Hash, ValidationState
 };
 use forensic_core::checked::{checked_sector_offset, validate_region_bounds};

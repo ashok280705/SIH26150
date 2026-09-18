@@ -1,6 +1,6 @@
 use forensic_core::{Case, CaseId, ExaminerId, ForensicError};
 use sqlx::{SqlitePool, Row};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 pub async fn create_case(
     pool: &SqlitePool,

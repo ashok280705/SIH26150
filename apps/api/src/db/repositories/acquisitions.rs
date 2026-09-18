@@ -2,7 +2,6 @@ use forensic_core::acquisition::{Acquisition, AcquisitionStatus};
 use forensic_core::{EvidenceId, ForensicError};
 use forensic_core::identifiers::AcquisitionId;
 use sqlx::{SqlitePool, Row};
-use chrono::{DateTime, Utc};
 
 pub async fn create_acquisition(
     pool: &SqlitePool,
