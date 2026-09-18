@@ -11,7 +11,7 @@ use evidence_reader::EvidenceReader;
 use forensic_core::{ForensicError, ProfileRegistry};
 
 use crate::detector::Detector;
-use crate::detectors::{CpPlusUbsDetector, DahuaDetector, HikvisionDetector, HoneywellDetector, UniviewDetector};
+use crate::detectors::{CpPlusUbsDetector, DahuaDetector, HikvisionDetector, HoneywellDetector, UniviewDetector, TplinkDetector};
 use crate::output::DetectorOutput;
 
 pub struct DetectionOrchestrator {
@@ -33,6 +33,7 @@ impl DetectionOrchestrator {
             Box::new(HoneywellDetector),
             Box::new(CpPlusUbsDetector),
             Box::new(UniviewDetector),
+            Box::new(TplinkDetector),
         ];
         Self { detectors }
     }

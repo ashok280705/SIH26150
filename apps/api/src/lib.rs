@@ -63,6 +63,7 @@ pub fn app_router(state: AppState) -> Router {
         .route("/api/evidence/:id/bytes", get(handlers::read_evidence_bytes))
         .route("/api/evidence/:id/search", get(handlers::search_evidence))
         .route("/api/evidence/:id/detection", post(handlers::run_detection))
+        .route("/api/evidence/:id/parsing", post(handlers::run_parsing))
         .route("/api/evidence/:id/topology", get(handlers::get_topology))
         .route("/api/capabilities", get(handlers::get_capabilities));
 

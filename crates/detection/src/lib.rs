@@ -14,4 +14,4 @@ pub use output::{DetectionStatus, DetectorOutput};
 pub use detector::Detector;
 pub use topology::{PartitionCandidate, StorageTopology, StorageTopologyProfiler, TopologyType};
 pub use orchestrator::DetectionOrchestrator;
-pub use detectors::{CpPlusUbsDetector, DahuaDetector, HikvisionDetector, HoneywellDetector, UniviewDetector};
+pub use detectors::{CpPlusUbsDetector, DahuaDetector, HikvisionDetector, HoneywellDetector, UniviewDetector, TplinkDetector};

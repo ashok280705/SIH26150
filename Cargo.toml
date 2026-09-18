@@ -41,6 +41,8 @@ members = [
   "crates/parsers/honeywell",
   "crates/parsers/cpplus-ubs",
   "crates/parsers/uniview",
+  "crates/parsers/tplink",
+  "crates/parsing",
 
   # Applications
   "apps/api",

@@ -1,0 +1,23 @@
+[package]
+name = "parsing"
+description = "Orchestrates all OEM-specific storage parsers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+forensic-core = { path = "../forensic-core" }
+evidence-reader = { path = "../evidence-reader" }
+parsers-core = { path = "../parsers-core" }
+
+# Parsers
+parser-dahua = { path = "../parsers/dahua" }
+parser-hikvision = { path = "../parsers/hikvision" }
+parser-honeywell = { path = "../parsers/honeywell" }
+parser-cpplus-ubs = { path = "../parsers/cpplus-ubs" }
+parser-uniview = { path = "../parsers/uniview" }
+tplink = { path = "../parsers/tplink" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }

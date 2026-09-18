@@ -78,9 +78,9 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
   };
 
   const renderCapabilityPill = (stage: string) => {
-    if (stage === 'IMPLEMENTED') {
+    if (stage === 'implemented') {
       return <span className="status-badge success"><CheckCircle size={12}/> {stage}</span>;
-    } else if (stage === 'PARTIAL') {
+    } else if (stage === 'partial') {
       return <span className="status-badge warning"><Activity size={12}/> {stage}</span>;
     }
     return <span className="status-badge unknown">{stage}</span>;

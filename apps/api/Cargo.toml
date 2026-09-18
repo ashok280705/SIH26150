@@ -21,6 +21,8 @@ evidence-reader = { path = "../../crates/evidence-reader" }
 hashing = { path = "../../crates/hashing" }
 detection = { path = "../../crates/detection" }
 confidence = { path = "../../crates/confidence" }
+parsing = { path = "../../crates/parsing" }
+tplink = { path = "../../crates/parsers/tplink" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

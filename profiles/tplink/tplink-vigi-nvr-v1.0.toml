@@ -1,0 +1,90 @@
+# TP-Link VIGI NVR OEM Profile — v1.0
+#
+# Target: VIGI NVR1008H(UN) 2.0, firmware 1.1.1 Build 241127 and 1.1.3 Build 260727.
+# Storage: EXT4 over MBR partitioning, with TP-Link proprietary layout/zone structures.
+#
+# Status: PROVISIONAL — derived from firmware reverse engineering. No validated TP-Link
+# HDD image has been tested. All signatures carry evidence_status = "provisional".
+
+profile_id = "tplink-vigi-nvr-v1.0"
+profile_version = "1.0.0"
+schema_version = "1.0"
+oem = "tplink"
+storage_family = "TPLINK_VIGI_NVR"
+
+[applicability]
+models = ["VIGI NVR1008H"]
+firmwares = ["1.1.1", "1.1.3"]
+storage_variants = ["single_disk"]
+reference = "TP-Link VIGI NVR1008H V2 firmware reverse engineering (libstorage.so, liblayouthddb.so)"
+
+# --- Signature 1: TP-Link raw layout magic (0x5450 = "TP") ---
+[[signatures]]
+name = "tp_layout_magic"
+pattern_hex = "54 50"
+evidence_status = "provisional"
+weight = 0.70
+is_exclusive = true
+explanation = "TP-Link rawDiskLayout format tag (0x5450) observed in liblayouthddb.so — must be validated in structural context, not as a bare scan hit"
+
+[[signatures.offset_constraints]]
+type = "header_window"
+max_offset = 1048576  # 1 MiB into the EXT4 recording partition
+
+# --- Signature 2: TP-Link metadata identification string ---
+[[signatures]]
+name = "tp_metadata_string"
+pattern_hex = "54502D4C696E6B20436F72706F726174696F6E204C696D69746564"
+# ASCII: "TP-Link Corporation Limited"
+evidence_status = "provisional"
+weight = 0.80
+is_exclusive = true
+explanation = "TP-Link Corporation identification string embedded in rawDiskLayout metadata"
+
+[[signatures.offset_constraints]]
+type = "header_window"
+max_offset = 2097152  # 2 MiB search window
+
+# --- Signature 3: SQLite header in sys.bin ---
+[[signatures]]
+name = "sys_bin_sqlite"
+pattern_hex = "53514C69746520666F726D6174203300"
+# ASCII: "SQLite format 3\0"
+evidence_status = "provisional"
+weight = 0.50
+is_exclusive = false
+explanation = "SQLite database header for sys.bin recording metadata — not exclusive to TP-Link"
+
+# --- Signature 4: EXT4 superblock magic ---
+[[signatures]]
+name = "ext4_superblock"
+pattern_hex = "53 EF"
+# EXT4 magic at superblock offset 0x38 (little-endian 0xEF53)
+evidence_status = "provisional"
+weight = 0.15
+is_exclusive = false
+explanation = "EXT4 filesystem superblock magic — supporting evidence only, not a TP-Link indicator"
+
+[[signatures.offset_constraints]]
+type = "header_window"
+max_offset = 10485760  # 10 MiB
+
+# --- Signature 5: Linux swap signature ---
+[[signatures]]
+name = "swap_signature"
+pattern_hex = "53574150535041434532"
+# ASCII: "SWAPSPACE2"
+evidence_status = "provisional"
+weight = 0.10
+is_exclusive = false
+explanation = "Linux swap partition signature — supporting evidence only, expected as partition 1"
+
+[confidence_weights]
+max_possible_score = 2.25
+min_threshold = 0.60
+
+# Layout offsets — values are placeholders (TODO: verify from real TP-Link HDD).
+# Per project rules, unknown offsets MUST NOT be invented.
+[layout]
+# All offsets below are provisional and subject to verification.
+# ext4_superblock_offset_in_partition = 1024  # standard EXT4 superblock position

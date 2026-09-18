@@ -51,3 +51,5 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+*.db-wal
+*.db-shm

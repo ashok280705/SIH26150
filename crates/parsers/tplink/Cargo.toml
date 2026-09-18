@@ -1,0 +1,19 @@
+[package]
+name = "tplink"
+description = "TP-Link VIGI NVR OEM storage parser."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+forensic-core = { path = "../../forensic-core" }
+parsers-core = { path = "../../parsers-core" }
+evidence-reader = { path = "../../evidence-reader" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }

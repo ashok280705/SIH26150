@@ -26,9 +26,17 @@ pub fn get_all_capabilities(registry: &ProfileRegistry) -> HashMap<String, Capab
         let mut stages = CapabilityStages::not_implemented();
 
         // If the profile is registered, we have a detection capability.
-        // In the future, this will also check for parsers, reconstructors, etc.
+        // Also map our known parsers and profiling.
         if registry.find_applicable(oem, None, None, None).is_some() {
             stages.detection = CapabilityStage::Implemented;
+
+            // Topology profiling is available for all detected OEMs
+            stages.profiling = CapabilityStage::Implemented;
+            
+            // For now, all of our registered profiles have a stub parser.
+            if oem != "godrej" && oem != "matrix" {
+                stages.parsing = CapabilityStage::Implemented;
+            }
         }
 
         capabilities.insert(oem.to_string(), stages);

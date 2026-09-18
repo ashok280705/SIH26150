@@ -1,4 +1,4 @@
-import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology } from '../types';
+import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording } from '../types';
 
 const API_BASE = '/api';
 
@@ -139,6 +139,20 @@ export async function getTopology(evidenceId: string): Promise<StorageTopology> 
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get topology');
+  }
+  return res.json();
+}
+
+export async function runParsing(evidenceId: string, oemKey: string): Promise<{ parser_runs: ParserRun[], recordings: Recording[], timeline_events: any[] }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/parsing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ oem_key: oemKey })
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to run parsing');
   }
   return res.json();
 }

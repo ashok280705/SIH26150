@@ -17,6 +17,7 @@ use detection::orchestrator::DetectionOrchestrator;
 use detection::topology::StorageTopologyProfiler;
 use confidence::engine::ConfidenceEngine;
 use confidence::config::ConfidenceConfig;
+use parsing::ParsingOrchestrator;
 
 use crate::state::AppState;
 use crate::capability_service;
@@ -403,6 +404,34 @@ pub async fn run_detection(
         .map_err(map_err)?;
 
     Ok(Json(serde_json::to_value(results).unwrap()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ParsingRequest {
+    pub oem_key: String,
+}
+
+/// POST /api/evidence/:id/parsing
+pub async fn run_parsing(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Json(payload): Json<ParsingRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
+
+    let profile = state.profile_registry.find_applicable(&payload.oem_key, None, None, None)
+        .ok_or_else(|| ApiError {
+            error: format!("No active profile found for OEM: {}", payload.oem_key),
+            details: None,
+        })?;
+
+    let orchestrator = ParsingOrchestrator::new();
+    let parsing_result = orchestrator
+        .run_parsing(&payload.oem_key, reader.as_ref(), profile)
+        .map_err(map_err)?;
+
+    Ok(Json(serde_json::to_value(parsing_result).unwrap()))
 }
 
 /// GET /api/evidence/:id/topology

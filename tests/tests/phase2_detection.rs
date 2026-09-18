@@ -34,7 +34,7 @@ fn property_5_evidence_independence_across_detectors() {
 
     // Run orchestrator
     let outputs = orchestrator.run(&reader, &registry).unwrap();
-    assert_eq!(outputs.len(), 5); // Dahua, Hikvision, Honeywell, CP Plus, Uniview
+    assert_eq!(outputs.len(), 6); // Dahua, Hikvision, Honeywell, CP Plus, Uniview, TP-Link
 
     // Dahua detector should see confirmed indicators; others should not falsely trigger
     let dahua_out = outputs.iter().find(|o| o.oem_key == "dahua").unwrap();
