@@ -28,21 +28,22 @@ const CORE_CRATES: &[&str] = &[
     "reporting",
 ];
 
-/// The five currently supported OEMs: `crates/parsers/<dir>` -> package name.
+/// The currently supported OEMs: `crates/parsers/<dir>` -> package name.
 const SUPPORTED_OEM_PARSERS: &[(&str, &str)] = &[
     ("dahua", "parser-dahua"),
     ("hikvision", "parser-hikvision"),
     ("honeywell", "parser-honeywell"),
     ("cpplus-ubs", "parser-cpplus-ubs"),
     ("uniview", "parser-uniview"),
+    ("tplink", "tplink"),
 ];
 
 /// Profile data directories for the currently supported OEMs.
 const SUPPORTED_PROFILE_DIRS: &[&str] =
-    &["dahua", "hikvision", "honeywell", "cpplus", "uniview"];
+    &["dahua", "hikvision", "honeywell", "cpplus", "uniview", "tplink"];
 
 /// Future OEMs: directories exist as extension points but are NOT implemented.
-const FUTURE_PROFILE_DIRS: &[&str] = &["tplink", "godrej", "matrix"];
+const FUTURE_PROFILE_DIRS: &[&str] = &["godrej", "matrix"];
 
 /// Support directories required by the design layout.
 const SUPPORT_DIRS: &[&str] = &[

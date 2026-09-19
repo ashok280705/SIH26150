@@ -65,6 +65,12 @@ pub fn app_router(state: AppState) -> Router {
         .route("/api/evidence/:id/detection", post(handlers::run_detection))
         .route("/api/evidence/:id/parsing", post(handlers::run_parsing))
         .route("/api/evidence/:id/topology", get(handlers::get_topology))
+        .route("/api/evidence/:id/recordings/:rec_id/reconstruct", post(handlers::reconstruct_recording))
+        .route("/api/evidence/:id/artifacts", get(handlers::list_evidence_artifacts))
+        .route("/api/artifacts/:id", get(handlers::get_artifact_handler))
+        .route("/api/artifacts/:id/verify", post(handlers::verify_artifact_handler))
+        .route("/api/artifacts/:id/video", get(handlers::stream_artifact_video))
+        .route("/api/ffmpeg/status", get(handlers::get_ffmpeg_status))
         .route("/api/capabilities", get(handlers::get_capabilities));
 
     if let Some(frontend_dir) = find_frontend_dir() {

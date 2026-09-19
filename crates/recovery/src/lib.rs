@@ -29,7 +29,9 @@ pub mod fragmentation;
 pub mod wrap_storage;
 pub mod video;
 pub mod reconstructor;
+pub mod ffmpeg;
 
 pub use engine::RecoveryEngine;
 pub use classification::classify_recovery;
 pub use reconstructor::{VideoCodec, MediaMetadata, ReconstructionOutput, VideoReconstructor};
+pub use ffmpeg::{FfmpegService, FfmpegInfo, RemuxOptions, RemuxResult, ProbeResult, hash_file_sha256, reverify_artifact_sha256};

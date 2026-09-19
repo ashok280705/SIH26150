@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { FileCode2, Play, RefreshCw, AlertCircle, HardDrive } from 'lucide-react';
+import { FileCode2, Play, RefreshCw, AlertCircle, HardDrive, Video } from 'lucide-react';
 import { Evidence, ParserRun, Recording, DeletedCandidate, TimeEvidence } from '../types';
-import { runDetection, runParsing } from '../services/api';
+import { runDetection, runParsing, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
+import { VideoPlayer } from '../components/video/VideoPlayer';
 
 interface ParsingViewProps {
   evidence: Evidence | null;
@@ -24,6 +25,8 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [deletedCandidates, setDeletedCandidates] = useState<DeletedCandidate[]>([]);
   const [parserRuns, setParserRuns] = useState<ParserRun[]>([]);
+  const [activePlayback, setActivePlayback] = useState<any | null>(null);
+  const [reconstructing, setReconstructing] = useState<string | null>(null);
 
   useEffect(() => {
     if (evidence) {
@@ -183,6 +186,47 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
 
   const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
 
+  const handlePlayRecording = async (rec: Recording) => {
+    if (!evidence) return;
+    setReconstructing(rec.id);
+    try {
+      const oemKey = detectedOem ? detectedOem.toLowerCase() : 'tplink';
+      const res = await reconstructRecording(evidence.id, rec.id, {
+        offset_start: rec.offset_start,
+        length: rec.offset_end > rec.offset_start ? rec.offset_end - rec.offset_start : 131072,
+        channel: rec.channel_id,
+        oem_key: oemKey,
+      });
+
+      if (res.remux) {
+        setActivePlayback({
+          videoId: res.remux.artifact_id,
+          videoUrl: res.remux.video_url,
+          recordingId: rec.id,
+          channel: rec.channel_id,
+          oemName: detectedOem || 'TP-Link VIGI',
+          sourceOffset: rec.offset_start,
+          sourceLength: res.elementary_stream.size_bytes,
+          nativeTime: rec.start_time.recorder_native,
+          normalizedUtc: rec.start_time.normalized_utc || undefined,
+          codec: res.codec || rec.codec,
+          elementarySha256: res.elementary_stream.sha256,
+          remuxSha256: res.remux.sha256,
+          ffmpegVersion: res.remux.ffmpeg_version,
+          ffmpegArgs: res.remux.arguments,
+          validationState: res.remux.validation_state,
+        });
+      } else {
+        alert("Elementary stream extracted and hashed. Stream-copy MP4 container remuxing requires FFmpeg on host.");
+      }
+    } catch (err: any) {
+      console.error("Reconstruction failed:", err);
+      alert(`Reconstruction failed: ${err.message || err}`);
+    } finally {
+      setReconstructing(null);
+    }
+  };
+
   return (
     <div className="view-container" data-tour="parsing-view-panel">
       <div className="view-header">
@@ -279,6 +323,21 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
         </div>
       </div>
 
+      {activePlayback && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <h3 style={{ margin: 0, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Video size={16} style={{ color: 'var(--accent)' }} />
+              Forensic Video Player — Recording {activePlayback.recordingId}
+            </h3>
+            <button className="btn btn-secondary btn-sm" onClick={() => setActivePlayback(null)}>
+              Close Player
+            </button>
+          </div>
+          <VideoPlayer {...activePlayback} onClose={() => setActivePlayback(null)} />
+        </div>
+      )}
+
       {recordings.length === 0 && !loading && (
         <div className="panel mb-4" style={{ backgroundColor: 'var(--surface)', borderLeft: '4px solid var(--accent)' }}>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
@@ -311,7 +370,7 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
                       <th>Start Time</th>
                       <th>End Time</th>
                       <th>Location</th>
-                      <th>Action</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -347,9 +406,19 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
                           <div className="mono">0x{rec.offset_start.toString(16).toUpperCase()}</div>
                         </td>
                         <td>
-                          <button className="btn btn-secondary btn-sm" onClick={() => onNavigateToHex(rec.offset_start)}>
-                            Inspect Hex
-                          </button>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handlePlayRecording(rec)}
+                              disabled={reconstructing === rec.id}
+                            >
+                              {reconstructing === rec.id ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
+                              <span>{reconstructing === rec.id ? 'Remuxing...' : 'Play'}</span>
+                            </button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => onNavigateToHex(rec.offset_start)}>
+                              Hex
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

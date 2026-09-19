@@ -156,3 +156,69 @@ export async function runParsing(evidenceId: string, oemKey: string): Promise<{ 
   }
   return res.json();
 }
+
+import { FfmpegInfo, ArtifactRecord, ArtifactVerificationResult, ReconstructResponse } from '../types';
+
+export async function getFfmpegStatus(): Promise<FfmpegInfo> {
+  const res = await fetch(`${API_BASE}/ffmpeg/status`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to get FFmpeg status');
+  }
+  return res.json();
+}
+
+export async function reconstructRecording(
+  evidenceId: string,
+  recordingId: string,
+  payload?: { offset_start?: number; length?: number; channel?: number; oem_key?: string }
+): Promise<ReconstructResponse> {
+  const cleanEvId = evidenceId.replace('evidence-', '');
+  const cleanRecId = recordingId.includes('-') && recordingId.length === 36 ? recordingId : uuidv4();
+
+  const res = await fetch(`${API_BASE}/evidence/${cleanEvId}/recordings/${cleanRecId}/reconstruct`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to reconstruct recording');
+  }
+  return res.json();
+}
+
+export async function getArtifact(artifactId: string): Promise<ArtifactRecord> {
+  const res = await fetch(`${API_BASE}/artifacts/${artifactId}`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to fetch artifact');
+  }
+  return res.json();
+}
+
+export async function verifyArtifact(artifactId: string): Promise<ArtifactVerificationResult> {
+  const res = await fetch(`${API_BASE}/artifacts/${artifactId}/verify`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to verify artifact');
+  }
+  return res.json();
+}
+
+export async function listEvidenceArtifacts(evidenceId: string): Promise<ArtifactRecord[]> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/artifacts`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to list artifacts');
+  }
+  return res.json();
+}
+
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}

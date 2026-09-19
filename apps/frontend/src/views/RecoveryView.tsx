@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Video, HardDrive, Search, RefreshCw } from 'lucide-react';
+import { Video, HardDrive, Search, RefreshCw, Play } from 'lucide-react';
 import { Evidence, RecoveryCandidateUI, RecoveryRunUI } from '../types';
-import { runDetection } from '../services/api';
+import { runDetection, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
+import { VideoPlayer } from '../components/video/VideoPlayer';
 
 interface RecoveryViewProps {
   evidence: Evidence | null;
@@ -20,6 +21,8 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState<RecoveryCandidateUI[]>([]);
   const [recoveryRun, setRecoveryRun] = useState<RecoveryRunUI | null>(null);
+  const [activePlayback, setActivePlayback] = useState<any | null>(null);
+  const [reconstructing, setReconstructing] = useState<string | null>(null);
 
   useEffect(() => {
     if (evidence) {
@@ -261,6 +264,45 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
 
   const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
 
+  const handlePlayCandidate = async (cand: RecoveryCandidateUI) => {
+    if (!evidence) return;
+    setReconstructing(cand.id);
+    try {
+      const res = await reconstructRecording(evidence.id, cand.id, {
+        offset_start: cand.source_offset,
+        length: cand.source_length,
+        channel: cand.channel,
+      });
+
+      if (res.remux) {
+        setActivePlayback({
+          videoId: res.remux.artifact_id,
+          videoUrl: res.remux.video_url,
+          recordingId: cand.id,
+          channel: cand.channel,
+          oemName: evidence.source_device,
+          sourceOffset: cand.source_offset,
+          sourceLength: res.elementary_stream.size_bytes,
+          nativeTime: cand.time_native,
+          normalizedUtc: '2026-09-18T18:30:00Z',
+          codec: res.codec || cand.codec,
+          elementarySha256: res.elementary_stream.sha256,
+          remuxSha256: res.remux.sha256,
+          ffmpegVersion: res.remux.ffmpeg_version,
+          ffmpegArgs: res.remux.arguments,
+          validationState: res.remux.validation_state,
+        });
+      } else {
+        alert("Elementary stream extracted and hashed. Stream-copy MP4 container remuxing requires FFmpeg on host.");
+      }
+    } catch (err: any) {
+      console.error("Reconstruction failed:", err);
+      alert(`Reconstruction failed: ${err.message || err}`);
+    } finally {
+      setReconstructing(null);
+    }
+  };
+
   return (
     <div className="view-container" data-tour="recovery-view-panel">
       <div className="view-header">
@@ -325,6 +367,21 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
           )}
         </div>
       </div>
+
+      {activePlayback && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <h3 style={{ margin: 0, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Video size={16} style={{ color: 'var(--accent)' }} />
+              Forensic Video Player — Candidate {activePlayback.recordingId}
+            </h3>
+            <button className="btn btn-secondary btn-sm" onClick={() => setActivePlayback(null)}>
+              Close Player
+            </button>
+          </div>
+          <VideoPlayer {...activePlayback} onClose={() => setActivePlayback(null)} />
+        </div>
+      )}
 
       {/* Metrics & Bounds Banner */}
       <div className="grid-4 mb-4">
@@ -433,12 +490,22 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
                     </div>
                   </td>
                   <td>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => onNavigateToHex(cand.source_offset)}
-                    >
-                      Hex (<span className="mono">0x{cand.source_offset.toString(16).toUpperCase()}</span>)
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => handlePlayCandidate(cand)}
+                        disabled={reconstructing === cand.id}
+                      >
+                        {reconstructing === cand.id ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
+                        <span>{reconstructing === cand.id ? 'Remuxing...' : 'Play'}</span>
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => onNavigateToHex(cand.source_offset)}
+                      >
+                        Hex
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

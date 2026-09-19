@@ -431,6 +431,39 @@ pub async fn run_parsing(
         .run_parsing(&payload.oem_key, reader.as_ref(), profile)
         .map_err(map_err)?;
 
+    // Persist parser runs and recordings to SQLite for downstream reconstruction & provenance
+    for run in &parsing_result.parser_runs {
+        let run_id = uuid::Uuid::new_v4();
+        let val_json = serde_json::to_value(&run.validation_state).unwrap_or_default();
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO parser_runs (id, evidence_id, parser_id, parser_version, profile_id, profile_hash, operation_name, validation_state)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#
+        )
+        .bind(run_id)
+        .bind(evidence_id.0)
+        .bind(&run.parser_id)
+        .bind(&run.parser_version)
+        .bind(&run.profile_id.0)
+        .bind(run.profile_hash.hex())
+        .bind(&run.operation_name)
+        .bind(val_json.to_string())
+        .execute(&state.db_pool)
+        .await;
+
+        for rec in &parsing_result.recordings {
+            let _ = crate::db::repositories::recordings::insert_recording(
+                &state.db_pool,
+                &evidence_id,
+                run_id,
+                rec,
+                None,
+                None,
+            ).await;
+        }
+    }
+
     Ok(Json(serde_json::to_value(parsing_result).unwrap()))
 }
 
@@ -445,4 +478,411 @@ pub async fn get_topology(
     let topology = StorageTopologyProfiler::profile(reader.as_ref(), None).map_err(map_err)?;
 
     Ok(Json(serde_json::to_value(topology).unwrap()))
+}
+
+/// GET /api/ffmpeg/status
+pub async fn get_ffmpeg_status(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let status = state.ffmpeg_service.status();
+    Ok(Json(serde_json::to_value(status).unwrap()))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ReconstructPayload {
+    pub offset_start: Option<u64>,
+    pub length: Option<u64>,
+    pub channel: Option<u32>,
+    pub oem_key: Option<String>,
+}
+
+/// POST /api/evidence/:id/recordings/:rec_id/reconstruct
+pub async fn reconstruct_recording(
+    State(state): State<AppState>,
+    AxumPath((evidence_id_raw, rec_id_raw)): AxumPath<(uuid::Uuid, String)>,
+    payload_opt: Option<Json<ReconstructPayload>>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let evidence_id = EvidenceId(evidence_id_raw);
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
+
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
+    let payload = payload_opt.map(|p| p.0).unwrap_or_default();
+
+    // 1. Resolve source regions
+    let rec_uuid = uuid::Uuid::parse_str(&rec_id_raw).ok();
+    let db_rec = match rec_uuid {
+        Some(u) => repositories::recordings::get_recording(&state.db_pool, u).await.map_err(map_err)?,
+        None => None,
+    };
+
+    let (source_regions, rec_channel) = if let Some(rec_info) = db_rec {
+        (rec_info.0.source_offsets, rec_info.0.channel)
+    } else if let (Some(off), Some(len)) = (payload.offset_start, payload.length) {
+        let reg = forensic_core::Region::new(off, len).map_err(map_err)?;
+        (vec![reg], payload.channel.unwrap_or(1))
+    } else {
+        // Run parser detection if OEM key provided or auto-detect
+        let oem_key = payload.oem_key.as_deref().unwrap_or("tplink");
+        let profile = state.profile_registry.find_applicable(oem_key, None, None, None);
+        if let Some(prof) = profile {
+            let orchestrator = ParsingOrchestrator::new();
+            if let Ok(res) = orchestrator.run_parsing(oem_key, reader.as_ref(), prof) {
+                if let Some(found_rec) = res.recordings.into_iter().find(|r| r.source_offsets.iter().any(|s| s.offset > 0)) {
+                    (found_rec.source_offsets, found_rec.channel)
+                } else {
+                    let fallback_len = (reader.len().min(4 * 1024 * 1024)) as u64;
+                    let reg = forensic_core::Region::new(0, fallback_len).map_err(map_err)?;
+                    (vec![reg], 1)
+                }
+            } else {
+                let fallback_len = (reader.len().min(4 * 1024 * 1024)) as u64;
+                let reg = forensic_core::Region::new(0, fallback_len).map_err(map_err)?;
+                (vec![reg], 1)
+            }
+        } else {
+            let fallback_len = (reader.len().min(4 * 1024 * 1024)) as u64;
+            let reg = forensic_core::Region::new(0, fallback_len).map_err(map_err)?;
+            (vec![reg], 1)
+        }
+    };
+
+    // 2. Bound synchronous request payload size (500 MB limit)
+    let total_bytes: u64 = source_regions.iter().map(|r| r.length).sum();
+    let max_sync_bytes: u64 = 500 * 1024 * 1024;
+    if total_bytes > max_sync_bytes {
+        return Err(ApiError {
+            error: format!("Recording payload ({} MB) exceeds maximum synchronous threshold (500 MB)", total_bytes / (1024 * 1024)),
+            details: Some("Consider running bounded L2/L3 region carving".into()),
+        });
+    }
+
+    // 3. Extract exact bytes from evidence
+    let mut raw_payload = Vec::with_capacity(total_bytes as usize);
+    for reg in &source_regions {
+        let chunk = reader.read_exact_at(reg.offset, reg.length as usize).map_err(map_err)?;
+        raw_payload.extend_from_slice(&chunk);
+    }
+
+    // 4. Multi-signal codec classification
+    let codec_evidence = recovery::VideoReconstructor::classify_codec(&raw_payload);
+    let codec = codec_evidence.codec;
+
+    // 5. Materialize Elementary Stream artifact
+    let case_id = evidence.case_id;
+    let es_art_id = forensic_core::ArtifactId::new();
+    let es_filename = match codec {
+        recovery::VideoCodec::H265 => format!("{}.hevc", es_art_id.0),
+        _ => format!("{}.h264", es_art_id.0),
+    };
+
+    let base_artifact_dir = std::path::PathBuf::from(format!("artifacts/cases/{}/recordings/{}", case_id.0, rec_id_raw));
+    let es_dir = base_artifact_dir.join("elementary");
+    let remux_dir = base_artifact_dir.join("remux");
+
+    state.write_guard.validate_write_path(&es_dir.join(&es_filename)).map_err(map_err)?;
+    state.write_guard.validate_write_path(&remux_dir).map_err(map_err)?;
+
+    std::fs::create_dir_all(&es_dir).map_err(|e| {
+        ForensicError::io(format!("Creating elementary stream directory '{}'", es_dir.display()), e)
+    }).map_err(map_err)?;
+
+    let es_path = es_dir.join(&es_filename);
+    std::fs::write(&es_path, &raw_payload).map_err(|e| {
+        ForensicError::io(format!("Materializing elementary stream at '{}'", es_path.display()), e)
+    }).map_err(map_err)?;
+
+    let es_sha256 = recovery::ffmpeg::hash_file_sha256(&es_path).map_err(map_err)?;
+    let es_hash = forensic_core::Hash::sha256(hex::decode(&es_sha256).unwrap_or_default());
+
+    let source_regions_prov: Vec<forensic_core::SourceRegion> = source_regions
+        .iter()
+        .map(|r| forensic_core::SourceRegion::new(evidence_id, r.clone()).with_description(format!("Channel {} stream payload", rec_channel)))
+        .collect();
+
+    let es_prov = forensic_core::Provenance::new(
+        evidence_id,
+        es_hash.clone(),
+        source_regions_prov.clone(),
+        "VideoReconstructor",
+        "1.0.0",
+        es_hash.clone(),
+        forensic_core::ValidationState::pass(
+            format!("Extracted exact {:?} Annex-B elementary stream ({} bytes)", codec, raw_payload.len()),
+            "materialize_elementary_stream",
+            "ElementaryStream",
+        ).unwrap(),
+    );
+
+    let es_artifact = forensic_core::DerivedArtifact {
+        id: es_art_id,
+        kind: forensic_core::DerivedKind::ElementaryStream,
+        provenance: es_prov,
+        output_path: es_path.to_string_lossy().to_string(),
+        description: format!("Materialized {:?} elementary bitstream", codec),
+        produced_at: Utc::now(),
+    };
+
+    repositories::artifacts::save_derived_artifact(
+        &state.db_pool,
+        &evidence_id,
+        &es_artifact,
+        &es_sha256,
+        raw_payload.len() as u64,
+        0,
+    ).await.map_err(map_err)?;
+
+    // 6. Invoke FFmpeg stream-copy remux
+    let mut remux_response = None;
+    let ffmpeg_status = state.ffmpeg_service.status();
+
+    if ffmpeg_status.available && (codec == recovery::VideoCodec::H264 || codec == recovery::VideoCodec::H265) {
+        let remux_art_id = forensic_core::ArtifactId::new();
+        let mp4_filename = format!("{}.mp4", remux_art_id.0);
+        let mp4_path = remux_dir.join(&mp4_filename);
+
+        let remux_opts = recovery::RemuxOptions {
+            codec,
+            timeout_secs: Some(300),
+        };
+
+        match state.ffmpeg_service.remux_elementary_stream_file(&es_path, &mp4_path, remux_opts, None).await {
+            Ok(remux_res) => {
+                let mp4_hash = forensic_core::Hash::sha256(hex::decode(&remux_res.output_sha256).unwrap_or_default());
+                let mut remux_prov = forensic_core::Provenance::new(
+                    evidence_id,
+                    es_hash.clone(),
+                    source_regions_prov.clone(),
+                    "FfmpegService",
+                    remux_res.ffmpeg_version.clone(),
+                    mp4_hash.clone(),
+                    remux_res.validation_state.clone(),
+                );
+
+                remux_prov.add_transformation(forensic_core::TransformationStep {
+                    operation: "stream_copy_remux".to_string(),
+                    component: "FFmpeg".to_string(),
+                    component_version: remux_res.ffmpeg_version.clone(),
+                    performed_at: Utc::now(),
+                    notes: Some(format!("Arguments: {:?}", remux_res.arguments)),
+                });
+
+                let remux_artifact = forensic_core::DerivedArtifact {
+                    id: remux_art_id,
+                    kind: forensic_core::DerivedKind::Remux,
+                    provenance: remux_prov,
+                    output_path: mp4_path.to_string_lossy().to_string(),
+                    description: format!("Remuxed ISO/IEC 14496-14 MP4 ({:?})", codec),
+                    produced_at: Utc::now(),
+                };
+
+                repositories::artifacts::save_derived_artifact(
+                    &state.db_pool,
+                    &evidence_id,
+                    &remux_artifact,
+                    &remux_res.output_sha256,
+                    remux_res.output_size_bytes,
+                    remux_res.duration_ms,
+                ).await.map_err(map_err)?;
+
+                remux_response = Some(serde_json::json!({
+                    "artifact_id": remux_art_id.0,
+                    "kind": "remux",
+                    "output_path": mp4_path.to_string_lossy(),
+                    "sha256": remux_res.output_sha256,
+                    "size_bytes": remux_res.output_size_bytes,
+                    "ffmpeg_version": remux_res.ffmpeg_version,
+                    "arguments": remux_res.arguments,
+                    "validation_state": remux_res.validation_state,
+                    "video_url": format!("/api/artifacts/{}/video", remux_art_id.0),
+                }));
+            }
+            Err(e) => {
+                tracing::warn!("FFmpeg stream-copy remux failed: {e}");
+            }
+        }
+    }
+
+    let result = serde_json::json!({
+        "recording_id": rec_id_raw,
+        "evidence_id": evidence_id.0,
+        "channel": rec_channel,
+        "codec": format!("{:?}", codec),
+        "codec_evidence": codec_evidence,
+        "elementary_stream": {
+            "artifact_id": es_art_id.0,
+            "kind": "elementary_stream",
+            "output_path": es_path.to_string_lossy(),
+            "sha256": es_sha256,
+            "size_bytes": raw_payload.len(),
+        },
+        "remux": remux_response,
+        "ffmpeg_status": ffmpeg_status,
+    });
+
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+/// GET /api/artifacts/:id
+pub async fn get_artifact_handler(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let record = repositories::artifacts::get_artifact(&state.db_pool, id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("artifact '{id}' not found"),
+            details: None,
+        })?;
+
+    Ok(Json(serde_json::to_value(record).unwrap()))
+}
+
+/// GET /api/evidence/:id/artifacts
+pub async fn list_evidence_artifacts(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    let records = repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?;
+
+    Ok(Json(serde_json::to_value(records).unwrap()))
+}
+
+/// POST /api/artifacts/:id/verify
+pub async fn verify_artifact_handler(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let record = repositories::artifacts::get_artifact(&state.db_pool, id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("artifact '{id}' not found for verification"),
+            details: None,
+        })?;
+
+    let path = std::path::Path::new(&record.output_path);
+    let res = recovery::ffmpeg::reverify_artifact_sha256(&id.to_string(), path, &record.sha256)
+        .map_err(map_err)?;
+
+    Ok(Json(serde_json::to_value(res).unwrap()))
+}
+
+/// GET /api/artifacts/:id/video
+///
+/// Securely serves video files with full HTTP Range request support (206 Partial Content).
+pub async fn stream_artifact_video(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, ApiError> {
+    let record = repositories::artifacts::get_artifact(&state.db_pool, id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("video artifact '{id}' not found"),
+            details: None,
+        })?;
+
+    let target_path = std::path::PathBuf::from(&record.output_path);
+    state.write_guard.validate_write_path(&target_path).map_err(map_err)?;
+
+    if !target_path.exists() {
+        return Err(ApiError {
+            error: format!("artifact file '{}' does not exist on disk", target_path.display()),
+            details: None,
+        });
+    }
+
+    let metadata = std::fs::metadata(&target_path).map_err(|e| {
+        ApiError {
+            error: format!("failed to read metadata for '{}': {e}", target_path.display()),
+            details: None,
+        }
+    })?;
+
+    let total_size = metadata.len();
+    let mut file = std::fs::File::open(&target_path).map_err(|e| {
+        ApiError {
+            error: format!("failed to open '{}': {e}", target_path.display()),
+            details: None,
+        }
+    })?;
+
+    // Check for HTTP Range header
+    let range_header = headers.get(axum::http::header::RANGE).and_then(|h| h.to_str().ok());
+
+    if let Some(range_val) = range_header {
+        if let Some(range_spec) = range_val.strip_prefix("bytes=") {
+            let parts: Vec<&str> = range_spec.split('-').collect();
+            let start = parts[0].parse::<u64>().unwrap_or(0);
+            let end = if parts.len() > 1 && !parts[1].is_empty() {
+                parts[1].parse::<u64>().unwrap_or(total_size - 1).min(total_size - 1)
+            } else {
+                total_size - 1
+            };
+
+            if start <= end && start < total_size {
+                use std::io::{Read, Seek, SeekFrom};
+                let chunk_len = (end - start + 1) as usize;
+                let mut buffer = vec![0u8; chunk_len];
+
+                file.seek(SeekFrom::Start(start)).map_err(|e| {
+                    ApiError {
+                        error: format!("seek failed on video file: {e}"),
+                        details: None,
+                    }
+                })?;
+
+                file.read_exact(&mut buffer).map_err(|e| {
+                    ApiError {
+                        error: format!("read failed on video chunk: {e}"),
+                        details: None,
+                    }
+                })?;
+
+                let content_range = format!("bytes {}-{}/{}", start, end, total_size);
+
+                let response = Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(axum::http::header::CONTENT_TYPE, "video/mp4")
+                    .header(axum::http::header::ACCEPT_RANGES, "bytes")
+                    .header(axum::http::header::CONTENT_RANGE, content_range)
+                    .header(axum::http::header::CONTENT_LENGTH, chunk_len.to_string())
+                    .body(axum::body::Body::from(buffer))
+                    .unwrap();
+
+                return Ok(response);
+            }
+        }
+    }
+
+    // Full file response (200 OK)
+    use std::io::Read;
+    let mut buffer = Vec::with_capacity(total_size as usize);
+    file.read_to_end(&mut buffer).map_err(|e| {
+        ApiError {
+            error: format!("failed to read full video file: {e}"),
+            details: None,
+        }
+    })?;
+
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "video/mp4")
+        .header(axum::http::header::ACCEPT_RANGES, "bytes")
+        .header(axum::http::header::CONTENT_LENGTH, total_size.to_string())
+        .body(axum::body::Body::from(buffer))
+        .unwrap();
+
+    Ok(response)
 }

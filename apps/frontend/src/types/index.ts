@@ -212,3 +212,62 @@ export interface RecoveryRunUI {
   truncated: boolean;
   validation_state: ValidationState;
 }
+
+export interface FfmpegInfo {
+  available: boolean;
+  executable_path: string | null;
+  version: string | null;
+  source: any;
+  capabilities: string[];
+}
+
+export interface ArtifactRecord {
+  id: string;
+  kind: string;
+  evidence_id: string;
+  output_path: string;
+  description: string;
+  created_at: string;
+  sha256: string;
+  producing_component: string;
+  component_version: string;
+  validation_state: string;
+  validation_reason: string;
+  source_regions: { offset: number; length: number; description?: string }[];
+}
+
+export interface ArtifactVerificationResult {
+  artifact_id: string;
+  stored_sha256: string;
+  computed_sha256: string;
+  status: 'MATCH' | 'MISMATCH';
+  verified_at: string;
+  size_bytes: number;
+}
+
+export interface ReconstructResponse {
+  recording_id: string;
+  evidence_id: string;
+  channel: number;
+  codec: string;
+  codec_evidence: any;
+  elementary_stream: {
+    artifact_id: string;
+    kind: string;
+    output_path: string;
+    sha256: string;
+    size_bytes: number;
+  };
+  remux: {
+    artifact_id: string;
+    kind: string;
+    output_path: string;
+    sha256: string;
+    size_bytes: number;
+    ffmpeg_version: string;
+    arguments: string[];
+    validation_state: ValidationState;
+    video_url: string;
+  } | null;
+  ffmpeg_status: FfmpegInfo;
+}

@@ -8,7 +8,9 @@ use tokio::sync::RwLock;
 
 use evidence_reader::EvidenceReader;
 use forensic_core::profile::ProfileRegistry;
+use forensic_core::write_guard::WriteGuard;
 use forensic_core::EvidenceId;
+use recovery::FfmpegService;
 use sqlx::SqlitePool;
 
 #[derive(Clone)]
@@ -16,6 +18,8 @@ pub struct AppState {
     pub db_pool: SqlitePool,
     pub readers: Arc<RwLock<HashMap<EvidenceId, Arc<dyn EvidenceReader>>>>,
     pub profile_registry: Arc<ProfileRegistry>,
+    pub ffmpeg_service: Arc<FfmpegService>,
+    pub write_guard: Arc<WriteGuard>,
 }
 
 impl AppState {
@@ -25,10 +29,15 @@ impl AppState {
             tracing::warn!("Failed to load profiles from 'profiles' dir: {e}. Falling back to empty registry.");
             ProfileRegistry::from_profiles(vec![])
         });
+        let ffmpeg_service = Arc::new(FfmpegService::default());
+        let write_guard = Arc::new(WriteGuard::new("evidence_samples", "artifacts"));
+
         Self {
             db_pool,
             readers: Arc::new(RwLock::new(HashMap::new())),
             profile_registry: Arc::new(registry),
+            ffmpeg_service,
+            write_guard,
         }
     }
 }
