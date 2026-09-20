@@ -8,9 +8,12 @@ import { AcquisitionView } from './views/AcquisitionView';
 import { CustodyView } from './views/CustodyView';
 import { DetectionView } from './views/DetectionView';
 import { ParsingView } from './views/ParsingView';
+import { PreliminaryTimelineView } from './views/PreliminaryTimelineView';
 import { RecoveryView } from './views/RecoveryView';
 import { TimelineView } from './views/TimelineView';
+import { VideoPlayerView } from './views/VideoPlayerView';
 import { ReportsView } from './views/ReportsView';
+import { WorkflowState, loadWorkflow, saveWorkflow, computeAccess } from './workflow';
 import { HexViewer } from './components/HexViewer';
 import { WelcomeModal } from './components/onboarding/WelcomeModal';
 import { TourOverlay } from './components/onboarding/TourOverlay';
@@ -37,6 +40,19 @@ export const App: React.FC = () => {
   const [safetyReport, setSafetyReport] = useState<SourceSafetyReport | null>(() => loadStorage('forensic_safety_report', null));
   const [ingestHash, setIngestHash] = useState<string | null>(() => loadStorage('forensic_ingest_hash', null));
   const [hexOffset, setHexOffset] = useState<number | undefined>(() => loadStorage('forensic_hex_offset', undefined));
+
+  // Sequential workflow state, keyed per evidence. Drives which analysis stages are unlocked.
+  const [workflow, setWorkflow] = useState<WorkflowState>(() => loadWorkflow(loadStorage<Evidence | null>('forensic_active_evidence', null)?.id ?? null));
+
+  const stageAccess = computeAccess(!!activeEvidence, workflow);
+
+  const patchWorkflow = (patch: Partial<WorkflowState>) => {
+    setWorkflow((prev) => {
+      const next = { ...prev, ...patch };
+      saveWorkflow(activeEvidence?.id ?? null, next);
+      return next;
+    });
+  };
 
   // Onboarding state management
   const [onboardingState, setOnboardingStateLocal] = useState<OnboardingState>(() => getOnboardingState());
@@ -78,6 +94,21 @@ export const App: React.FC = () => {
       setCaseEvidenceList([]);
     }
   }, [activeCase?.id]);
+
+  // Load the saved workflow whenever the active evidence changes.
+  useEffect(() => {
+    setWorkflow(loadWorkflow(activeEvidence?.id ?? null));
+  }, [activeEvidence?.id]);
+
+  // If the current tab becomes locked (e.g. after switching evidence), fall back to
+  // the last always-available stage so the analyst is never stranded on a locked page.
+  useEffect(() => {
+    const acc = computeAccess(!!activeEvidence, workflow);
+    if (acc[activeTab]?.locked) {
+      setActiveTab(acc.detection.locked ? 'overview' : 'detection');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, workflow, activeEvidence?.id]);
 
   useEffect(() => {
     saveStorage('forensic_active_tab', activeTab);
@@ -229,6 +260,7 @@ export const App: React.FC = () => {
         activeTab={activeTab} 
         onSelectTab={setActiveTab}
         onOpenHelp={() => setIsHelpOpen(true)}
+        access={stageAccess}
       />
       
       <div className="main-content">
@@ -289,6 +321,8 @@ export const App: React.FC = () => {
             evidence={activeEvidence} 
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
           />
         )}
 
@@ -298,6 +332,19 @@ export const App: React.FC = () => {
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
             onNavigateToHex={handleNavigateToHex} 
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
+          />
+        )}
+
+        {activeTab === 'preliminary_timeline' && (
+          <PreliminaryTimelineView
+            evidence={activeEvidence}
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+            onNavigateToHex={handleNavigateToHex}
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
           />
         )}
 
@@ -307,6 +354,8 @@ export const App: React.FC = () => {
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
             onNavigateToHex={handleNavigateToHex} 
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
           />
         )}
 
@@ -316,6 +365,16 @@ export const App: React.FC = () => {
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
             onNavigateToHex={handleNavigateToHex} 
+            onWorkflow={patchWorkflow}
+          />
+        )}
+
+        {activeTab === 'video' && (
+          <VideoPlayerView
+            evidence={activeEvidence}
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+            workflow={workflow}
           />
         )}
 

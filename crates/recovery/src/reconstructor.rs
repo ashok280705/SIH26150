@@ -127,18 +127,42 @@ impl VideoReconstructor {
             if is_start_code && header_offset < len {
                 let header = stream_bytes[header_offset];
 
-                // H.264 NAL parsing: type in bits 0..4
+                // H.264 NAL parsing: 1-byte header, type in bits 0..4
                 let h264_type = header & 0x1F;
                 let h264_forbidden = (header & 0x80) != 0;
 
-                // H.265 NAL parsing: type in bits 1..6
+                // H.265 NAL parsing: the header is TWO bytes, not one:
+                //   byte0: forbidden_zero_bit(1) | nal_unit_type(6) | nuh_layer_id high bit(1)
+                //   byte1: nuh_layer_id low(5)   | nuh_temporal_id_plus1(3)
+                //
+                // Validating only byte0 produces a systematic false positive: the
+                // H.264 P-slice header 0x41 — one of the most common bytes in any
+                // real AVC stream — reinterprets to nal_unit_type 32, i.e. an HEVC
+                // VPS. Every P-slice would then vote for HEVC. Checking the second
+                // byte's spec constraints removes that whole class of misreads.
                 let h265_type = (header >> 1) & 0x3F;
                 let h265_forbidden = (header & 0x80) != 0;
+                let h265_byte1 = if header_offset + 1 < len {
+                    Some(stream_bytes[header_offset + 1])
+                } else {
+                    None
+                };
+                // nuh_temporal_id_plus1 must be non-zero for any valid HEVC NAL.
+                let h265_tid_plus1 = h265_byte1.map(|b| b & 0x07).unwrap_or(0);
+                let h265_layer_id = h265_byte1
+                    .map(|b| (((header & 0x01) as u16) << 5) | ((b >> 3) & 0x1F) as u16)
+                    .unwrap_or(u16::MAX);
+                // A structurally valid base-layer HEVC NAL header.
+                let h265_header_valid =
+                    !h265_forbidden && h265_tid_plus1 != 0 && h265_layer_id == 0;
+                // VPS and SPS must carry TemporalId == 0 (H.265 §7.4.2.2), so for a
+                // base-layer stream the second header byte is exactly 0x01.
+                let h265_param_set_valid = h265_header_valid && h265_tid_plus1 == 1;
 
                 // Evaluate H.265 exclusive parameter sets
-                if !h265_forbidden {
+                if h265_header_valid {
                     match h265_type {
-                        32 => { // VPS (Video Parameter Set - HEVC exclusive)
+                        32 if h265_param_set_valid => { // VPS (HEVC exclusive)
                             h265_score += 6;
                             nal_evidence.push(NalEvidence {
                                 offset: header_offset,
@@ -148,7 +172,7 @@ impl VideoReconstructor {
                                 codec_family: VideoCodec::H265,
                             });
                         }
-                        33 => { // SPS (HEVC Sequence Parameter Set)
+                        33 if h265_param_set_valid => { // SPS (HEVC Sequence Parameter Set)
                             h265_score += 5;
                             nal_evidence.push(NalEvidence {
                                 offset: header_offset,

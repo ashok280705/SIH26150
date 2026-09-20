@@ -1,0 +1,23 @@
+[package]
+name = "pipeline"
+description = "Forensic pipeline orchestrator: runs intake -> detection -> confidence gate -> parse (OEM or unified) -> preliminary timeline + gaps -> recovery -> final timeline, capturing every decision gate for audit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Pure orchestration crate: no network, no database. It composes the stage engines
+# and records the flowchart's decision gates; the API layer persists the result.
+[dependencies]
+forensic-core = { path = "../forensic-core" }
+evidence-reader = { path = "../evidence-reader" }
+detection = { path = "../detection" }
+confidence = { path = "../confidence" }
+parsing = { path = "../parsing" }
+timeline = { path = "../timeline" }
+recovery = { path = "../recovery" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+evidence-reader = { path = "../evidence-reader" }

@@ -1,20 +1,18 @@
 [package]
-name = "parser-dahua"
-description = "Dahua OEM parser: profile-driven filesystem, metadata, recording, and timestamp interpretation."
+name = "parser-unified"
+description = "OEM-agnostic fallback parser: signature-driven video carving for unresolved/unattributed evidence."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-# Pure core crate: no network, no database. OEM facts come from profiles/dahua/.
+# Pure core crate: no network, no database. Makes NO OEM claims and assumes NO
+# timezone — it only recovers codec-bearing regions from raw bytes.
 [dependencies]
 forensic-core = { path = "../../forensic-core" }
 evidence-reader = { path = "../../evidence-reader" }
 parsers-core = { path = "../../parsers-core" }
 hex = { workspace = true }
-chrono = { workspace = true }
 
 [dev-dependencies]
 uuid = { workspace = true }
-forensic-tests = { path = "../../../tests" }
-tempfile = "3"

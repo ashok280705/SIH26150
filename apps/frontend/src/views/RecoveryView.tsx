@@ -1,28 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { Video, HardDrive, Search, RefreshCw, Play } from 'lucide-react';
+import { Video, HardDrive, Search, RefreshCw, Play, AlertTriangle } from 'lucide-react';
 import { Evidence, RecoveryCandidateUI, RecoveryRunUI } from '../types';
-import { runDetection, reconstructRecording } from '../services/api';
+import { runRecovery, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { VideoPlayer } from '../components/video/VideoPlayer';
+import { WorkflowState, RecoveryOutcome } from '../workflow';
 
 interface RecoveryViewProps {
   evidence: Evidence | null;
   evidenceList?: Evidence[];
   onSelectEvidence?: (e: Evidence) => void;
   onNavigateToHex: (offset: number) => void;
+  workflow?: WorkflowState;
+  onWorkflow?: (patch: Partial<WorkflowState>) => void;
 }
 
 export const RecoveryView: React.FC<RecoveryViewProps> = ({ 
   evidence, 
   evidenceList = [], 
   onSelectEvidence, 
-  onNavigateToHex 
+  onNavigateToHex,
+  workflow,
+  onWorkflow,
 }) => {
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState<RecoveryCandidateUI[]>([]);
   const [recoveryRun, setRecoveryRun] = useState<RecoveryRunUI | null>(null);
   const [activePlayback, setActivePlayback] = useState<any | null>(null);
   const [reconstructing, setReconstructing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<RecoveryOutcome | null>(null);
 
   useEffect(() => {
     if (evidence) {
@@ -30,185 +37,54 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
     } else {
       setCandidates([]);
       setRecoveryRun(null);
+      setError(null);
+      setOutcome(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evidence?.id]);
 
   const loadRecoveryData = async () => {
     if (!evidence) return;
     setLoading(true);
+    setError(null);
     try {
-      const results = await runDetection(evidence.id);
-      const top = results.find(r => r.confidence_score > 0 || r.evidence_items.some(e => e.rule_match_status === 'MATCH'));
-      const oemKey = top?.oem_key?.toLowerCase() || 'generic';
-      const capacity = evidence.capacity;
+      // Bounded recovery scan; candidates are derived from real structures/carving.
+      const res = await runRecovery(evidence.id);
 
-      // Build consistent candidates dynamically matching the detected OEM and filesystem layout
-      let dynamicCandidates: RecoveryCandidateUI[] = [];
-
-      if (oemKey.includes('dahua')) {
-        dynamicCandidates = [
-          {
-            id: 'dah-cand-001',
-            channel: 1,
-            time_native: '2026-09-01 14:00:00',
-            duration_sec: 1800,
-            data_state: 'Active',
-            recovery_status: 'Recoverable',
-            recovery_level: 'L1',
-            source_offset: 0x00000200,
-            source_length: 256 * 1024,
-            integrity_status: 'Intact DHFS Index Table',
-            codec: 'H.264',
-            validation: { state: 'PASS', reason: 'Verified DHAV keyframe GOP structure at sector 1', operation: 'reconstruct', subject: 'dah-cand-001' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          },
-          {
-            id: 'dah-cand-002',
-            channel: 2,
-            time_native: '2026-09-01 15:00:00',
-            duration_sec: 1200,
-            data_state: 'Active',
-            recovery_status: 'Recoverable',
-            recovery_level: 'L1',
-            source_offset: 0x00040000,
-            source_length: 256 * 1024,
-            integrity_status: 'Intact DHAV Payload',
-            codec: 'H.265',
-            validation: { state: 'PASS', reason: 'Verified HEVC NAL sequences and timing tags', operation: 'reconstruct', subject: 'dah-cand-002' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          },
-          {
-            id: 'dah-cand-003',
-            channel: 1,
-            time_native: '2026-09-01 12:15:00',
-            duration_sec: 450,
-            data_state: 'Orphaned',
-            recovery_status: 'PartiallyRecoverable',
-            recovery_level: 'L2',
-            source_offset: 0x00080000,
-            source_length: 128 * 1024,
-            integrity_status: 'Orphaned DHFS Block Fragment',
-            codec: 'H.264',
-            validation: { state: 'REVIEW', reason: 'Carved from unallocated slack; missing header metadata', operation: 'reconstruct', subject: 'dah-cand-003' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          }
-        ];
-      } else if (oemKey.includes('hikvision')) {
-        dynamicCandidates = [
-          {
-            id: 'hik-cand-001',
-            channel: 1,
-            time_native: '2026-09-01 14:00:00',
-            duration_sec: 1800,
-            data_state: 'Active',
-            recovery_status: 'Recoverable',
-            recovery_level: 'L1',
-            source_offset: 0x00000200,
-            source_length: 256 * 1024,
-            integrity_status: 'Intact HKSEG Table',
-            codec: 'H.264',
-            validation: { state: 'PASS', reason: 'Verified HKSEG header and B-Tree index pointers', operation: 'reconstruct', subject: 'hik-cand-001' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          },
-          {
-            id: 'hik-cand-002',
-            channel: 2,
-            time_native: '2026-09-01 15:00:00',
-            duration_sec: 1200,
-            data_state: 'Active',
-            recovery_status: 'Recoverable',
-            recovery_level: 'L1',
-            source_offset: 0x00040000,
-            source_length: 256 * 1024,
-            integrity_status: 'Intact HKSEG Stream Segment',
-            codec: 'H.264',
-            validation: { state: 'PASS', reason: 'Verified Hikvision stream packet sequence', operation: 'reconstruct', subject: 'hik-cand-002' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          },
-          {
-            id: 'hik-cand-003',
-            channel: 1,
-            time_native: '2026-09-01 11:30:00',
-            duration_sec: 300,
-            data_state: 'Orphaned',
-            recovery_status: 'PartiallyRecoverable',
-            recovery_level: 'L2',
-            source_offset: 0x00080000,
-            source_length: 128 * 1024,
-            integrity_status: 'Hikvision Slack Block Carve',
-            codec: 'H.264',
-            validation: { state: 'REVIEW', reason: 'Orphaned HKSEG record carved from slack area', operation: 'reconstruct', subject: 'hik-cand-003' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          }
-        ];
-      } else {
-        dynamicCandidates = [
-          {
-            id: `${oemKey.slice(0, 3)}-cand-001`,
-            channel: 1,
-            time_native: '2026-09-01 14:00:00',
-            duration_sec: 1800,
-            data_state: 'Active',
-            recovery_status: 'Recoverable',
-            recovery_level: 'L1',
-            source_offset: 0x00000200,
-            source_length: Math.min(capacity / 2, 512 * 1024),
-            integrity_status: 'Indexed Stream Segment',
-            codec: 'H.264',
-            validation: { state: 'PASS', reason: `Verified ${oemKey.toUpperCase()} primary payload sequence`, operation: 'reconstruct', subject: 'cand-001' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          },
-          {
-            id: `${oemKey.slice(0, 3)}-cand-002`,
-            channel: 2,
-            time_native: '2026-09-01 15:00:00',
-            duration_sec: 1200,
-            data_state: 'Active',
-            recovery_status: 'Recoverable',
-            recovery_level: 'L1',
-            source_offset: 0x00040000,
-            source_length: Math.min(capacity / 2, 512 * 1024),
-            integrity_status: 'Indexed Stream Segment',
-            codec: 'H.265',
-            validation: { state: 'PASS', reason: 'Verified secondary channel stream chunk', operation: 'reconstruct', subject: 'cand-002' },
-            has_native_artifact: true,
-            has_derived_artifact: true,
-          }
-        ];
-      }
-
-      setCandidates(dynamicCandidates);
-
-      const acceptedCount = dynamicCandidates.filter(c => c.recovery_status === 'Recoverable' || c.recovery_status === 'PartiallyRecoverable').length;
-
+      setCandidates(res.candidates);
       setRecoveryRun({
-        searched_bytes: capacity,
-        total_bytes: capacity,
-        skipped_bytes: 0,
-        candidate_count: dynamicCandidates.length,
-        accepted: acceptedCount,
-        rejected: dynamicCandidates.length - acceptedCount,
-        truncated: false,
-        validation_state: {
-          state: 'PASS',
-          reason: `Exhaustive 100% scan of ${ (capacity / (1024 * 1024)).toFixed(2) } MB storage completed`,
-          operation: 'execute_recovery',
-          subject: 'RecoveryRun',
-        },
+        searched_bytes: res.run.searched_bytes,
+        total_bytes: res.total_bytes,
+        skipped_bytes: res.skipped_bytes,
+        candidate_count: res.run.candidate_count,
+        accepted: res.run.accepted,
+        rejected: res.run.rejected,
+        truncated: res.run.truncated,
+        validation_state: res.run.validation_state,
       });
 
-    } catch (err) {
+      // Derive the recovery outcome and publish it to the workflow.
+      const accepted = res.candidates.filter((c) => c.recovery_status !== 'Unrecoverable');
+      const anyPartial = res.candidates.some((c) => c.recovery_status === 'PartiallyRecoverable');
+      const derived: RecoveryOutcome =
+        accepted.length === 0 ? 'not_recovered' : res.run.truncated || anyPartial ? 'partial' : 'recovered';
+      setOutcome(derived);
+      if (onWorkflow) {
+        onWorkflow({ recoveryDone: true, recoveryRequired: true, recoveryOutcome: derived });
+      }
+    } catch (err: any) {
       console.error('Failed to load recovery run', err);
+      setError(err?.message || 'Recovery scan failed');
+      setCandidates([]);
+      setRecoveryRun(null);
     } finally {
       setLoading(false);
     }
+  };
+
+  // Analyst override: continue the investigation even though nothing was recovered.
+  const continueAnyway = () => {
+    if (onWorkflow) onWorkflow({ analystApproved: true });
   };
 
   const getValidationBadge = (state: string) => {
@@ -263,6 +139,11 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
   }
 
   const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
+  const totalBytes = recoveryRun?.total_bytes ?? evidence.capacity;
+  const searchedBytes = recoveryRun?.searched_bytes ?? 0;
+  const totalMb = (totalBytes / (1024 * 1024)).toFixed(2);
+  const searchedMb = (searchedBytes / (1024 * 1024)).toFixed(2);
+  const scanPercent = totalBytes > 0 ? ((searchedBytes / totalBytes) * 100).toFixed(0) : '0';
 
   const handlePlayCandidate = async (cand: RecoveryCandidateUI) => {
     if (!evidence) return;
@@ -283,8 +164,8 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
           oemName: evidence.source_device,
           sourceOffset: cand.source_offset,
           sourceLength: res.elementary_stream.size_bytes,
-          nativeTime: cand.time_native,
-          normalizedUtc: '2026-09-18T18:30:00Z',
+          nativeTime: cand.time_native ?? 'Unknown',
+          normalizedUtc: cand.time_normalized ?? 'Unknown',
           codec: res.codec || cand.codec,
           elementarySha256: res.elementary_stream.sha256,
           remuxSha256: res.remux.sha256,
@@ -383,36 +264,109 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
         </div>
       )}
 
+      {error && (
+        <div className="panel mb-4" style={{ borderLeft: '4px solid var(--danger)' }}>
+          <strong>Recovery scan failed</strong>
+          <div className="text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>{error}</div>
+        </div>
+      )}
+
+      {/* Recovery outcome verdict + analyst decision when nothing was recovered */}
+      {outcome && (
+        <div
+          className="panel mb-4"
+          style={{
+            borderLeft: `4px solid ${
+              outcome === 'recovered' ? 'var(--success)' : outcome === 'partial' ? 'var(--warning)' : 'var(--danger)'
+            }`,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+            <AlertTriangle
+              size={20}
+              style={{
+                color: outcome === 'recovered' ? 'var(--success)' : outcome === 'partial' ? 'var(--warning)' : 'var(--danger)',
+                flexShrink: 0,
+              }}
+            />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: '14px' }}>Recovery Outcome</strong>
+                <span
+                  className={
+                    outcome === 'recovered' ? 'badge badge-pass' : outcome === 'partial' ? 'badge badge-review' : 'badge badge-fail'
+                  }
+                >
+                  {outcome === 'recovered' ? 'COMPLETELY RECOVERED' : outcome === 'partial' ? 'PARTIALLY RECOVERED' : 'NOTHING RECOVERED'}
+                </span>
+              </div>
+              {outcome === 'not_recovered' ? (
+                <div style={{ marginTop: '8px' }}>
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    The recovery engine could not recover the missing regions. Do you want to continue the investigation
+                    with the recordings already extracted, or stop here?
+                  </div>
+                  {workflow?.analystApproved ? (
+                    <div style={{ marginTop: '8px' }}>
+                      <span className="badge badge-review">Analyst approved — continuing</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                        Final Timeline and Video Player are now unlocked.
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
+                      <button className="btn btn-primary" onClick={continueAnyway}>Continue anyway</button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                  Final Timeline is unlocked — recovered candidates will be folded into the final timeline.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Metrics & Bounds Banner */}
       <div className="grid-4 mb-4">
         <div className="stat-card">
           <div className="stat-label">Recovery Run Extent</div>
           <div className="stat-value">
-            {capacityMb} MB / {capacityMb} MB
+            {searchedMb} MB / {totalMb} MB
           </div>
           <div className="stat-sub mt-4">
-            <span className="badge badge-pass">Exhaustive Scan (100%)</span>
+            {recoveryRun ? (
+              recoveryRun.truncated ? (
+                <span className="badge badge-review">Bounded Scan (truncated)</span>
+              ) : (
+                <span className="badge badge-pass">Exhaustive Scan ({scanPercent}%)</span>
+              )
+            ) : (
+              <span className="badge badge-unknown">Not scanned</span>
+            )}
           </div>
         </div>
 
         <div className="stat-card">
           <div className="stat-label">Recovery Validation State</div>
           <div className="mt-4">
-            <span className={getValidationBadge(recoveryRun?.validation_state?.state || 'PASS')}>
-              {recoveryRun?.validation_state?.state || 'PASS'}
+            <span className={getValidationBadge(recoveryRun?.validation_state?.state || 'UNKNOWN')}>
+              {recoveryRun?.validation_state?.state || 'UNKNOWN'}
             </span>
           </div>
           <div className="stat-sub mt-4" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {recoveryRun?.validation_state?.reason || 'Verified recovery bounds'}
+            {recoveryRun?.validation_state?.reason || 'No recovery scan has been run for this evidence'}
           </div>
         </div>
 
         <div className="stat-card">
           <div className="stat-label">Candidates Accepted / Total</div>
           <div className="stat-value" style={{ color: 'var(--success)' }}>
-            {recoveryRun?.accepted || candidates.length} / {recoveryRun?.candidate_count || candidates.length}
+            {recoveryRun?.accepted ?? candidates.length} / {recoveryRun?.candidate_count ?? candidates.length}
           </div>
-          <div className="stat-sub">{recoveryRun?.rejected || 0} rejected by media QC</div>
+          <div className="stat-sub">{recoveryRun?.rejected ?? 0} rejected by media QC</div>
         </div>
 
         <div className="stat-card">
@@ -449,8 +403,12 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
                     <div className="text-muted" style={{ fontSize: '11px' }}>CH {cand.channel} | {cand.codec}</div>
                   </td>
                   <td>
-                    <div>{cand.time_native}</div>
-                    <div className="text-muted" style={{ fontSize: '11px' }}>{cand.duration_sec > 0 ? `${Math.floor(cand.duration_sec / 60)} min` : 'N/A'}</div>
+                    <div>{cand.time_native ?? 'Unknown'}</div>
+                    <div className="text-muted" style={{ fontSize: '11px' }}>
+                      {cand.duration_sec != null && cand.duration_sec > 0
+                        ? `${Math.floor(cand.duration_sec / 60)} min`
+                        : 'Duration not recorded'}
+                    </div>
                   </td>
                   <td>
                     <span className={getDataStateBadge(cand.data_state)}>

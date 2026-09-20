@@ -185,11 +185,20 @@ export type DataState = 'Active' | 'Deleted' | 'Orphaned' | 'Corrupted' | 'Overw
 export type RecoveryStatus = 'Recoverable' | 'PartiallyRecoverable' | 'Unrecoverable';
 export type RecoveryLevel = 'L1' | 'L2' | 'L3';
 
+/**
+ * A recovery candidate as returned by POST /api/evidence/:id/recovery.
+ *
+ * Nullable fields are genuinely unknown for the evidence — they are not filled
+ * with placeholder values so the UI can state "Unknown" instead of implying a
+ * measurement that was never made.
+ */
 export interface RecoveryCandidateUI {
   id: string;
   channel: number;
-  time_native: string;
-  duration_sec: number;
+  time_native: string | null;
+  time_normalized: string | null;
+  timezone_state: string;
+  duration_sec: number | null;
   data_state: DataState;
   recovery_status: RecoveryStatus;
   recovery_level: RecoveryLevel;
@@ -198,8 +207,162 @@ export interface RecoveryCandidateUI {
   integrity_status: string;
   codec: string;
   validation: ValidationState;
+  nal_unit_count: number;
   has_native_artifact: boolean;
   has_derived_artifact: boolean;
+}
+
+/** Raw backend RecoveryRun (forensic_core::RecoveryRun) plus scan totals. */
+export interface RecoveryResponse {
+  oem_key: string;
+  candidates: RecoveryCandidateUI[];
+  run: {
+    searched_bytes: number;
+    skipped_ranges: { offset: number; length: number }[];
+    candidate_count: number;
+    accepted: number;
+    rejected: number;
+    truncated: boolean;
+    cancelled: boolean;
+    validation_state: ValidationState;
+    reason: string;
+  };
+  total_bytes: number;
+  skipped_bytes: number;
+}
+
+export type OrderingMode = 'Normalized' | 'RecorderNative' | 'Physical';
+
+/**
+ * A forensic_core::Hash as serialised over the API.
+ *
+ * It is an object, not a string — `value` is the hex-encoded digest. Rendering the
+ * whole object in JSX throws "Objects are not valid as a React child", so always
+ * read `.value` (or use `hashHex`).
+ */
+export interface ForensicHash {
+  algorithm: string;
+  value: string;
+}
+
+/** Hex digest of a backend hash, tolerating a plain string or a missing value. */
+export function hashHex(hash: ForensicHash | string | null | undefined): string | null {
+  if (!hash) return null;
+  if (typeof hash === 'string') return hash;
+  return hash.value ?? null;
+}
+
+/** A backend forensic_core::TimelineEvent as serialised over the API. */
+export interface TimelineEventApi {
+  channel: number;
+  description: string;
+  source_offsets: { offset: number; length: number }[];
+  parser_id: string;
+  parser_version: string;
+  profile_id: string;
+  profile_hash: ForensicHash | string;
+  time: {
+    raw: { value: number; format: string };
+    recorder_native: { iso_8601: string } | null;
+    normalized: { iso_8601: string; method: string } | null;
+    reference: { iso_8601: string; source: string } | null;
+    timezone: 'Unknown' | { Known: string };
+    correction: unknown | null;
+  };
+}
+
+/** Response of GET /api/evidence/:id/timeline (timeline::UnifiedTimeline). */
+export interface UnifiedTimelineResponse {
+  oem_key: string;
+  ordering: OrderingMode;
+  has_unknown_timezones: boolean;
+  validation: ValidationState;
+  events: TimelineEventApi[];
+}
+
+// ── Pipeline (POST /api/evidence/:id/pipeline/run) ──────────────────────────
+
+export type PipelineStageName =
+  | 'intake'
+  | 'detection'
+  | 'confidence'
+  | 'threshold_gate'
+  | 'oem_extraction'
+  | 'unified_extraction'
+  | 'analyst_review'
+  | 'parsed_gate'
+  | 'preliminary_timeline'
+  | 'gap_gate'
+  | 'recovery'
+  | 'recovery_gate'
+  | 'final_timeline';
+
+export type StageStatus = 'completed' | 'skipped' | 'requires_analyst';
+
+export interface StageRecord {
+  stage: PipelineStageName;
+  status: StageStatus;
+  detail: string;
+}
+
+/** A recorded gate decision (serde-tagged by `gate`). */
+export interface GateRecord {
+  gate: 'threshold' | 'parsed' | 'gaps' | 'recovery';
+  decision: string;
+  reason?: string;
+  confidence?: number;
+  min_confidence?: number;
+  margin?: number;
+  min_margin?: number;
+}
+
+export interface AttributionSummary {
+  oem_key: string;
+  classification: string;
+  attribution_status: string;
+  confidence: number;
+  margin: number;
+  evidence_quality: number;
+  explanation: string;
+}
+
+export type PipelineOutcome =
+  | 'completed_no_gaps'
+  | 'completed_after_recovery'
+  | 'completed_partial_recovery'
+  | 'requires_analyst';
+
+export interface GapCoverage {
+  total_bytes: number;
+  accounted_bytes: number;
+  unaccounted_bytes: number;
+  coverage_ratio: number;
+}
+
+export interface GapAnalysis {
+  temporal_gaps: unknown[];
+  coverage: GapCoverage;
+  events_with_unknown_timezone: number;
+  events_without_normalized_time: number;
+  gaps_present: boolean;
+  validation: ValidationState;
+}
+
+export interface PipelineRun {
+  stages: StageRecord[];
+  gates: GateRecord[];
+  attribution: AttributionSummary | null;
+  oem_key_used: string | null;
+  used_unified_fallback: boolean;
+  parsing: { parser_runs: unknown[]; recordings: unknown[]; timeline_events: unknown[] } | null;
+  preliminary_timeline: { events: unknown[] } | null;
+  gap_analysis: GapAnalysis | null;
+  recovery: { candidates: unknown[]; run: unknown; decision: string } | null;
+  final_timeline: { events: unknown[] } | null;
+  correlation_groups: unknown[];
+  outcome: PipelineOutcome;
+  requires_analyst: boolean;
+  analyst_reasons: string[];
 }
 
 export interface RecoveryRunUI {

@@ -9,10 +9,14 @@ use parser_honeywell::HoneywellParser;
 use parser_cpplus_ubs::CpPlusUbsParser;
 use parser_uniview::UniviewParser;
 use tplink::TplinkParser;
+use parser_unified::UnifiedParser;
+
+/// OEM key reserved for the generic fallback parser used on unresolved evidence.
+pub const UNIFIED_OEM_KEY: &str = "unified";
 
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsingResult {
     pub parser_runs: Vec<ParserRun>,
     pub recordings: Vec<Recording>,
@@ -33,8 +37,19 @@ impl ParsingOrchestrator {
         parsers.insert("cpplus_ubs".to_string(), Box::new(CpPlusUbsParser::default()));
         parsers.insert("uniview".to_string(), Box::new(UniviewParser::default()));
         parsers.insert("tplink".to_string(), Box::new(TplinkParser::default()));
-        
+        // Generic fallback for the "Unresolved -> Unified parser" branch of the flow.
+        parsers.insert(UNIFIED_OEM_KEY.to_string(), Box::new(UnifiedParser::default()));
+
         Self { parsers }
+    }
+
+    /// Borrow the registered parser for an OEM key.
+    ///
+    /// Exposed so downstream stages (e.g. the recovery engine, which takes a
+    /// `&dyn Parser`) can reuse this single registry instead of constructing a
+    /// second, divergent one.
+    pub fn parser_for(&self, oem_key: &str) -> Option<&dyn Parser> {
+        self.parsers.get(oem_key).map(|p| p.as_ref())
     }
 
     pub fn run_parsing(

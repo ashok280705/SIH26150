@@ -34,6 +34,43 @@ impl EvidenceReader for MockReader {
     }
 }
 
+/// EvidenceReader that fills every read with a repeating H.264 Annex-B pattern
+/// (SPS/PPS/IDR start codes), so the recovery levels find genuine codec evidence.
+struct CodecReader {
+    len: u64,
+}
+
+impl EvidenceReader for CodecReader {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
+        if offset >= self.len {
+            return Err(ForensicError::out_of_bounds("CodecReader", offset, buf.len() as u64, self.len));
+        }
+        // A small, real H.264 Annex-B fragment repeated to fill the window.
+        const PATTERN: [u8; 24] = [
+            0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1F, // SPS
+            0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80, // PPS
+            0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04, // IDR
+        ];
+        let available = ((self.len - offset) as usize).min(buf.len());
+        for (i, b) in buf[..available].iter_mut().enumerate() {
+            *b = PATTERN[(offset as usize + i) % PATTERN.len()];
+        }
+        Ok(available)
+    }
+
+    fn source_kind(&self) -> SourceKind {
+        SourceKind::Raw
+    }
+
+    fn source_path(&self) -> &str {
+        "codec://test"
+    }
+}
+
 /// Mock Parser that always recognizes a candidate.
 struct AlwaysRecognizeParser;
 
@@ -140,9 +177,10 @@ fn test_engine_truncation_on_byte_limit() {
 #[test]
 fn test_engine_truncation_on_candidate_limit() {
     let engine = RecoveryEngine::new();
-    let reader = MockReader { len: 10 * 1024 * 1024 };
+    // Real codec bytes so each indexed chunk yields a recovery candidate.
+    let reader = CodecReader { len: 10 * 1024 * 1024 };
     let profile = make_mock_profile();
-    let parser = AlwaysRecognizeParser; // every chunk produces a candidate
+    let parser = AlwaysRecognizeParser; // every chunk is indexed and holds codec data
 
     let bounds = RecoveryBounds {
         max_scan_bytes: u64::MAX,
@@ -213,7 +251,7 @@ fn test_engine_full_scan_pass() {
 fn test_engine_parser_never_drives_level_selection() {
     // This test asserts that the engine, not the parser, decides the scanning loop.
     let engine = RecoveryEngine::new();
-    let reader = MockReader { len: 3 * 1024 * 1024 };
+    let reader = CodecReader { len: 3 * 1024 * 1024 };
     let profile = make_mock_profile();
     let parser = AlwaysRecognizeParser;
 

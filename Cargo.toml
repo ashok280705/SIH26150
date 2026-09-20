@@ -42,7 +42,9 @@ members = [
   "crates/parsers/cpplus-ubs",
   "crates/parsers/uniview",
   "crates/parsers/tplink",
+  "crates/parsers/unified",
   "crates/parsing",
+  "crates/pipeline",
 
   # Applications
   "apps/api",

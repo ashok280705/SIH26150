@@ -434,10 +434,13 @@ dependencies = [
  "hashing",
  "hex",
  "parsing",
+ "pipeline",
  "recovery",
+ "reporting",
  "serde",
  "serde_json",
  "sqlx",
+ "timeline",
  "tokio",
  "tower",
  "tower-http",
@@ -1166,6 +1169,7 @@ dependencies = [
 name = "parser-dahua"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "evidence-reader",
  "forensic-core",
  "forensic-tests",
@@ -1202,6 +1206,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "parser-unified"
+version = "0.1.0"
+dependencies = [
+ "evidence-reader",
+ "forensic-core",
+ "hex",
+ "parsers-core",
+ "uuid",
+]
+
+[[package]]
 name = "parser-uniview"
 version = "0.1.0"
 dependencies = [
@@ -1232,6 +1247,7 @@ dependencies = [
  "parser-dahua",
  "parser-hikvision",
  "parser-honeywell",
+ "parser-unified",
  "parser-uniview",
  "parsers-core",
  "serde",
@@ -1259,6 +1275,21 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pipeline"
+version = "0.1.0"
+dependencies = [
+ "confidence",
+ "detection",
+ "evidence-reader",
+ "forensic-core",
+ "parsing",
+ "recovery",
+ "serde",
+ "serde_json",
+ "timeline",
+]
 
 [[package]]
 name = "pkcs1"

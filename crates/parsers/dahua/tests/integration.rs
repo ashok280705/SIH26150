@@ -67,14 +67,15 @@ fn test_dahua_parser_normal_fixture() {
     assert_eq!(runs[0].operation_name, "parse_filesystem");
     
     assert_eq!(runs[0].validation_state.state, ValidationStateKind::Pass);
-    assert!(runs[0].validation_state.reason.contains("DHFS Superblock Found"));
-    
-    // Parse recordings
-    let (_recordings, rec_runs) = parser.parse_recordings(&reader, &profile).unwrap();
+    assert!(runs[0].validation_state.reason.contains("DHFS superblock verified"));
+
+    // Parse recordings: the synthetic fixture carries a DHAV corroborating tag, so
+    // the scanner should surface at least one recording rather than an empty list.
+    let (recordings, rec_runs) = parser.parse_recordings(&reader, &profile).unwrap();
     assert_eq!(rec_runs.len(), 1);
-    
-    assert_eq!(rec_runs[0].validation_state.state, ValidationStateKind::Review);
-    assert!(rec_runs[0].validation_state.reason.contains("Mock DHAV frame parse complete"));
+    assert_eq!(rec_runs[0].validation_state.state, ValidationStateKind::Pass);
+    assert!(rec_runs[0].validation_state.reason.contains("DHAV recording stream"));
+    assert!(!recordings.is_empty(), "DHAV tag present, expected >=1 recording");
 }
 
 #[test]
@@ -87,5 +88,5 @@ fn test_dahua_parser_adversarial_wrong_offset() {
     assert_eq!(runs.len(), 1);
     
     assert_eq!(runs[0].validation_state.state, ValidationStateKind::Review);
-    assert!(runs[0].validation_state.reason.contains("Magic mismatch"));
+    assert!(runs[0].validation_state.reason.contains("magic mismatch"));
 }

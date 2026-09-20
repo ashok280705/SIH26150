@@ -1,22 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import { FileCode2, Play, RefreshCw, AlertCircle, HardDrive, Video } from 'lucide-react';
 import { Evidence, ParserRun, Recording, DeletedCandidate, TimeEvidence } from '../types';
-import { runDetection, runParsing, reconstructRecording } from '../services/api';
+import { runParsing, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { VideoPlayer } from '../components/video/VideoPlayer';
+import { WorkflowState } from '../workflow';
 
 interface ParsingViewProps {
   evidence: Evidence | null;
   evidenceList?: Evidence[];
   onSelectEvidence?: (e: Evidence) => void;
   onNavigateToHex: (offset: number) => void;
+  workflow?: WorkflowState;
+  onWorkflow?: (patch: Partial<WorkflowState>) => void;
+}
+
+/** Selectable parsers for the manual (ambiguous/unresolved) path. */
+const MANUAL_PARSERS: { key: string; label: string; family: string }[] = [
+  { key: 'dahua', label: 'Dahua (DHFS)', family: 'DHFS' },
+  { key: 'hikvision', label: 'Hikvision (HIKVISION_FS)', family: 'HIKVISION_FS' },
+  { key: 'honeywell', label: 'Honeywell (MAXPRO)', family: 'MAXPRO' },
+  { key: 'cpplus_ubs', label: 'CP Plus / UBS', family: 'UBS' },
+  { key: 'uniview', label: 'Uniview (UBIFS)', family: 'UBIFS' },
+  { key: 'tplink', label: 'TP-Link VIGI NVR', family: 'TPLINK_VIGI_NVR' },
+  { key: 'unified', label: 'Unified Fallback (generic carver)', family: 'GENERIC' },
+];
+
+function familyFor(oemKey: string): string {
+  return MANUAL_PARSERS.find((p) => p.key === oemKey)?.family || 'DHFS';
 }
 
 export const ParsingView: React.FC<ParsingViewProps> = ({ 
   evidence, 
   evidenceList = [], 
   onSelectEvidence, 
-  onNavigateToHex 
+  onNavigateToHex,
+  workflow,
+  onWorkflow,
 }) => {
   const [loading, setLoading] = useState(false);
   const [detectedOem, setDetectedOem] = useState<string | null>(null);
@@ -27,32 +47,51 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
   const [parserRuns, setParserRuns] = useState<ParserRun[]>([]);
   const [activePlayback, setActivePlayback] = useState<any | null>(null);
   const [reconstructing, setReconstructing] = useState<string | null>(null);
+  const [selectedParser, setSelectedParser] = useState<string>('');
+
+  const verdict = workflow?.verdict ?? null;
+  const isConfirmed = verdict === 'confirmed' && !!workflow?.attributedOem;
 
   useEffect(() => {
-    if (evidence) {
-      loadDetectionAndParse();
+    // Confirmed evidence auto-attaches the attributed parser and runs. Ambiguous or
+    // unresolved evidence waits for the analyst to pick a parser manually.
+    if (evidence && isConfirmed && workflow?.attributedOem) {
+      runParseWith(workflow.attributedOem);
     } else {
       setDetectedOem(null);
       setRecordings([]);
       setDeletedCandidates([]);
       setParserRuns([]);
+      setSelectedParser('');
     }
-  }, [evidence?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evidence?.id, verdict, workflow?.attributedOem]);
 
-  const mockTime = (raw: number, native: string, utc: string | null, ref: string | null, tz: 'known' | 'unknown' | 'inferred'): TimeEvidence => ({
-    raw_value: raw,
-    recorder_native: native,
-    normalized_utc: utc,
-    reference_time: ref,
-    timezone_state: tz
-  });
-
+  // Map the backend's TimeEvidence onto the view model WITHOUT fabricating values.
+  // A missing normalized time stays null and an absent timezone stays 'unknown' —
+  // the UI never invents a timestamp or silently assumes UTC (Req 4.5–4.7).
   const normalizeTime = (t: any): TimeEvidence => {
-    if (!t) return mockTime(1726700000, '2026-09-19 00:00:00', '2026-09-18T18:30:00Z', null, 'known');
-    const rawVal = typeof t.raw === 'object' ? t.raw?.value ?? 1726700000 : (t.raw_value ?? 1726700000);
-    const native = typeof t.recorder_native === 'object' ? t.recorder_native?.iso_8601 ?? '2026-09-19 00:00:00' : (t.recorder_native ?? '2026-09-19 00:00:00');
-    const utc = typeof t.normalized === 'object' ? t.normalized?.iso_8601 ?? '2026-09-18T18:30:00Z' : (t.normalized_utc ?? '2026-09-18T18:30:00Z');
-    const tzState = t.timezone ? (typeof t.timezone === 'object' && 'Known' in t.timezone ? 'known' : 'unknown') : (t.timezone_state ?? 'known');
+    if (!t) {
+      return {
+        raw_value: 0,
+        recorder_native: 'Unknown',
+        normalized_utc: null,
+        reference_time: null,
+        timezone_state: 'unknown',
+      };
+    }
+    const rawVal = typeof t.raw === 'object' ? t.raw?.value ?? 0 : (t.raw_value ?? 0);
+    const native =
+      typeof t.recorder_native === 'object'
+        ? t.recorder_native?.iso_8601 ?? 'Unknown'
+        : (t.recorder_native ?? 'Unknown');
+    const utc =
+      typeof t.normalized === 'object'
+        ? t.normalized?.iso_8601 ?? null
+        : (t.normalized_utc ?? null);
+    const tzState = t.timezone
+      ? (typeof t.timezone === 'object' && 'Known' in t.timezone ? 'known' : 'unknown')
+      : (t.timezone_state ?? 'unknown');
 
     return {
       raw_value: rawVal,
@@ -63,89 +102,80 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
     };
   };
 
-  const loadDetectionAndParse = async () => {
+  // Run a specific parser against the evidence and populate the extraction results.
+  // Used both for the confirmed (auto) path and the manual (analyst-selected) path.
+  const runParseWith = async (oemKey: string) => {
     if (!evidence) return;
     setLoading(true);
     try {
-      const results = await runDetection(evidence.id);
+      const oemFormatted =
+        oemKey === 'cpplus_ubs'
+          ? 'CP Plus / UBS'
+          : oemKey === 'unified'
+          ? 'Unified Fallback'
+          : oemKey.charAt(0).toUpperCase() + oemKey.slice(1);
+      setDetectedOem(oemFormatted);
+      setStorageFamily(familyFor(oemKey));
+      setAttributionStatus(
+        isConfirmed ? 'Confirmed' : oemKey === 'unified' ? 'Unified Fallback' : 'Analyst Selected'
+      );
 
-      const top = results.find(r => r.confidence_score > 0 || r.evidence_items.some(e => e.rule_match_status === 'MATCH'));
+      const parseData = await runParsing(evidence.id, oemKey);
 
-      if (top && (top.confidence_score > 0 || top.evidence_items.length > 0)) {
-        const oemKey = top.oem_key.toLowerCase();
-        const oemFormatted = oemKey === 'cpplus_ubs' ? 'CP Plus / UBS' : oemKey.charAt(0).toUpperCase() + oemKey.slice(1);
-        const fam = oemKey === 'hikvision' ? 'HIKVISION_FS' : oemKey === 'uniview' ? 'UBIFS' : oemKey === 'honeywell' ? 'MAXPRO' : oemKey === 'tplink' ? 'TPLINK_VIGI_NVR' : 'DHFS';
-        
-        setDetectedOem(oemFormatted);
-        setStorageFamily(fam);
-        setAttributionStatus(top.attribution_status || 'CompatibleCandidate');
+      const normalizedRuns: ParserRun[] = (parseData.parser_runs || []).map((run: any, idx: number) => ({
+        id: run.id || `run-${idx + 1}`,
+        evidence_id: evidence.id,
+        parser_id: run.parser_id || `${oemKey}-parser`,
+        parser_version: run.parser_version || '1.0.0',
+        operation_name: run.operation_name,
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+        validation: {
+          state: run.validation?.state || run.validation_state?.state || 'UNKNOWN',
+          reason: run.validation?.reason || run.validation_state?.reason || '',
+          operation: run.operation_name,
+          subject: run.validation_state?.subject || oemKey,
+        },
+      }));
+      setParserRuns(normalizedRuns);
 
-        // Call the real parsing API
-        try {
-          const parseData = await runParsing(evidence.id, oemKey);
-          
-          const normalizedRuns: ParserRun[] = (parseData.parser_runs || []).map((run: any, idx: number) => ({
-            id: run.id || `run-${idx + 1}`,
-            evidence_id: evidence.id,
-            parser_id: run.parser_id || `${oemKey}-parser`,
-            parser_version: run.parser_version || '1.0.0',
-            operation_name: run.operation_name,
-            started_at: new Date().toISOString(),
-            completed_at: new Date().toISOString(),
-            validation: {
-              state: run.validation?.state || run.validation_state?.state || 'PASS',
-              reason: run.validation?.reason || run.validation_state?.reason || 'Validation completed successfully',
-              operation: run.operation_name,
-              subject: run.validation_state?.subject || oemKey,
-            }
-          }));
-          setParserRuns(normalizedRuns);
+      const normalizedRecs: Recording[] = (parseData.recordings || []).map((r: any, idx: number) => {
+        const startOffset = r.offset_start ?? (r.source_offsets && r.source_offsets[0] ? r.source_offsets[0].offset : 0);
+        const endOffset =
+          r.offset_end ??
+          (r.source_offsets && r.source_offsets[0]
+            ? r.source_offsets[0].offset + r.source_offsets[0].length
+            : startOffset);
+        return {
+          id: r.id || `REC-${oemKey.toUpperCase()}-00${idx + 1}`,
+          evidence_id: evidence.id,
+          channel_id: r.channel_id ?? r.channel ?? 1,
+          start_time: normalizeTime(r.start_time || r.time),
+          end_time: normalizeTime(r.end_time || r.time),
+          codec: r.codec || 'unknown',
+          frame_count: r.frame_count || 0,
+          offset_start: startOffset,
+          offset_end: endOffset,
+          is_deleted: r.is_deleted || false,
+          is_fragmented: r.is_fragmented || false,
+        };
+      });
+      setRecordings(normalizedRecs);
+      setDeletedCandidates([]);
 
-          const normalizedRecs: Recording[] = (parseData.recordings || []).map((r: any, idx: number) => {
-            const startOffset = r.offset_start ?? (r.source_offsets && r.source_offsets[0] ? r.source_offsets[0].offset : 0x200000);
-            const endOffset = r.offset_end ?? (r.source_offsets && r.source_offsets[0] ? r.source_offsets[0].offset + r.source_offsets[0].length : 0x300000);
-            return {
-              id: r.id || `REC-${oemKey.toUpperCase()}-00${idx + 1}`,
-              evidence_id: evidence.id,
-              channel_id: r.channel_id ?? r.channel ?? 1,
-              start_time: normalizeTime(r.start_time || r.time),
-              end_time: normalizeTime(r.end_time || r.time),
-              codec: r.codec || (idx % 2 === 0 ? 'H.265 / HEVC' : 'H.264 / AVC'),
-              frame_count: r.frame_count || (idx === 0 ? 54000 : 36000),
-              offset_start: startOffset,
-              offset_end: endOffset,
-              is_deleted: r.is_deleted || false,
-              is_fragmented: r.is_fragmented || false,
-            };
-          });
-          setRecordings(normalizedRecs);
-          setDeletedCandidates([]); // Real parsing doesn't provide deleted candidates yet
-        } catch (err) {
-          console.error("Parsing API failed:", err);
-        }
-
-      } else {
-        // No proprietary OEM detected
-        setDetectedOem('Generic / Raw Image');
-        setStorageFamily('Unformatted / Unknown FS');
-        setAttributionStatus('UNKNOWN');
-        setRecordings([]);
-        setDeletedCandidates([]);
-        setParserRuns([
-          {
-            id: 'run-scan',
-            evidence_id: evidence.id,
-            parser_id: 'generic-probe',
-            parser_version: '1.0.0',
-            operation_name: 'probe_signatures',
-            started_at: new Date().toISOString(),
-            completed_at: new Date().toISOString(),
-            validation: { state: 'UNKNOWN', reason: 'No matching proprietary DVR superblock found at sector 0', operation: 'probe_signatures', subject: 'raw' }
-          }
-        ]);
+      // Publish extraction result to the workflow so the Preliminary Timeline unlocks.
+      const parsed =
+        normalizedRecs.length > 0 ||
+        normalizedRuns.some((run) => run.validation.state === 'PASS');
+      if (onWorkflow) {
+        onWorkflow({
+          parsingDone: parsed,
+          parserUsed: oemKey,
+          recordingCount: normalizedRecs.length,
+        });
       }
     } catch (err) {
-      console.error('Failed to run detection for parser', err);
+      console.error('Parsing API failed:', err);
     } finally {
       setLoading(false);
     }
@@ -190,7 +220,7 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
     if (!evidence) return;
     setReconstructing(rec.id);
     try {
-      const oemKey = detectedOem ? detectedOem.toLowerCase() : 'tplink';
+      const oemKey = workflow?.parserUsed || workflow?.attributedOem || 'unified';
       const res = await reconstructRecording(evidence.id, rec.id, {
         offset_start: rec.offset_start,
         length: rec.offset_end > rec.offset_start ? rec.offset_end - rec.offset_start : 131072,
@@ -241,10 +271,16 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
           <p className="view-subtitle">High-speed extraction of recordings and video index tables</p>
         </div>
         <div>
-          <button className="btn btn-secondary" onClick={loadDetectionAndParse} disabled={loading}>
-            {loading ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
-            <span>{loading ? 'Analyzing Storage...' : 'Re-parse Evidence'}</span>
-          </button>
+          {isConfirmed && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => workflow?.attributedOem && runParseWith(workflow.attributedOem)}
+              disabled={loading}
+            >
+              {loading ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
+              <span>{loading ? 'Analyzing Storage...' : 'Re-parse Evidence'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -291,11 +327,62 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
           )}
         </div>
       </div>
-      
+
+      {/* Routing banner: confirmed auto-attaches; ambiguous/unresolved needs manual choice */}
+      {isConfirmed ? (
+        <div className="panel mb-4" style={{ borderLeft: '4px solid var(--success)', padding: '14px 16px' }}>
+          <div style={{ fontSize: '13px' }}>
+            <strong>Confirmed attribution.</strong> The <strong>{workflow?.attributedOem}</strong> parser was attached automatically and extraction has run.
+          </div>
+        </div>
+      ) : (
+        <div className="panel mb-4" style={{ borderLeft: '4px solid var(--warning)', padding: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' }}>
+            <AlertCircle size={18} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1, minWidth: '260px' }}>
+              <strong style={{ fontSize: '14px' }}>
+                {verdict === 'ambiguous' ? 'Ambiguous attribution — analyst selection required' : verdict === 'unresolved' ? 'Unresolved — choose a parser or use the fallback' : 'Detection not run'}
+              </strong>
+              <div className="text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>
+                {verdict
+                  ? 'Review the extracted evidence in the Byte Inspector, then select the parser to apply. Parser selection is manual on this path — nothing is auto-attributed.'
+                  : 'Run Detection & Confidence first to determine attribution.'}
+              </div>
+              {verdict && (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
+                  <select
+                    className="form-select"
+                    style={{ width: '260px', padding: '7px 10px', fontSize: '13px' }}
+                    value={selectedParser}
+                    onChange={(e) => setSelectedParser(e.target.value)}
+                  >
+                    <option value="">Select a parser…</option>
+                    {MANUAL_PARSERS.map((p) => (
+                      <option key={p.key} value={p.key}>{p.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn btn-primary"
+                    disabled={!selectedParser || loading}
+                    onClick={() => selectedParser && runParseWith(selectedParser)}
+                  >
+                    {loading ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
+                    <span>{loading ? 'Parsing…' : 'Apply Parser'}</span>
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => onNavigateToHex(0)}>
+                    Open Byte Inspector
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid-4 mb-4">
         <div className="stat-card">
           <div className="stat-label">Active OEM Profile</div>
-          <div className="stat-value" style={{ fontSize: '16px' }}>{detectedOem || 'Detecting...'}</div>
+          <div className="stat-value" style={{ fontSize: '16px' }}>{detectedOem || 'Not parsed'}</div>
           <div className="stat-sub mt-4">
             <span className={attributionStatus === 'Confirmed' || attributionStatus === 'CompatibleCandidate' ? 'badge badge-pass' : 'badge badge-unknown'}>
               {storageFamily || 'Unknown FS'}

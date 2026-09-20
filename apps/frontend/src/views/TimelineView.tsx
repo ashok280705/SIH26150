@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, Layers, ShieldCheck, HardDrive, RefreshCw } from 'lucide-react';
-import { Evidence } from '../types';
-import { runDetection } from '../services/api';
+import { Evidence, OrderingMode, TimelineEventApi, ValidationState, hashHex } from '../types';
+import { getTimeline } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
+import { WorkflowState } from '../workflow';
 
 interface TimelineViewProps {
   evidence: Evidence | null;
   evidenceList?: Evidence[];
   onSelectEvidence?: (e: Evidence) => void;
   onNavigateToHex: (offset: number) => void;
+  onWorkflow?: (patch: Partial<WorkflowState>) => void;
 }
-
-type OrderingMode = 'Normalized' | 'RecorderNative' | 'Physical';
 
 interface TimelineEventUI {
   id: string;
@@ -30,9 +30,51 @@ interface TimelineEventUI {
     component_version: string;
     profile_id: string;
     profile_hash: string;
-    output_hash: string;
+    /** `null` when no output hash has been computed for this event. */
+    output_hash: string | null;
     transformations: string[];
     is_native: boolean;
+  };
+}
+
+/** Maps a backend TimelineEvent onto the view model without inventing values. */
+function toEventUI(e: TimelineEventApi, idx: number): TimelineEventUI {
+  const region = e.source_offsets?.[0] ?? { offset: 0, length: 0 };
+  const tzKnown = typeof e.time.timezone === 'object' && e.time.timezone !== null;
+  const tzLabel = tzKnown
+    ? (e.time.timezone as { Known: string }).Known
+    : 'Unknown Timezone (Unadjusted)';
+
+  const transformations: string[] = [`Parsed by ${e.parser_id} v${e.parser_version}`];
+  if (e.time.normalized) {
+    transformations.push(`Normalization: ${e.time.normalized.method}`);
+  } else {
+    transformations.push('No normalization applied');
+  }
+
+  return {
+    id: `evt-${idx + 1}-ch${e.channel}-0x${region.offset.toString(16).toUpperCase()}`,
+    channel: e.channel,
+    description: e.description,
+    raw_timestamp: e.time.raw?.value ?? 0,
+    raw_format: e.time.raw?.format ?? 'Unknown',
+    native_time: e.time.recorder_native?.iso_8601 ?? 'Unknown',
+    normalized_time: e.time.normalized?.iso_8601 ?? 'Unknown',
+    timezone_state: tzKnown ? 'Known' : 'Unknown',
+    timezone_label: tzLabel,
+    source_offset: region.offset,
+    source_length: region.length,
+    provenance: {
+      producing_component: e.parser_id,
+      component_version: e.parser_version,
+      profile_id: e.profile_id,
+      // The backend sends a Hash object ({algorithm, value}); flatten it to the hex
+      // digest so JSX renders text rather than an object.
+      profile_hash: hashHex(e.profile_hash) ?? 'Unavailable',
+      output_hash: null,
+      transformations,
+      is_native: true,
+    },
   };
 }
 
@@ -40,105 +82,51 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   evidence, 
   evidenceList = [], 
   onSelectEvidence, 
-  onNavigateToHex 
+  onNavigateToHex,
+  onWorkflow,
 }) => {
   const [ordering, setOrdering] = useState<OrderingMode>('Normalized');
   const [selectedEvent, setSelectedEvent] = useState<TimelineEventUI | null>(null);
   const [events, setEvents] = useState<TimelineEventUI[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [timelineValidation, setTimelineValidation] = useState<ValidationState | null>(null);
+  const [hasUnknownTimezones, setHasUnknownTimezones] = useState(false);
 
+  // Re-fetch when the ordering mode changes so the backend stays authoritative.
   useEffect(() => {
     if (evidence) {
       loadTimelineEvents();
     } else {
       setEvents([]);
       setSelectedEvent(null);
+      setError(null);
+      setTimelineValidation(null);
     }
-  }, [evidence?.id]);
+  }, [evidence?.id, ordering]);
 
   const loadTimelineEvents = async () => {
     if (!evidence) return;
     setLoading(true);
+    setError(null);
     try {
-      const results = await runDetection(evidence.id);
-      const top = results.find(r => r.confidence_score > 0 || r.evidence_items.some(e => e.rule_match_status === 'MATCH'));
-      const oemKey = top?.oem_key?.toLowerCase() || 'generic';
-      const oemFormatted = oemKey === 'cpplus_ubs' ? 'CP Plus' : oemKey.charAt(0).toUpperCase() + oemKey.slice(1);
-
-      // Build consistent events based on active evidence
-      const dynamicEvents: TimelineEventUI[] = [
-        {
-          id: `${oemKey.slice(0, 3)}-evt-001`,
-          channel: 1,
-          description: `Camera 1 motion sequence start (${oemFormatted} Stream)`,
-          raw_timestamp: 0x20260901140000,
-          raw_format: 'BCD 64-bit',
-          native_time: '2026-09-01 14:00:00',
-          normalized_time: '2026-09-01 14:00:00 UTC',
-          timezone_state: 'Known',
-          timezone_label: 'UTC+0',
-          source_offset: 0x00000200,
-          source_length: 512,
-          provenance: {
-            producing_component: `Parser-${oemFormatted}`,
-            component_version: top?.profile_version || '1.0.0',
-            profile_id: `${oemKey}-fs-v1.0`,
-            profile_hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-            output_hash: 'a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e',
-            transformations: ['Indexed Frame Parse', 'UTC Normalization'],
-            is_native: true,
-          },
-        },
-        {
-          id: `${oemKey.slice(0, 3)}-evt-002`,
-          channel: 2,
-          description: `Camera 2 continuous recording stream (${oemFormatted} Index)`,
-          raw_timestamp: 0x20260901150000,
-          raw_format: 'BCD 64-bit',
-          native_time: '2026-09-01 15:00:00',
-          normalized_time: '2026-09-01 15:00:00 UTC',
-          timezone_state: 'Unknown',
-          timezone_label: 'Unknown Timezone (Unadjusted)',
-          source_offset: 0x00040000,
-          source_length: 512,
-          provenance: {
-            producing_component: `Parser-${oemFormatted}`,
-            component_version: top?.profile_version || '1.0.0',
-            profile_id: `${oemKey}-fs-v1.0`,
-            profile_hash: 'f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2',
-            output_hash: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
-            transformations: ['Secondary Sector Index Parse', 'Timestamp Preservation'],
-            is_native: true,
-          },
-        },
-        {
-          id: `${oemKey.slice(0, 3)}-evt-003`,
-          channel: 1,
-          description: `Orphaned video frame marker discovered (${oemFormatted} Slack)`,
-          raw_timestamp: 0x20260901121500,
-          raw_format: 'UNIX Epoch Seconds (LE)',
-          native_time: '2026-09-01 12:15:00',
-          normalized_time: '2026-09-01 12:15:00 UTC',
-          timezone_state: 'Known',
-          timezone_label: 'UTC+0',
-          source_offset: 0x00080000,
-          source_length: 512,
-          provenance: {
-            producing_component: `RecoveryEngine-${oemFormatted}`,
-            component_version: '1.0.0',
-            profile_id: `${oemKey}-fs-v1.0`,
-            profile_hash: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
-            output_hash: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
-            transformations: ['Carved Slack Fragment Parse', 'Timeline Event Synthesis'],
-            is_native: false,
-          },
-        }
-      ];
-
-      setEvents(dynamicEvents);
-      setSelectedEvent(dynamicEvents[0]);
-    } catch (err) {
+      // Ordering is applied server-side by TimelineEngine, which owns the
+      // deterministic tie-break rules for each mode.
+      const res = await getTimeline(evidence.id, ordering);
+      const mapped = res.events.map(toEventUI);
+      setEvents(mapped);
+      setTimelineValidation(res.validation);
+      setHasUnknownTimezones(res.has_unknown_timezones);
+      setSelectedEvent(mapped[0] ?? null);
+      // The final timeline is now built — unlock the Video Player and Reports.
+      if (onWorkflow) onWorkflow({ finalTimelineBuilt: true });
+    } catch (err: any) {
       console.error('Failed to load timeline events', err);
+      setError(err?.message || 'Timeline correlation failed');
+      setEvents([]);
+      setSelectedEvent(null);
+      setTimelineValidation(null);
+      setHasUnknownTimezones(false);
     } finally {
       setLoading(false);
     }
@@ -170,16 +158,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
   const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
 
-  // Sort events based on selected ordering
-  const sortedEvents = [...events].sort((a, b) => {
-    if (ordering === 'Physical') {
-      return a.source_offset - b.source_offset;
-    } else if (ordering === 'RecorderNative') {
-      return a.native_time.localeCompare(b.native_time);
-    } else {
-      return a.normalized_time.localeCompare(b.normalized_time);
-    }
-  });
+  // Already ordered by TimelineEngine on the backend for the selected mode;
+  // re-sorting here would risk diverging from the authoritative tie-break rules.
+  const sortedEvents = events;
 
   return (
     <div className="view-container" data-tour="timeline-view-panel">
@@ -201,6 +182,32 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="panel mb-4" style={{ borderLeft: '4px solid var(--danger)' }}>
+          <strong>Timeline correlation failed</strong>
+          <div className="text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>{error}</div>
+        </div>
+      )}
+
+      {timelineValidation && (
+        <div className="panel mb-4" style={{ padding: '12px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span className={
+              timelineValidation.state === 'PASS' ? 'badge badge-pass'
+              : timelineValidation.state === 'REVIEW' ? 'badge badge-review'
+              : timelineValidation.state === 'FAIL' ? 'badge badge-fail'
+              : 'badge badge-unknown'
+            }>
+              {timelineValidation.state}
+            </span>
+            <span style={{ fontSize: '13px' }}>{timelineValidation.reason}</span>
+            {hasUnknownTimezones && (
+              <span className="badge badge-review">Contains Unknown timezone events</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Target Evidence Selector Bar */}
       <div className="panel" style={{ padding: '16px', marginBottom: '20px', backgroundColor: 'var(--surface)' }}>
@@ -404,7 +411,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 <div>
                   <div className="text-muted" style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 600 }}>Output Signature Hash</div>
                   <div className="mono" style={{ fontSize: '10.5px', wordBreak: 'break-all', marginTop: '2px' }}>
-                    {selectedEvent.provenance.output_hash}
+                    {selectedEvent.provenance.output_hash ?? 'Not computed for timeline events'}
                   </div>
                 </div>
 

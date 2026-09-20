@@ -76,6 +76,13 @@ pub fn build_file_remux_command(
         "0:v:0".to_string(),
         "-c:v".to_string(),
         "copy".to_string(),
+        // The output muxer is stated explicitly rather than inferred from the
+        // filename. The writer stages output through a `.mp4.partial` temp file,
+        // and FFmpeg cannot derive a format from the `.partial` extension, so
+        // inference would fail. Being explicit also keeps the chosen container
+        // deterministic and independent of the temp-file naming scheme.
+        "-f".to_string(),
+        "mp4".to_string(),
         output_mp4_path.to_string_lossy().to_string(),
     ];
 
@@ -132,9 +139,15 @@ mod tests {
                 "0:v:0",
                 "-c:v",
                 "copy",
+                "-f",
+                "mp4",
                 "/tmp/recording.mp4.partial"
             ]
         );
+        // The output muxer must be explicit; the `.partial` temp extension is not
+        // inferable by FFmpeg.
+        assert_eq!(spec.args[spec.args.len() - 3], "-f");
+        assert_eq!(spec.args[spec.args.len() - 2], "mp4");
         // Assert no -y flag
         assert!(!spec.args.contains(&"-y".to_string()));
         // Assert no +faststart flag

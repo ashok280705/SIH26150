@@ -157,6 +157,82 @@ export async function runParsing(evidenceId: string, oemKey: string): Promise<{ 
   return res.json();
 }
 
+import { RecoveryResponse, UnifiedTimelineResponse, OrderingMode, PipelineRun } from '../types';
+
+/**
+ * Runs the entire forensic pipeline in one pass and returns the audited run:
+ * every stage, every gate decision, attribution, timelines, and recovery.
+ */
+export async function runFullPipeline(evidenceId: string): Promise<PipelineRun> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/pipeline/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to run pipeline');
+  }
+  return res.json();
+}
+
+/** Fetch the generated report as text plus its self-verifying hash and id. */
+export async function fetchReport(
+  evidenceId: string,
+  format: 'json' | 'markdown' | 'csv' = 'json'
+): Promise<{ body: string; reportId: string | null; sha256: string | null; contentType: string }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/report?format=${format}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to generate report');
+  }
+  return {
+    body: await res.text(),
+    reportId: res.headers.get('X-Report-Id'),
+    sha256: res.headers.get('X-Report-SHA256'),
+    contentType: res.headers.get('Content-Type') || 'application/json',
+  };
+}
+
+/**
+ * Runs a bounded recovery scan. Candidates are derived from structures the parser
+ * actually located in the image; the OEM is auto-detected unless `oemKey` is given.
+ */
+export async function runRecovery(evidenceId: string, oemKey?: string): Promise<RecoveryResponse> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/recovery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(oemKey ? { oem_key: oemKey } : {})
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to run recovery');
+  }
+  return res.json();
+}
+
+/**
+ * Fetches the unified cross-camera timeline. Ordering is applied server-side by
+ * TimelineEngine so the deterministic tie-break rules stay authoritative.
+ */
+export async function getTimeline(
+  evidenceId: string,
+  ordering: OrderingMode = 'Normalized',
+  oemKey?: string
+): Promise<UnifiedTimelineResponse> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const params = new URLSearchParams({ ordering });
+  if (oemKey) params.set('oem_key', oemKey);
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timeline?${params.toString()}`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to load timeline');
+  }
+  return res.json();
+}
+
 import { FfmpegInfo, ArtifactRecord, ArtifactVerificationResult, ReconstructResponse } from '../types';
 
 export async function getFfmpegStatus(): Promise<FfmpegInfo> {

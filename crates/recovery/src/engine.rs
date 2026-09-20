@@ -38,22 +38,25 @@ impl RecoveryEngine {
             reason: String::new(),
         };
 
-        let candidates = Vec::new();
+        let mut candidates = Vec::new();
         let start_time = Instant::now();
 
-        // Very basic mock scanning loop for the Engine orchestrator
-        // Will be expanded with L1/L2/L3 strategies in subsequent tasks.
+        // Bounded chunked scan. Each chunk is escalated through the recovery levels
+        // in order (L1 indexed -> L2 orphan/slack -> L3 raw carving); the first level
+        // that yields a candidate for a chunk wins, so a region is never double-counted
+        // across levels. A chunk that overflows or reads out of bounds is recorded as
+        // skipped rather than aborting the whole run (Req 24).
         let mut current_offset = start_offset;
-        let chunk_size = 1024 * 1024; // 1MB chunks
+        let chunk_size = 1024u64 * 1024; // 1 MiB chunks
 
         while current_offset < end_offset {
-            // 1. Check Cancellation
+            // 1. Cancellation is honored promptly and downgrades the run to REVIEW.
             if bounds.cancel.is_cancelled() {
                 run.cancelled = true;
                 break;
             }
 
-            // 2. Check Time Limit
+            // 2. Wall-clock bound.
             if let Some(limit) = bounds.time_limit {
                 if start_time.elapsed() > limit {
                     run.truncated = true;
@@ -61,13 +64,13 @@ impl RecoveryEngine {
                 }
             }
 
-            // 3. Check Byte Bounds
+            // 3. Byte bound: stop before exceeding the configured scan budget.
             if run.searched_bytes + chunk_size > bounds.max_scan_bytes {
                 run.truncated = true;
                 break;
             }
-            
-            // 4. Check Candidate Bounds
+
+            // 4. Candidate bound.
             if run.candidate_count >= bounds.max_candidates {
                 run.truncated = true;
                 break;
@@ -81,26 +84,43 @@ impl RecoveryEngine {
             run.searched_regions.push(search_region.clone());
             run.searched_bytes += search_region.length;
 
-            // Orchestration: Query the Parser for candidate recognition
-            match parser.recognize_candidate(reader, profile) {
-                Ok(true) => {
-                    // Candidate identified, perform structural validation
-                    run.candidate_count += 1;
-                    match parser.validate_structure(reader, profile) {
-                        Ok(_states) => {
+            // Escalating cascade: stop at the first level that recovers something.
+            let level_result = crate::levels::recover_l1_indexed(reader, profile, parser, &search_region)
+                .and_then(|c| {
+                    if c.is_empty() {
+                        crate::levels::recover_l2_orphan(reader, profile, parser, &search_region)
+                    } else {
+                        Ok(c)
+                    }
+                })
+                .and_then(|c| {
+                    if c.is_empty() {
+                        crate::levels::recover_l3_carve(reader, profile, parser, &search_region)
+                    } else {
+                        Ok(c)
+                    }
+                });
+
+            match level_result {
+                Ok(found) => {
+                    for cand in found {
+                        run.candidate_count += 1;
+                        // A candidate whose structure validated is accepted; otherwise
+                        // it is surfaced for review, never silently dropped.
+                        if matches!(cand.validation.structure.state, ValidationStateKind::Pass) {
                             run.accepted += 1;
-                        }
-                        Err(_) => {
+                        } else {
                             run.rejected += 1;
+                        }
+                        candidates.push(cand);
+                        if run.candidate_count >= bounds.max_candidates {
+                            break;
                         }
                     }
                 }
-                Ok(false) => {
-                    // No candidate in this chunk
-                }
                 Err(_) => {
-                    // Treat as skipped/rejected in a hostile input scenario (Req 24.1)
-                    run.rejected += 1;
+                    // Hostile/unreadable chunk: record as skipped, keep scanning.
+                    run.skipped_ranges.push(search_region.clone());
                 }
             }
 
