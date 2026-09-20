@@ -23,7 +23,7 @@ interface RecItem {
   normalized: string | null;
 }
 
-export const VideoPlayerView: React.FC<Props> = ({ evidence, evidenceList = [], onSelectEvidence, workflow }) => {
+export const VideoPlayerView: React.FC<Props> = ({ evidence, workflow }) => {
   const [recordings, setRecordings] = useState<RecItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

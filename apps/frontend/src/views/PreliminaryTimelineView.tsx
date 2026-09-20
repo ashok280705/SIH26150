@@ -14,7 +14,7 @@ interface Props {
   onWorkflow?: (patch: Partial<WorkflowState>) => void;
 }
 
-export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, evidenceList = [], onSelectEvidence, workflow, onWorkflow }) => {
+export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, onWorkflow }) => {
   const [run, setRun] = useState<PipelineRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
