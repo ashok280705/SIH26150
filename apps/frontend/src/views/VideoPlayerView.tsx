@@ -184,7 +184,8 @@ export const VideoPlayerView: React.FC<Props> = ({ evidence, workflow }) => {
                 <tr>
                   <th>Channel</th>
                   <th>Codec</th>
-                  <th>Recorder Time</th>
+                  <th>Start (Recorder-Native)</th>
+                  <th>Adjusted / Normalized (UTC)</th>
                   <th>Offset</th>
                   <th>Size</th>
                   <th>Action</th>
@@ -193,9 +194,14 @@ export const VideoPlayerView: React.FC<Props> = ({ evidence, workflow }) => {
               <tbody>
                 {recordings.map((rec) => (
                   <tr key={rec.id}>
-                    <td>CH{String(rec.channel).padStart(2, '0')}</td>
+                    <td><span className="badge badge-info">CH{String(rec.channel).padStart(2, '0')}</span></td>
                     <td>{rec.codec}</td>
-                    <td>{rec.native}</td>
+                    <td className="mono" style={{ fontSize: '12px' }}>{rec.native}</td>
+                    <td className="mono" style={{ fontSize: '12px' }}>
+                      {rec.normalized
+                        ? rec.normalized
+                        : <span style={{ color: 'var(--warning)' }}>Unknown TZ (unshifted)</span>}
+                    </td>
                     <td className="mono" style={{ fontSize: '12px' }}>0x{rec.offset.toString(16).toUpperCase()}</td>
                     <td>{(rec.length / 1024).toFixed(0)} KB</td>
                     <td>

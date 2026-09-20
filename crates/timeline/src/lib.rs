@@ -20,11 +20,15 @@
 pub mod engine;
 pub mod correlation;
 pub mod gaps;
+pub mod sessions;
 pub mod clock;
 
 pub use engine::{TimelineEngine, TimelineOrdering, UnifiedTimeline};
 pub use correlation::{CrossCameraCorrelator, CorrelatedEventGroup};
 pub use gaps::{
     analyze as analyze_gaps, CoverageEstimate, GapAnalysis, TimelineGap, UnaccountedRegion,
+};
+pub use sessions::{
+    build_recording_timeline, RecordingSegment, RecordingSession, RecordingTimeline, SessionGap,
 };
 pub use clock::{apply_correction, compute_correction, ClockAnchor};

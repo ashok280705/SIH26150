@@ -58,7 +58,10 @@ use forensic_core::{
 use parsing::orchestrator::{ParsingResult, UNIFIED_OEM_KEY};
 use parsing::ParsingOrchestrator;
 use timeline::gaps::{self, GapAnalysis};
-use timeline::{CrossCameraCorrelator, CorrelatedEventGroup, TimelineEngine, TimelineOrdering, UnifiedTimeline};
+use timeline::{
+    build_recording_timeline, CorrelatedEventGroup, CrossCameraCorrelator, RecordingTimeline,
+    TimelineEngine, TimelineOrdering, UnifiedTimeline,
+};
 
 /// A node in the pipeline flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +209,12 @@ pub struct PipelineOptions {
     pub ordering: TimelineOrdering,
     /// Cap on bytes the recovery engine will scan.
     pub max_recovery_scan_bytes: Option<u64>,
+    /// Smallest shortfall (relative to a channel's measured cadence) reported as an
+    /// in-recording gap. Below this, a spacing is treated as normal jitter.
+    pub min_recording_gap_seconds: i64,
+    /// A per-channel silence at least this long begins a new recording session rather
+    /// than being reported as an in-recording gap.
+    pub session_split_seconds: i64,
 }
 
 impl Default for PipelineOptions {
@@ -216,6 +225,8 @@ impl Default for PipelineOptions {
             correlation_window_seconds: 5,
             ordering: TimelineOrdering::Normalized,
             max_recovery_scan_bytes: None,
+            min_recording_gap_seconds: 30,
+            session_split_seconds: 3600,
         }
     }
 }
@@ -231,6 +242,9 @@ pub struct PipelineRun {
     pub used_unified_fallback: bool,
     pub parsing: Option<ParsingResult>,
     pub preliminary_timeline: Option<UnifiedTimeline>,
+    /// Per-camera recording sessions: start/end, in-recording gaps, and coverage,
+    /// derived from the parser's recordings and sorted chronologically by date.
+    pub recordings_timeline: Option<RecordingTimeline>,
     pub gap_analysis: Option<GapAnalysis>,
     pub recovery: Option<RecoverySummary>,
     pub final_timeline: Option<UnifiedTimeline>,
@@ -378,6 +392,7 @@ pub fn run_pipeline(
         used_unified_fallback: false,
         parsing: None,
         preliminary_timeline: None,
+        recordings_timeline: None,
         gap_analysis: None,
         recovery: None,
         final_timeline: None,
@@ -562,6 +577,28 @@ pub fn run_pipeline(
         return Ok(run);
     }
     run.record_stage(PipelineStage::ParsedGate, StageStatus::Completed, "Parsed");
+
+    // ── Per-recording sessions (start/end, in-recording gaps, coverage) ─────
+    // Built from the parser's own recordings and sorted by date, this is the
+    // investigator-facing "which recordings exist and what is missing inside them"
+    // view that complements the event-level unified timeline.
+    let recordings_timeline = build_recording_timeline(
+        &parsing_result.recordings,
+        options.min_recording_gap_seconds,
+        options.session_split_seconds,
+    );
+    run.record_stage(
+        PipelineStage::PreliminaryTimeline,
+        StageStatus::Completed,
+        format!(
+            "Grouped {} recording segment(s) into {} recording(s) across {} channel(s); {}s missing",
+            recordings_timeline.total_segments,
+            recordings_timeline.total_recordings,
+            recordings_timeline.channel_count,
+            recordings_timeline.total_missing_seconds,
+        ),
+    );
+    run.recordings_timeline = Some(recordings_timeline);
 
     // ── Stage: Preliminary Timeline (normalize, correlate, detect gaps) ─────
     let preliminary =

@@ -23,10 +23,16 @@ Usage
 Layout produced
 ---------------
   0x000000  DHFS superblock (magic 'DHFS' at offset 0, dynamic index_offset)
-  0x000200  DHAV packet, channel 1, H.264  [64B header][Annex-B payload]['dhav']
-  <aligned> DHAV packet, channel 2, H.265  [64B header][Annex-B payload]['dhav']
-  <aligned> DIDX recording index (one entry per packet)
+  0x000200  DHAV packet, one per recorded SEGMENT  [64B header][Annex-B payload]['dhav']
+  <aligned>   ... many segments, interleaved by time across channel 1 (H.264) and
+  <aligned>       channel 2 (H.265). Each segment is its own decodable clip and carries
+  <aligned>       its own recorder timestamp, spaced --segment-interval apart.
+  <aligned> DIDX recording index (one entry per segment)
   last sec. DHFS backup superblock
+
+Each channel records at a fixed cadence with one or more slots deliberately SKIPPED,
+so the platform's Preliminary Timeline reports those slots as missing footage (gaps)
+inside an otherwise continuous recording. Segments are date-sorted on disk.
 
 What this drives
 ----------------
@@ -100,11 +106,17 @@ def is_elementary_stream(path: str) -> bool:
     return path.lower().endswith((".h264", ".264", ".hevc", ".h265", ".265"))
 
 
-def build_annexb(src: str | None, out_path: str, codec: str, duration: int, size: str) -> str:
-    """Produce an Annex-B elementary stream at `out_path`.
+def build_segment_clip(src: str | None, out_path: str, codec: str,
+                       clip_seconds: int, size: str, seg_index: int) -> str:
+    """Produce ONE independently decodable Annex-B clip at `out_path`.
 
-    `src` None  -> synthesise a test pattern with FFmpeg.
-    `src` given -> transcode that file. Already-elementary inputs are copied as-is.
+    Every segment is encoded on its own, so it carries its own SPS/PPS and can be
+    remuxed to a playable MP4 in isolation — which is what lets the recovery stage
+    reconstruct any single recording segment the timeline points at.
+
+    `src` None  -> synthesise a short test pattern with FFmpeg.
+    `src` given -> transcode a distinct window of that file. Already-elementary inputs
+                   are copied verbatim (a raw ES cannot be reliably sliced here).
     """
     if src and is_elementary_stream(src):
         shutil.copyfile(src, out_path)
@@ -117,17 +129,20 @@ def build_annexb(src: str | None, out_path: str, codec: str, duration: int, size
     if src:
         if not os.path.isfile(src):
             die(f"input video not found: {src}")
-        input_args = ["-i", src]
+        # Loop the source so short inputs still fill every segment, and take a distinct
+        # window per segment so consecutive clips are not identical.
+        offset = seg_index * clip_seconds
+        input_args = ["-stream_loop", "-1", "-i", src, "-ss", str(offset)]
     else:
         input_args = [
             "-f", "lavfi",
-            "-i", f"testsrc2=size={size}:rate=15:duration={duration}",
+            "-i", f"testsrc2=size={size}:rate=15:duration={clip_seconds}",
         ]
 
     cmd = [
         ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
         *input_args,
-        "-t", str(duration),
+        "-t", str(clip_seconds),
         "-an",                      # no audio: DHAV payload here is video only
         "-c:v", encoder,
         "-preset", "veryfast",
@@ -139,6 +154,38 @@ def build_annexb(src: str | None, out_path: str, codec: str, duration: int, size
     ]
     subprocess.run(cmd, check=True)
     return out_path
+
+
+def parse_local_ist_to_unix(text: str) -> int:
+    """Interpret `text` (YYYY-MM-DDThh:mm:ss) as an IST (UTC+05:30) wall clock.
+
+    The Dahua parser reconstructs the recorder-native wall clock as `UTC + 05:30`, so
+    encoding the timestamps in IST here makes the parsed native time read back exactly
+    as the wall-clock values printed in the layout summary.
+    """
+    from datetime import datetime, timezone, timedelta
+    try:
+        dt = datetime.strptime(text, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        die(f"could not parse --start '{text}', expected YYYY-MM-DDThh:mm:ss")
+    ist = timezone(timedelta(hours=5, minutes=30))
+    return int(dt.replace(tzinfo=ist).timestamp())
+
+
+def parse_gap_slots(text: str) -> set[int]:
+    """Parse a comma-separated list of slot indices to omit (e.g. '2,3')."""
+    if not text:
+        return set()
+    slots = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            slots.add(int(part))
+        except ValueError:
+            die(f"invalid gap slot index: {part!r}")
+    return slots
 
 
 def probe_stream(path: str) -> dict:
@@ -219,42 +266,110 @@ def pack_dhav_packet(buf: bytearray, offset: int, *, channel_zero_based: int,
     return packet_len
 
 
+def fmt_ist(unix_ts: int) -> str:
+    """Format a unix timestamp as its IST (UTC+05:30) wall clock, matching the parser."""
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    return datetime.fromtimestamp(unix_ts, ist).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# One camera's plan: which codec, name, and time slots it records, and which it skips.
+class ChannelPlan:
+    def __init__(self, index0: int, codec: str, ext: str, codec_label: bytes,
+                 name: bytes, gap_slots: set):
+        self.index0 = index0            # 0-based channel index stored on disk
+        self.codec = codec              # "h264" | "h265"
+        self.ext = ext                  # elementary-stream file extension
+        self.codec_label = codec_label  # ASCII label in the DHAV header
+        self.name = name                # ASCII channel name in the DHAV header
+        self.gap_slots = gap_slots      # slot indices deliberately omitted (missing footage)
+        self.width = 0
+        self.height = 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ch1", help="source video for channel 1 (encoded to H.264)")
     ap.add_argument("--ch2", help="source video for channel 2 (encoded to H.265)")
-    ap.add_argument("--duration", type=int, default=8, help="clip length in seconds (default 8)")
+    ap.add_argument("--clip-seconds", type=int, default=2,
+                    help="length of each recorded segment clip, in seconds (default 2)")
+    ap.add_argument("--duration", type=int, default=None,
+                    help="alias for --clip-seconds (kept for backward compatibility)")
     ap.add_argument("--size", default="1280x720", help="frame size for synthesised clips")
+    ap.add_argument("--segments", type=int, default=7,
+                    help="number of time slots per channel (default 7)")
+    ap.add_argument("--segment-interval", type=int, default=300,
+                    help="seconds between consecutive slots (default 300 = 5 min)")
+    ap.add_argument("--start", default="2026-09-20T10:00:00",
+                    help="IST wall clock of the first slot (default 2026-09-20T10:00:00)")
+    ap.add_argument("--ch1-gaps", default="3",
+                    help="comma-separated slot indices channel 1 omits (default '3')")
+    ap.add_argument("--ch2-gaps", default="2,3",
+                    help="comma-separated slot indices channel 2 omits (default '2,3')")
     ap.add_argument("--output", default=OUTPUT_PATH, help=f"output image (default {OUTPUT_PATH})")
     ap.add_argument("--image-size", default="4MiB",
                     help="minimum image size, e.g. 4MiB. The image grows past this "
                          "if the footage needs more room (default 4MiB)")
     args = ap.parse_args()
 
+    clip_seconds = max(1, args.duration if args.duration is not None else args.clip_seconds)
+    num_slots = max(1, args.segments)
+    interval = max(1, args.segment_interval)
+    base_unix = parse_local_ist_to_unix(args.start)
+
     os.makedirs(BUILD_DIR, exist_ok=True)
-    ch1_es = os.path.join(BUILD_DIR, "ch1.h264")
-    ch2_es = os.path.join(BUILD_DIR, "ch2.hevc")
 
-    print("Preparing elementary streams...")
-    build_annexb(args.ch1, ch1_es, "h264", args.duration, args.size)
-    build_annexb(args.ch2, ch2_es, "h265", max(1, args.duration - 2), args.size)
+    channels = [
+        ChannelPlan(0, "h264", "h264", b"H.264/AVC", b"CH01_ENTRANCE", parse_gap_slots(args.ch1_gaps)),
+        ChannelPlan(1, "h265", "hevc", b"H.265/HEVC", b"CH02_PARKING", parse_gap_slots(args.ch2_gaps)),
+    ]
+    sources = {0: args.ch1, 1: args.ch2}
 
-    ch1_payload = open(ch1_es, "rb").read()
-    ch2_payload = open(ch2_es, "rb").read()
-    if not ch1_payload or not ch2_payload:
-        die("an encoded elementary stream came out empty")
+    # ---- Encode one independent clip per active slot, per channel ------------
+    # A "segment" is a single recorded clip located at one time slot. Skipped slots
+    # are the deliberate gaps the timeline must surface as missing footage.
+    print("Encoding recording segments (one independent clip per slot)...")
+    segments = []  # each: dict(channel0, codec_label, name, timestamp, payload, width, height, slot)
+    for ch in channels:
+        active = [k for k in range(num_slots) if k not in ch.gap_slots]
+        for pos, slot in enumerate(active):
+            out = os.path.join(BUILD_DIR, f"ch{ch.index0 + 1}_seg{slot}.{ch.ext}")
+            build_segment_clip(sources[ch.index0], out, ch.codec, clip_seconds, args.size, pos)
+            payload = open(out, "rb").read()
+            if not payload:
+                die(f"encoded segment came out empty: {out}")
+            if ch.width == 0:
+                info = probe_stream(out)
+                ch.width = info["width"] or 1280
+                ch.height = info["height"] or 720
+            segments.append({
+                "channel0": ch.index0,
+                "codec_label": ch.codec_label,
+                "name": ch.name,
+                "timestamp": base_unix + slot * interval,
+                "payload": payload,
+                "width": ch.width,
+                "height": ch.height,
+                "slot": slot,
+            })
 
-    ch1_info = probe_stream(ch1_es)
-    ch2_info = probe_stream(ch2_es)
+    if not segments:
+        die("no segments were produced (every slot was skipped?)")
+
+    # DIDX and physical layout read cleaner when segments are stored in time order.
+    segments.sort(key=lambda s: (s["timestamp"], s["channel0"]))
 
     # ---- Plan the layout so offsets are known before writing -----------------
-    ch1_offset = SECTOR_SIZE
-    ch1_total = DHAV_HEADER_SIZE + len(ch1_payload) + len(DHAV_FOOTER)
-    ch2_offset = align_up(ch1_offset + ch1_total)
-    ch2_total = DHAV_HEADER_SIZE + len(ch2_payload) + len(DHAV_FOOTER)
-    index_offset = align_up(ch2_offset + ch2_total)
-    index_size = 16 + 2 * 32
+    cursor = SECTOR_SIZE
+    for seg in segments:
+        seg["offset"] = cursor
+        seg["total"] = DHAV_HEADER_SIZE + len(seg["payload"]) + len(DHAV_FOOTER)
+        cursor = align_up(cursor + seg["total"])
+
+    dhav_start = segments[0]["offset"]
+    index_offset = align_up(cursor)
+    index_size = 16 + len(segments) * 32
 
     # One spare sector for the backup superblock, then round the image to 1 MiB.
     # Padded up to --image-size so a previously registered evidence record whose
@@ -263,8 +378,8 @@ def main() -> None:
     disk_size = max(align_up(min_size, 1024 * 1024), parse_size(args.image_size))
     if disk_size > MAX_IMAGE_SIZE:
         die(f"image would be {disk_size / 1048576:.1f} MiB, beyond the parser's "
-            f"{MAX_IMAGE_SIZE // 1048576} MiB scan window. Use a shorter --duration "
-            f"or smaller --size.")
+            f"{MAX_IMAGE_SIZE // 1048576} MiB scan window. Use fewer --segments, a shorter "
+            f"--clip-seconds, or a smaller --size.")
 
     buf = bytearray(disk_size)
 
@@ -279,43 +394,36 @@ def main() -> None:
         SECTOR_SIZE,
         65536,                      # block size
         disk_size // 65536,         # total blocks
-        ch1_offset,                 # dhav_start
+        dhav_start,                 # dhav_start
         index_offset,               # index_offset (read back by parse_metadata)
-        1726700000,                 # filesystem creation time
+        base_unix,                  # filesystem creation time
     )
     buf[48:64] = b"DHI-XVR5216AN".ljust(16, b"\x00")
     buf[64:96] = b"DH-SN-2024-XVR-0007A3F19C42BB01".ljust(32, b"\x00")
     buf[96:112] = b"DVR_REC_VOL0".ljust(16, b"\x00")
     struct.pack_into("<I", buf, 508, 0xD4A0A5EF)   # superblock checksum placeholder
 
-    # ---- DHAV packets with real video ---------------------------------------
-    ts1 = 1726700000
-    ts2 = 1726703600
-    pack_dhav_packet(
-        buf, ch1_offset,
-        channel_zero_based=0, frame_type=0xFD, frame_seq=1, timestamp=ts1,
-        codec_label=b"H.264/AVC", channel_name=b"CH01_ENTRANCE",
-        width=ch1_info["width"] or 1280, height=ch1_info["height"] or 720,
-        payload=ch1_payload,
-    )
-    pack_dhav_packet(
-        buf, ch2_offset,
-        channel_zero_based=1, frame_type=0xFD, frame_seq=2, timestamp=ts2,
-        codec_label=b"H.265/HEVC", channel_name=b"CH02_PARKING",
-        width=ch2_info["width"] or 1280, height=ch2_info["height"] or 720,
-        payload=ch2_payload,
-    )
+    # ---- DHAV packets: one per recorded segment -----------------------------
+    for seq, seg in enumerate(segments, start=1):
+        pack_dhav_packet(
+            buf, seg["offset"],
+            channel_zero_based=seg["channel0"], frame_type=0xFD, frame_seq=seq,
+            timestamp=seg["timestamp"], codec_label=seg["codec_label"],
+            channel_name=seg["name"], width=seg["width"], height=seg["height"],
+            payload=seg["payload"],
+        )
 
-    # ---- DIDX recording index ----------------------------------------------
+    # ---- DIDX recording index (one entry per segment) -----------------------
     # Header: [0..4] b"DIDX", [4..8] entry_count, [8..16] reserved
     # Entry (32B): [0] channel, [1] frame_type, [2..4] reserved,
     #              [4..12] offset, [12..20] length, [20..28] timestamp, [28..32] crc32
     buf[index_offset:index_offset + 4] = b"DIDX"
-    struct.pack_into("<I", buf, index_offset + 4, 2)
-    struct.pack_into("<BBHQQQI", buf, index_offset + 16,
-                     0x00, 0xFD, 0x0000, ch1_offset, ch1_total, ts1, 0x1A2B3C4D)
-    struct.pack_into("<BBHQQQI", buf, index_offset + 48,
-                     0x01, 0xFD, 0x0000, ch2_offset, ch2_total, ts2, 0x5E6F7A8B)
+    struct.pack_into("<I", buf, index_offset + 4, len(segments))
+    for i, seg in enumerate(segments):
+        entry = index_offset + 16 + i * 32
+        struct.pack_into("<BBHQQQI", buf, entry,
+                         seg["channel0"], 0xFD, 0x0000,
+                         seg["offset"], seg["total"], seg["timestamp"], 0x1A2B3C4D + i)
 
     # ---- Backup superblock in the last sector -------------------------------
     backup = disk_size - SECTOR_SIZE
@@ -326,19 +434,32 @@ def main() -> None:
     with open(args.output, "wb") as f:
         f.write(buf)
 
+    # ---- Report --------------------------------------------------------------
     print(f"\nWrote {args.output} ({len(buf):,} bytes / {len(buf) / 1048576:.2f} MiB)")
     print("\nLayout:")
     print(f"  0x{0:08X}  DHFS superblock (model DHI-XVR5216AN, volume DVR_REC_VOL0)")
-    print(f"  0x{ch1_offset:08X}  DHAV ch1  {ch1_info['codec']} "
-          f"{ch1_info['width']}x{ch1_info['height']} {ch1_info['frames']} frames, "
-          f"payload {len(ch1_payload):,} B at 0x{ch1_offset + DHAV_HEADER_SIZE:08X}")
-    print(f"  0x{ch2_offset:08X}  DHAV ch2  {ch2_info['codec']} "
-          f"{ch2_info['width']}x{ch2_info['height']} {ch2_info['frames']} frames, "
-          f"payload {len(ch2_payload):,} B at 0x{ch2_offset + DHAV_HEADER_SIZE:08X}")
-    print(f"  0x{index_offset:08X}  DIDX index (2 entries)")
+    for seg in segments:
+        label = seg["codec_label"].decode().strip("\x00")
+        print(f"  0x{seg['offset']:08X}  DHAV ch{seg['channel0'] + 1}  {label}  "
+              f"{seg['width']}x{seg['height']}  {fmt_ist(seg['timestamp'])} IST  "
+              f"payload {len(seg['payload']):,} B")
+    print(f"  0x{index_offset:08X}  DIDX index ({len(segments)} entries)")
     print(f"  0x{backup:08X}  DHFS backup superblock")
-    print("\nThe payloads are real Annex-B elementary streams, so reconstruction "
-          "produces a playable MP4 via FFmpeg stream copy.")
+
+    print("\nRecording timeline (recorder-native IST wall clock):")
+    for ch in channels:
+        active = [k for k in range(num_slots) if k not in ch.gap_slots]
+        first_ts = base_unix + active[0] * interval
+        last_ts = base_unix + active[-1] * interval
+        gaps = sorted(ch.gap_slots & set(range(num_slots)))
+        gap_desc = ", ".join(fmt_ist(base_unix + g * interval)[11:] for g in gaps) or "none"
+        print(f"  ch{ch.index0 + 1} ({ch.name.decode()}): "
+              f"{fmt_ist(first_ts)} -> {fmt_ist(last_ts)}  "
+              f"{len(active)} segment(s), missing slot(s) at {gap_desc}")
+
+    print("\nEach segment is an independently decodable Annex-B clip, so any single "
+          "recording the timeline points at can be reconstructed to a playable MP4. "
+          "Skipped slots appear as missing footage (gaps) in the Preliminary Timeline.")
 
 
 if __name__ == "__main__":

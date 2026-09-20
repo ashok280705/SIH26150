@@ -339,13 +339,77 @@ export interface GapCoverage {
   coverage_ratio: number;
 }
 
+/** A per-channel temporal gap in the unified timeline (timeline::TimelineGap). */
+export interface TimelineGap {
+  channel: number;
+  starts_after_iso: string;
+  ends_before_iso: string;
+  gap_seconds: number;
+  previous_offset: number;
+  next_offset: number;
+  reason: string;
+}
+
 export interface GapAnalysis {
-  temporal_gaps: unknown[];
+  temporal_gaps: TimelineGap[];
   coverage: GapCoverage;
   events_with_unknown_timezone: number;
   events_without_normalized_time: number;
   gaps_present: boolean;
   validation: ValidationState;
+}
+
+// ── Per-recording timeline (timeline::sessions) ─────────────────────────────
+
+/** One stored stream packet projected onto the recording-session view. */
+export interface RecordingSegment {
+  channel: number;
+  start_native: string | null;
+  start_normalized: string | null;
+  source_offset: number;
+  source_length: number;
+}
+
+/** A window inside a recording where footage is absent (timeline::SessionGap). */
+export interface SessionGap {
+  starts_after_native: string | null;
+  ends_before_native: string | null;
+  starts_after_normalized: string;
+  ends_before_normalized: string;
+  missing_seconds: number;
+  previous_offset: number;
+  next_offset: number;
+  reason: string;
+}
+
+/** A contiguous recording produced by one camera (timeline::RecordingSession). */
+export interface RecordingSession {
+  id: string;
+  channel: number;
+  start_native: string | null;
+  end_native: string | null;
+  start_normalized: string;
+  end_normalized: string;
+  timezone: string;
+  segment_count: number;
+  span_seconds: number;
+  covered_seconds: number;
+  missing_seconds: number;
+  coverage_ratio: number;
+  nominal_segment_seconds: number;
+  gaps: SessionGap[];
+  segments: RecordingSegment[];
+}
+
+/** The full per-recording view for an evidence image (timeline::RecordingTimeline). */
+export interface RecordingTimeline {
+  sessions: RecordingSession[];
+  channel_count: number;
+  total_segments: number;
+  total_recordings: number;
+  total_missing_seconds: number;
+  recordings_without_time: number;
+  method: string;
 }
 
 export interface PipelineRun {
@@ -356,6 +420,7 @@ export interface PipelineRun {
   used_unified_fallback: boolean;
   parsing: { parser_runs: unknown[]; recordings: unknown[]; timeline_events: unknown[] } | null;
   preliminary_timeline: { events: unknown[] } | null;
+  recordings_timeline: RecordingTimeline | null;
   gap_analysis: GapAnalysis | null;
   recovery: { candidates: unknown[]; run: unknown; decision: string } | null;
   final_timeline: { events: unknown[] } | null;
