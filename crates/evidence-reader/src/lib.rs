@@ -12,8 +12,10 @@
 //!   8.3; OPEN-2). The bound is loaded from `config/reader.toml` → `[read_window]`
 //!   (`max_bytes`, `min_bytes`); see `docs/decisions/OPEN-2-max-read-window.md`. Forensic
 //!   results must be identical for every value in the allowed range.
-//! * Sparse/unallocated regions are never reported as source truncation; out-of-bounds
-//!   requests are rejected with `OutOfBounds` (Req 8.9–8.11).
+//! * The reader does not implement sparse-image *capture* or hole detection: a file hole
+//!   is read as its backing bytes (typically zeros) by the OS, and is never reported as
+//!   source truncation. Out-of-bounds requests are rejected with `OutOfBounds`
+//!   (Req 8.9–8.11).
 //! * `.raw`, `.dd`, `.img`, and physical disks are in scope. `.E01` stays a planned,
 //!   dependency-gated integration and is not implemented by assumption (Req 8.8; OPEN-1).
 

@@ -15,7 +15,10 @@
 //! * Events whose timezone is `Unknown` are excluded from temporal gap maths (their
 //!   instants are not comparable) and counted separately, never silently treated as UTC.
 
-use forensic_core::{Region, TimeEvidence, TimelineEvent, TimeZoneState, ValidationState, ValidationStateKind};
+use forensic_core::{
+    RangeSet, Region, TimeEvidence, TimelineEvent, TimeZoneState, ValidationState,
+    ValidationStateKind,
+};
 use serde::{Deserialize, Serialize};
 
 /// A detected gap in temporal coverage on a single channel.
@@ -106,28 +109,32 @@ fn comparable_instant(time: &TimeEvidence) -> Option<chrono::DateTime<chrono::Ut
 }
 
 /// Merge overlapping/adjacent regions into a canonical ascending set.
-fn merge_regions(mut regions: Vec<Region>) -> Vec<Region> {
-    regions.sort_by_key(|r| (r.offset, r.length));
-    let mut merged: Vec<Region> = Vec::new();
+///
+/// This delegates to [`RangeSet`] — the platform's single canonical range-merging
+/// implementation — rather than carrying a second merge algorithm. The observable
+/// output (sorted, disjoint, adjacency-merged, empties dropped) is identical to the
+/// previous hand-rolled merge.
+fn merge_regions(regions: Vec<Region>) -> Vec<Region> {
+    let mut set = RangeSet::new();
     for r in regions {
         if r.length == 0 {
             continue;
         }
-        match merged.last_mut() {
-            Some(last) => {
-                let last_end = last.offset.saturating_add(last.length);
-                if r.offset <= last_end {
-                    // Overlapping or touching: extend.
-                    let new_end = last_end.max(r.offset.saturating_add(r.length));
-                    last.length = new_end.saturating_sub(last.offset);
-                } else {
-                    merged.push(r);
-                }
-            }
-            None => merged.push(r),
-        }
+        // Regions produced by parsers are constructed via `Region::new` and cannot
+        // overflow. Guard the pathological hand-built literal case by saturating the
+        // end at u64::MAX (matching the previous saturating_add behavior) so the region
+        // is still accounted for rather than silently dropped.
+        let safe = match r.end() {
+            Some(_) => r,
+            None => match Region::new(r.offset, u64::MAX - r.offset) {
+                Ok(clamped) => clamped,
+                Err(_) => continue,
+            },
+        };
+        // `add` only fails on overflow, which `safe` cannot exhibit.
+        let _ = set.add(safe);
     }
-    merged
+    set.iter().copied().collect()
 }
 
 /// Measure how much of the image the parsed recordings account for.
@@ -149,12 +156,17 @@ pub fn estimate_coverage(
         if r.offset > cursor {
             let length = r.offset - cursor;
             if length >= min_unaccounted_bytes {
-                unaccounted_regions.push(UnaccountedRegion {
-                    region: Region { offset: cursor, length },
-                    reason: format!(
-                        "{length} bytes between accounted recordings are not referenced by any parsed recording"
-                    ),
-                });
+                // `cursor + length == r.offset`, which is a valid (already-bounded)
+                // region offset, so `Region::new` cannot overflow here; the `if let`
+                // is a non-panicking guard rather than a control-flow change.
+                if let Ok(region) = Region::new(cursor, length) {
+                    unaccounted_regions.push(UnaccountedRegion {
+                        region,
+                        reason: format!(
+                            "{length} bytes between accounted recordings are not referenced by any parsed recording"
+                        ),
+                    });
+                }
             }
         }
         cursor = cursor.max(r.offset.saturating_add(r.length));
@@ -162,12 +174,15 @@ pub fn estimate_coverage(
     if cursor < total_bytes {
         let length = total_bytes - cursor;
         if length >= min_unaccounted_bytes {
-            unaccounted_regions.push(UnaccountedRegion {
-                region: Region { offset: cursor, length },
-                reason: format!(
-                    "{length} trailing bytes after the last accounted recording are unreferenced"
-                ),
-            });
+            // `cursor + length == total_bytes <= u64::MAX`, so this cannot overflow.
+            if let Ok(region) = Region::new(cursor, length) {
+                unaccounted_regions.push(UnaccountedRegion {
+                    region,
+                    reason: format!(
+                        "{length} trailing bytes after the last accounted recording are unreferenced"
+                    ),
+                });
+            }
         }
     }
 

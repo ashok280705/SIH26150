@@ -53,7 +53,13 @@ pub struct ScanReport {
     pub searched_range: Region,
     /// Total bytes actually read and processed.
     pub searched_bytes: u64,
-    /// Regions that were skipped (e.g. alignment jumps or sparse holes).
+    /// Regions within the target that the scan chose not to read.
+    ///
+    /// **Current behavior:** [`RegionScanner`] reads its target region contiguously and
+    /// has no code path that skips sub-ranges, so this is currently always empty. The
+    /// field is retained for forward compatibility (e.g. future alignment jumps or
+    /// sparse-hole skipping) and is never fabricated — a skipped range is only recorded
+    /// when the scanner genuinely skips one.
     pub skipped_ranges: Vec<Region>,
     /// Why the scan finished.
     pub termination_reason: TerminationReason,
@@ -139,6 +145,8 @@ impl<'a> RegionScanner<'a> {
         let mut buffer = vec![0u8; window_cap];
         let mut current_offset = start_offset;
         let mut searched_bytes: u64 = 0;
+        // The scan reads its target contiguously; there is currently no skip path, so this
+        // stays empty. It is intentionally not populated with synthetic ranges (A15).
         let skipped_ranges = Vec::new();
         let mut termination_reason = TerminationReason::Completed;
 

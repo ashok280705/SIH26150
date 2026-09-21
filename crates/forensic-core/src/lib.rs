@@ -22,6 +22,8 @@ pub mod error;
 pub mod identifiers;
 pub mod hash;
 pub mod region;
+pub mod range_set;
+pub mod finding;
 pub mod recovery;
 
 // --- Cross-cutting state enums ---
@@ -64,6 +66,8 @@ pub use ai::AiFinding;
 pub use ai_pipeline::AiPipeline;
 pub use hash::{Hash, HashAlgorithm};
 pub use region::Region;
+pub use range_set::RangeSet;
+pub use finding::{Finding, FindingSeverity};
 pub use recovery::{DataState, RecoveryStatus, RecoveryAssessment, RecoveryLevel, FrameValidationReport, RecoveryCandidate, RecoveryBounds, RecoveryRun, CancelToken};
 pub use validation::{ValidationState, ValidationStateKind};
 pub use capability::{CapabilityStage, CapabilityStages};

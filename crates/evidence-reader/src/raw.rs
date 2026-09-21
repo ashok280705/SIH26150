@@ -76,6 +76,10 @@ impl RawReader {
     }
 
     /// Open a physical disk device in read-only mode.
+    ///
+    /// **Unix-only.** This method is compiled only on Unix targets (`#[cfg(unix)]`); it
+    /// determines the device size by seeking to the end of the block device. There is no
+    /// Windows physical-disk backend at present — on Windows this method does not exist.
     #[cfg(unix)]
     pub fn open_device(path: impl AsRef<Path>) -> Result<Self, ForensicError> {
         let path = path.as_ref();

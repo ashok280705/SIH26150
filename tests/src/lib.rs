@@ -17,3 +17,4 @@
 
 pub mod fixtures;
 pub mod corpus;
+pub mod recording_reader;

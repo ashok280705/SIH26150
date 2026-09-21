@@ -17,3 +17,8 @@ hex = { workspace = true }
 sha2 = { workspace = true }
 toml = { workspace = true }
 
+# Pinned to 1.9.0: the newest 1.11.x declares MSRV 1.85, but this workspace targets
+# rust-version 1.82. 1.9.0 is the latest release compatible with that MSRV.
+[dev-dependencies]
+proptest = "=1.9.0"
+
