@@ -385,7 +385,13 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
                                   <span>{reconstructing === slot.index ? '…' : 'Play'}</span>
                                 </button>
                               )}
-                              <button className="btn btn-secondary btn-sm" onClick={() => onNavigateToHex(slot.offset)}>Hex</button>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => onNavigateToHex(slot.data_offset ?? slot.offset)}
+                                title="Open the byte inspector at the recovered stream data (first Annex-B start code) in this sub-range"
+                              >
+                                Hex
+                              </button>
                             </div>
                           </td>
                         </tr>

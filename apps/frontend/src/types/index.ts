@@ -396,6 +396,9 @@ export interface GapRecoverySlot {
   start_offset_sec: number;
   end_offset_sec: number;
   offset: number;
+  /** Absolute offset of the first Annex-B start code in the slot (the recovered stream
+   *  data), or `offset` when the slot has no start code. The Hex button jumps here. */
+  data_offset?: number;
   length: number;
   codec: string;
   nal_unit_count: number;

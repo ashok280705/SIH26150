@@ -27,6 +27,16 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# ---------------------------------------------------------------------------
+# Bundled offline assistant runtime (Ollama). The binary and quantized models
+# are large and machine-specific — fetched per-machine by scripts/ollama/setup.
+# Only vendor/ollama/README.md is committed.
+# ---------------------------------------------------------------------------
+/vendor/ollama/bin/
+/vendor/ollama/dist/
+/vendor/ollama/lib/
+/vendor/ollama/models/
+
 # Python (services/ai)
 __pycache__/
 *.py[cod]

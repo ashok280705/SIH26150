@@ -15,6 +15,7 @@ import { VideoPlayerView } from './views/VideoPlayerView';
 import { ReportsView } from './views/ReportsView';
 import { WorkflowState, loadWorkflow, saveWorkflow, computeAccess } from './workflow';
 import { HexViewer } from './components/HexViewer';
+import { ChatAssistant } from './components/assistant/ChatAssistant';
 import { WelcomeModal } from './components/onboarding/WelcomeModal';
 import { TourOverlay } from './components/onboarding/TourOverlay';
 import { HelpModal } from './components/onboarding/HelpModal';
@@ -426,6 +427,9 @@ export const App: React.FC = () => {
           setIsHelpOpen(false);
         }}
       />
+
+      {/* Offline AI assistant — reads the current screen, answers via local Ollama */}
+      <ChatAssistant activeTab={activeTab} evidenceName={activeEvidence?.source_device ?? null} />
     </div>
   );
 };

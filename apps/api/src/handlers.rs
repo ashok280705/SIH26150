@@ -1130,7 +1130,13 @@ pub struct GapSlotDto {
     /// Seconds from the gap open at which this slot begins / ends.
     pub start_offset_sec: i64,
     pub end_offset_sec: i64,
+    /// Absolute byte offset of the slot's first byte (start of the probed window).
     pub offset: u64,
+    /// Absolute byte offset of the first meaningful stream byte in the slot — the first
+    /// Annex-B start code (`00 00 (00) 01`) if one was found, otherwise `offset`. The
+    /// Hex inspector jumps here so the operator lands on the recovered stream data
+    /// instead of any leading zero padding that precedes it.
+    pub data_offset: u64,
     pub length: u64,
     pub codec: String,
     pub nal_unit_count: usize,
@@ -1158,6 +1164,19 @@ pub struct GapRecoveryResponse {
 /// the 4-byte `00 00 00 01` form.
 fn has_annexb_start(b: &[u8]) -> bool {
     b.windows(3).any(|w| w == [0x00, 0x00, 0x01])
+}
+
+/// Offset within `b` of the first Annex-B start code. Prefers the 4-byte form's leading
+/// zero (`00 00 00 01`) when present so the inspector shows the full start code. Returns
+/// `None` when the window has no start code (e.g. a slot of pure zero padding).
+fn first_annexb_start(b: &[u8]) -> Option<usize> {
+    b.windows(3).position(|w| w == [0x00, 0x00, 0x01]).map(|i| {
+        if i > 0 && b[i - 1] == 0x00 {
+            i - 1
+        } else {
+            i
+        }
+    })
 }
 
 /// POST /api/evidence/:id/recovery/gap
@@ -1203,6 +1222,12 @@ pub async fn recover_gap(
         let score = ev.h264_score + ev.h265_score + ev.mjpeg_score;
         let is_pass = matches!(ev.validation.state, forensic_core::ValidationStateKind::Pass);
         let has_start = has_annexb_start(&bytes);
+        // Where the meaningful stream data actually begins inside this slot. The slot
+        // start is frequently zero padding, so point the Hex inspector at the first
+        // Annex-B start code when present; fall back to the slot start otherwise.
+        let data_offset = first_annexb_start(&bytes)
+            .map(|rel| off + rel as u64)
+            .unwrap_or(off);
 
         let (level, data_state, status, reason) = if is_pass {
             (
@@ -1246,6 +1271,7 @@ pub async fn recover_gap(
             start_offset_sec: (k as i64) * nominal,
             end_offset_sec: ((k as i64) + 1) * nominal,
             offset: off,
+            data_offset,
             length: this_len,
             codec: format!("{:?}", ev.codec),
             nal_unit_count: ev.nal_evidence.len(),
