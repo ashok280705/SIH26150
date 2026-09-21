@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Video, HardDrive, Search, RefreshCw, Play, AlertTriangle } from 'lucide-react';
-import { Evidence, RecoveryCandidateUI, RecoveryRunUI } from '../types';
-import { runRecovery, reconstructRecording } from '../services/api';
+import {
+  Video, HardDrive, RefreshCw, Play, Wrench, Scissors,
+  ArrowRight, CheckCircle2, XCircle, Layers,
+} from 'lucide-react';
+import {
+  Evidence, GapRecoveryTarget, GapRecoveryResponse, GapRecoverySlot, RecordingSession,
+} from '../types';
+import { runFullPipeline, recoverGap, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { VideoPlayer } from '../components/video/VideoPlayer';
 import { WorkflowState, RecoveryOutcome } from '../workflow';
@@ -13,104 +18,189 @@ interface RecoveryViewProps {
   onNavigateToHex: (offset: number) => void;
   workflow?: WorkflowState;
   onWorkflow?: (patch: Partial<WorkflowState>) => void;
+  gapTarget?: GapRecoveryTarget | null;
+  onClearGapTarget?: () => void;
 }
 
-export const RecoveryView: React.FC<RecoveryViewProps> = ({ 
-  evidence, 
-  evidenceList = [], 
-  onSelectEvidence, 
-  onNavigateToHex,
-  workflow,
-  onWorkflow,
-}) => {
-  const [loading, setLoading] = useState(false);
-  const [candidates, setCandidates] = useState<RecoveryCandidateUI[]>([]);
-  const [recoveryRun, setRecoveryRun] = useState<RecoveryRunUI | null>(null);
-  const [activePlayback, setActivePlayback] = useState<any | null>(null);
-  const [reconstructing, setReconstructing] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<RecoveryOutcome | null>(null);
+type GapItem = GapRecoveryTarget & { id: string };
 
-  useEffect(() => {
-    if (evidence) {
-      loadRecoveryData();
-    } else {
-      setCandidates([]);
-      setRecoveryRun(null);
-      setError(null);
-      setOutcome(null);
+/** Add seconds to a recorder-native wall clock and return "HH:MM:SS" (no tz shift). */
+function nativeTimeAdd(target: GapRecoveryTarget, offsetSec: number): string {
+  const m = (target.startNative || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+  if (m) {
+    const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) + offsetSec * 1000;
+    const d = new Date(t);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+  }
+  const base = new Date(target.startNormalized).getTime();
+  if (!isNaN(base)) return new Date(base + offsetSec * 1000).toLocaleTimeString();
+  return `+${offsetSec}s`;
+}
+
+function fmtDur(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), rs = s % 60;
+  return `${m}m ${rs}s`;
+}
+
+/** Pull every detected gap out of the pipeline's per-recording sessions. */
+function buildGapTargets(sessions: RecordingSession[]): GapItem[] {
+  const items: GapItem[] = [];
+  for (const s of sessions) {
+    for (const g of s.gaps) {
+      items.push({
+        id: `ch${s.channel}-0x${g.next_offset.toString(16)}`,
+        channel: s.channel,
+        scanStart: g.previous_offset + g.previous_length,
+        scanEnd: g.next_offset,
+        gapSeconds: g.missing_seconds,
+        nominalSeconds: s.nominal_segment_seconds || 10,
+        startNative: g.starts_after_native,
+        startNormalized: g.starts_after_normalized,
+        endNative: g.ends_before_native,
+        endNormalized: g.ends_before_normalized,
+      });
     }
+  }
+  return items.sort((a, b) => a.startNormalized.localeCompare(b.startNormalized) || a.channel - b.channel);
+}
+
+const LEVEL_META: Record<string, { badge: string; label: string }> = {
+  L1: { badge: 'badge-pass', label: 'L1 · Indexed (Active)' },
+  L2: { badge: 'badge-review', label: 'L2 · Orphan carve' },
+  L3: { badge: 'badge-review', label: 'L3 · Raw carve' },
+};
+
+export const RecoveryView: React.FC<RecoveryViewProps> = ({
+  evidence,
+  evidenceList = [],
+  onSelectEvidence,
+  onNavigateToHex,
+  onWorkflow,
+  gapTarget,
+  onClearGapTarget,
+}) => {
+  const [gaps, setGaps] = useState<GapItem[]>([]);
+  const [loadingGaps, setLoadingGaps] = useState(false);
+  const [selected, setSelected] = useState<GapItem | GapRecoveryTarget | null>(null);
+  const [result, setResult] = useState<GapRecoveryResponse | null>(null);
+  const [loadingRec, setLoadingRec] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activePlayback, setActivePlayback] = useState<any | null>(null);
+  const [reconstructing, setReconstructing] = useState<number | null>(null);
+
+  // Load the list of detected gaps for the current evidence.
+  useEffect(() => {
+    setGaps([]);
+    setSelected(null);
+    setResult(null);
+    setError(null);
+    setActivePlayback(null);
+    if (evidence) loadGaps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evidence?.id]);
 
-  const loadRecoveryData = async () => {
+  // A gap handed in from the Preliminary Timeline: select and recover it immediately.
+  useEffect(() => {
+    if (gapTarget && evidence) {
+      setSelected(gapTarget);
+      runGapRecovery(gapTarget);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gapTarget, evidence?.id]);
+
+  const loadGaps = async () => {
     if (!evidence) return;
-    setLoading(true);
-    setError(null);
+    setLoadingGaps(true);
     try {
-      // Bounded recovery scan; candidates are derived from real structures/carving.
-      const res = await runRecovery(evidence.id);
-
-      setCandidates(res.candidates);
-      setRecoveryRun({
-        searched_bytes: res.run.searched_bytes,
-        total_bytes: res.total_bytes,
-        skipped_bytes: res.skipped_bytes,
-        candidate_count: res.run.candidate_count,
-        accepted: res.run.accepted,
-        rejected: res.run.rejected,
-        truncated: res.run.truncated,
-        validation_state: res.run.validation_state,
-      });
-
-      // Derive the recovery outcome and publish it to the workflow.
-      const accepted = res.candidates.filter((c) => c.recovery_status !== 'Unrecoverable');
-      const anyPartial = res.candidates.some((c) => c.recovery_status === 'PartiallyRecoverable');
-      const derived: RecoveryOutcome =
-        accepted.length === 0 ? 'not_recovered' : res.run.truncated || anyPartial ? 'partial' : 'recovered';
-      setOutcome(derived);
-      if (onWorkflow) {
-        onWorkflow({ recoveryDone: true, recoveryRequired: true, recoveryOutcome: derived });
-      }
-    } catch (err: any) {
-      console.error('Failed to load recovery run', err);
-      setError(err?.message || 'Recovery scan failed');
-      setCandidates([]);
-      setRecoveryRun(null);
+      const run = await runFullPipeline(evidence.id);
+      const sessions = run.recordings_timeline?.sessions ?? [];
+      setGaps(buildGapTargets(sessions));
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load detected gaps');
     } finally {
-      setLoading(false);
+      setLoadingGaps(false);
     }
   };
 
-  // Analyst override: continue the investigation even though nothing was recovered.
-  const continueAnyway = () => {
-    if (onWorkflow) onWorkflow({ analystApproved: true });
-  };
-
-  const getValidationBadge = (state: string) => {
-    switch (state) {
-      case 'PASS': return 'badge badge-pass';
-      case 'REVIEW': return 'badge badge-review';
-      case 'FAIL': return 'badge badge-fail';
-      default: return 'badge badge-unknown';
+  const runGapRecovery = async (target: GapRecoveryTarget) => {
+    if (!evidence) return;
+    // A finite, ordered byte region is required. If scanStart is NaN it means the
+    // gap JSON had no `previous_length` — i.e. the API server is an older build.
+    if (!Number.isFinite(target.scanStart) || !Number.isFinite(target.scanEnd) || target.scanEnd <= target.scanStart) {
+      setResult(null);
+      setError(
+        'This gap has no valid byte region to scan. The API server is likely running an older build ' +
+        '(missing the gap byte-range field). Rebuild and restart the API server, then reload.'
+      );
+      return;
+    }
+    setLoadingRec(true);
+    setError(null);
+    setResult(null);
+    setActivePlayback(null);
+    try {
+      const res = await recoverGap(evidence.id, {
+        channel: target.channel,
+        scan_start: target.scanStart,
+        scan_end: target.scanEnd,
+        gap_seconds: target.gapSeconds,
+        nominal_seconds: target.nominalSeconds,
+      });
+      setResult(res);
+      const outcome: RecoveryOutcome =
+        res.decision === 'completely_recovered' ? 'recovered'
+        : res.decision === 'partially_recovered' ? 'partial'
+        : 'not_recovered';
+      if (onWorkflow) onWorkflow({ recoveryDone: true, recoveryRequired: true, recoveryOutcome: outcome });
+    } catch (e: any) {
+      setError(e?.message || 'Gap recovery failed');
+    } finally {
+      setLoadingRec(false);
     }
   };
 
-  const getDataStateBadge = (state: string) => {
-    switch (state) {
-      case 'Active': return 'badge badge-pass';
-      case 'Deleted': return 'badge badge-fail';
-      case 'Orphaned': return 'badge badge-review';
-      default: return 'badge badge-unknown';
-    }
+  const selectGap = (item: GapItem) => {
+    onClearGapTarget?.();
+    setSelected(item);
+    runGapRecovery(item);
   };
 
-  const getRecoveryStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Recoverable': return 'badge badge-pass';
-      case 'PartiallyRecoverable': return 'badge badge-review';
-      case 'Unrecoverable': return 'badge badge-fail';
-      default: return 'badge badge-unknown';
+  const playSlot = async (slot: GapRecoverySlot) => {
+    if (!evidence || !selected) return;
+    setReconstructing(slot.index);
+    try {
+      const res = await reconstructRecording(evidence.id, `gapslot-${selected.channel}-${slot.index}`, {
+        offset_start: slot.offset,
+        length: slot.length,
+        channel: selected.channel,
+      });
+      if (res.remux) {
+        setActivePlayback({
+          videoId: res.remux.artifact_id,
+          videoUrl: res.remux.video_url,
+          recordingId: `Recovered ${slot.level} · +${slot.start_offset_sec}s`,
+          channel: selected.channel,
+          oemName: evidence.source_device,
+          sourceOffset: slot.offset,
+          sourceLength: res.elementary_stream.size_bytes,
+          nativeTime: selected.startNative ?? 'Unknown',
+          normalizedUtc: selected.startNormalized ?? 'Unknown',
+          codec: res.codec || slot.codec,
+          elementarySha256: res.elementary_stream.sha256,
+          remuxSha256: res.remux.sha256,
+          ffmpegVersion: res.remux.ffmpeg_version,
+          ffmpegArgs: res.remux.arguments,
+          validationState: res.remux.validation_state,
+        });
+      } else {
+        alert('Elementary stream extracted and hashed. FFmpeg is required on the host to remux a playable MP4.');
+      }
+    } catch (e: any) {
+      alert(`Reconstruction failed: ${e?.message || e}`);
+    } finally {
+      setReconstructing(null);
     }
   };
 
@@ -119,357 +209,264 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
       <div className="view-container" data-tour="recovery-view-panel">
         <div className="view-header">
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
-              <ContextHelp
-                title="Video Recovery"
-                content="Reconstructs video streams from detected structures and frame headers. Distinguishes active recordings from orphaned or carved unallocated fragments with independent validation outcomes."
-              />
-            </div>
-            <p className="view-subtitle">Select an evidence target to execute recovery and reconstruction.</p>
+            <h1 className="view-title">Gap Recovery Engine</h1>
+            <p className="view-subtitle">Select an evidence target to recover detected gaps.</p>
           </div>
         </div>
         <div className="empty-state">
           <Video size={32} />
           <h3>No Evidence Selected</h3>
-          <p>Select a DVR/NVR evidence item from the active case to begin analysis.</p>
+          <p>Select a DVR/NVR evidence item from the active case to begin.</p>
         </div>
       </div>
     );
   }
 
-  const capacityMb = (evidence.capacity / (1024 * 1024)).toFixed(2);
-  const totalBytes = recoveryRun?.total_bytes ?? evidence.capacity;
-  const searchedBytes = recoveryRun?.searched_bytes ?? 0;
-  const totalMb = (totalBytes / (1024 * 1024)).toFixed(2);
-  const searchedMb = (searchedBytes / (1024 * 1024)).toFixed(2);
-  const scanPercent = totalBytes > 0 ? ((searchedBytes / totalBytes) * 100).toFixed(0) : '0';
+  // Per-level summary of the current recovery.
+  const levelSeconds = (lvl: string | null) =>
+    (result?.slots.filter((s) => s.level === lvl).length ?? 0) * (result?.nominal_seconds ?? 0);
 
-  const handlePlayCandidate = async (cand: RecoveryCandidateUI) => {
-    if (!evidence) return;
-    setReconstructing(cand.id);
-    try {
-      const res = await reconstructRecording(evidence.id, cand.id, {
-        offset_start: cand.source_offset,
-        length: cand.source_length,
-        channel: cand.channel,
-      });
-
-      if (res.remux) {
-        setActivePlayback({
-          videoId: res.remux.artifact_id,
-          videoUrl: res.remux.video_url,
-          recordingId: cand.id,
-          channel: cand.channel,
-          oemName: evidence.source_device,
-          sourceOffset: cand.source_offset,
-          sourceLength: res.elementary_stream.size_bytes,
-          nativeTime: cand.time_native ?? 'Unknown',
-          normalizedUtc: cand.time_normalized ?? 'Unknown',
-          codec: res.codec || cand.codec,
-          elementarySha256: res.elementary_stream.sha256,
-          remuxSha256: res.remux.sha256,
-          ffmpegVersion: res.remux.ffmpeg_version,
-          ffmpegArgs: res.remux.arguments,
-          validationState: res.remux.validation_state,
-        });
-      } else {
-        alert("Elementary stream extracted and hashed. Stream-copy MP4 container remuxing requires FFmpeg on host.");
-      }
-    } catch (err: any) {
-      console.error("Reconstruction failed:", err);
-      alert(`Reconstruction failed: ${err.message || err}`);
-    } finally {
-      setReconstructing(null);
-    }
-  };
+  const decisionMeta =
+    result?.decision === 'completely_recovered'
+      ? { color: 'var(--success)', badge: 'badge-pass', text: 'COMPLETELY RECOVERED' }
+      : result?.decision === 'partially_recovered'
+      ? { color: 'var(--warning)', badge: 'badge-review', text: 'PARTIALLY RECOVERED' }
+      : { color: 'var(--danger)', badge: 'badge-fail', text: 'NOT RECOVERED' };
 
   return (
     <div className="view-container" data-tour="recovery-view-panel">
       <div className="view-header">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h1 className="view-title">Deep Recovery & Video Reconstruction</h1>
+            <h1 className="view-title">Gap Recovery Engine</h1>
             <ContextHelp
-              title="Video Recovery"
-              content="Reconstructs video streams from detected structures and frame headers. Distinguishes active recordings from orphaned or carved unallocated fragments with independent validation outcomes."
+              title="Gap Recovery"
+              content="Recovery runs per gap. Pick a detected gap (or use the Recover button in the Preliminary Timeline). The engine probes the gap's byte region as 10s sub-slots with a staged L1 → L2 → L3 cascade and reports which sub-ranges were recovered at which level and which remain missing."
             />
           </div>
-          <p className="view-subtitle">Multi-level indexed, orphan/slack, and raw carving reconstruction (Phase 4 / Req 13, 14)</p>
+          <p className="view-subtitle">Staged L1 → L2 → L3 recovery over one detected gap at a time</p>
         </div>
-        <div>
-          <button className="btn btn-secondary" onClick={loadRecoveryData} disabled={loading}>
-            {loading ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
-            <span>{loading ? 'Reconstructing...' : 'Re-run Recovery Scan'}</span>
-          </button>
-        </div>
+        <button className="btn btn-secondary" onClick={loadGaps} disabled={loadingGaps}>
+          {loadingGaps ? <RefreshCw size={14} className="spin" /> : <RefreshCw size={14} />}
+          <span>{loadingGaps ? 'Scanning…' : 'Rescan gaps'}</span>
+        </button>
       </div>
 
-      {/* Target Evidence Selector Bar */}
+      {/* Target evidence bar */}
       <div className="panel" style={{ padding: '16px', marginBottom: '20px', backgroundColor: 'var(--surface)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <HardDrive size={18} style={{ color: 'var(--accent)' }} />
             <div>
-              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>
-                Active Target Evidence
-              </div>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>Active Target</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
                 <strong style={{ fontSize: '14px' }}>{evidence.source_device}</strong>
                 <span className="badge badge-info">{evidence.image_format}</span>
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  ({capacityMb} MB)
-                </span>
               </div>
             </div>
           </div>
-
           {evidenceList && evidenceList.length > 1 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                Switch Target:
-              </label>
-              <select
-                className="form-select"
-                style={{ width: '220px', padding: '6px 10px', fontSize: '12px' }}
-                value={evidence.id}
-                onChange={(e) => {
-                  const found = evidenceList.find((item) => item.id === e.target.value);
-                  if (found && onSelectEvidence) onSelectEvidence(found);
-                }}
-              >
-                {evidenceList.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.source_device} ({(item.capacity / (1024 * 1024)).toFixed(0)}MB)
-                  </option>
-                ))}
-              </select>
-            </div>
+            <select
+              className="form-select"
+              style={{ width: '220px', padding: '6px 10px', fontSize: '12px' }}
+              value={evidence.id}
+              onChange={(e) => {
+                const found = evidenceList.find((item) => item.id === e.target.value);
+                if (found && onSelectEvidence) onSelectEvidence(found);
+              }}
+            >
+              {evidenceList.map((item) => (
+                <option key={item.id} value={item.id}>{item.source_device}</option>
+              ))}
+            </select>
           )}
         </div>
       </div>
+
+      {error && (
+        <div className="panel mb-4" style={{ borderLeft: '4px solid var(--danger)' }}>
+          <strong>Recovery error</strong>
+          <div className="text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>{error}</div>
+        </div>
+      )}
 
       {activePlayback && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <h3 style={{ margin: 0, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Video size={16} style={{ color: 'var(--accent)' }} />
-              Forensic Video Player — Candidate {activePlayback.recordingId}
+              <Video size={16} style={{ color: 'var(--accent)' }} /> Recovered footage
             </h3>
-            <button className="btn btn-secondary btn-sm" onClick={() => setActivePlayback(null)}>
-              Close Player
-            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setActivePlayback(null)}>Close Player</button>
           </div>
           <VideoPlayer {...activePlayback} onClose={() => setActivePlayback(null)} />
         </div>
       )}
 
-      {error && (
-        <div className="panel mb-4" style={{ borderLeft: '4px solid var(--danger)' }}>
-          <strong>Recovery scan failed</strong>
-          <div className="text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>{error}</div>
-        </div>
-      )}
+      {/* Staged recovery result for the selected gap */}
+      {selected && (
+        <div className="panel mb-4" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Scissors size={18} style={{ color: 'var(--danger)' }} />
+              <strong style={{ fontSize: '15px' }}>
+                Recovering gap · Channel {selected.channel}
+              </strong>
+              <span className="mono" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                {nativeTimeAdd(selected, 0)} <ArrowRight size={11} style={{ display: 'inline', verticalAlign: 'middle' }} /> {nativeTimeAdd(selected, selected.gapSeconds)} · missing {fmtDur(selected.gapSeconds)}
+              </span>
+            </div>
+            {loadingRec && <span className="badge badge-info"><RefreshCw size={11} className="spin" /> recovering…</span>}
+          </div>
 
-      {/* Recovery outcome verdict + analyst decision when nothing was recovered */}
-      {outcome && (
-        <div
-          className="panel mb-4"
-          style={{
-            borderLeft: `4px solid ${
-              outcome === 'recovered' ? 'var(--success)' : outcome === 'partial' ? 'var(--warning)' : 'var(--danger)'
-            }`,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-            <AlertTriangle
-              size={20}
-              style={{
-                color: outcome === 'recovered' ? 'var(--success)' : outcome === 'partial' ? 'var(--warning)' : 'var(--danger)',
-                flexShrink: 0,
-              }}
-            />
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: '14px' }}>Recovery Outcome</strong>
-                <span
-                  className={
-                    outcome === 'recovered' ? 'badge badge-pass' : outcome === 'partial' ? 'badge badge-review' : 'badge badge-fail'
-                  }
-                >
-                  {outcome === 'recovered' ? 'COMPLETELY RECOVERED' : outcome === 'partial' ? 'PARTIALLY RECOVERED' : 'NOTHING RECOVERED'}
+          {result && (
+            <div style={{ padding: '16px' }}>
+              {/* Decision + totals */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                <span className={`badge ${decisionMeta.badge}`}>{decisionMeta.text}</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  Recovered <strong style={{ color: 'var(--text-primary)' }}>{fmtDur(result.recovered_seconds)}</strong> of {fmtDur(result.total_seconds)}
+                  {result.unrecovered_seconds > 0 && (
+                    <span style={{ color: 'var(--warning)' }}> · {fmtDur(result.unrecovered_seconds)} not recovered</span>
+                  )}
                 </span>
               </div>
-              {outcome === 'not_recovered' ? (
-                <div style={{ marginTop: '8px' }}>
-                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    The recovery engine could not recover the missing regions. Do you want to continue the investigation
-                    with the recordings already extracted, or stop here?
-                  </div>
-                  {workflow?.analystApproved ? (
-                    <div style={{ marginTop: '8px' }}>
-                      <span className="badge badge-review">Analyst approved — continuing</span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                        Final Timeline and Video Player are now unlocked.
-                      </span>
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
-                      <button className="btn btn-primary" onClick={continueAnyway}>Continue anyway</button>
-                    </div>
-                  )}
+
+              {/* Per-level summary chips */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                <span className="badge badge-pass">L1 indexed: {fmtDur(levelSeconds('L1'))}</span>
+                <span className="badge badge-review">L2 orphan: {fmtDur(levelSeconds('L2'))}</span>
+                <span className="badge badge-review">L3 carve: {fmtDur(levelSeconds('L3'))}</span>
+                <span className="badge badge-fail">Not recovered: {fmtDur(levelSeconds(null))}</span>
+              </div>
+
+              {/* Staged sub-slot breakdown, in time order */}
+              <div className="table-container">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Sub-range (time)</th>
+                      <th>Stage</th>
+                      <th>Data state</th>
+                      <th>Status</th>
+                      <th>Codec</th>
+                      <th>Finding</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.slots.map((slot) => {
+                      const meta = slot.level ? LEVEL_META[slot.level] : { badge: 'badge-fail', label: 'Not recovered' };
+                      return (
+                        <tr key={slot.index}>
+                          <td className="mono">
+                            {nativeTimeAdd(selected, slot.start_offset_sec)} → {nativeTimeAdd(selected, slot.end_offset_sec)}
+                          </td>
+                          <td><span className={`badge ${meta.badge}`}>{meta.label}</span></td>
+                          <td>{slot.data_state}</td>
+                          <td>
+                            <span className={
+                              slot.recovery_status === 'Recoverable' ? 'badge badge-pass'
+                              : slot.recovery_status === 'PartiallyRecoverable' ? 'badge badge-review'
+                              : 'badge badge-fail'
+                            }>{slot.recovery_status}</span>
+                          </td>
+                          <td>{slot.codec}</td>
+                          <td className="text-muted" style={{ fontSize: '11px', maxWidth: '260px' }}>{slot.reason}</td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              {slot.level === 'L1' && (
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() => playSlot(slot)}
+                                  disabled={reconstructing === slot.index}
+                                  title="Reconstruct and preview this recovered sub-slot"
+                                >
+                                  {reconstructing === slot.index ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
+                                  <span>{reconstructing === slot.index ? '…' : 'Play'}</span>
+                                </button>
+                              )}
+                              <button className="btn btn-secondary btn-sm" onClick={() => onNavigateToHex(slot.offset)}>Hex</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {result.decision === 'not_recovered' && (
+                <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--danger)', fontSize: '13px' }}>
+                  <XCircle size={16} /> No footage could be carved from this gap at L1, L2, or L3.
                 </div>
-              ) : (
-                <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '6px' }}>
-                  Final Timeline is unlocked — recovered candidates will be folded into the final timeline.
+              )}
+              {result.decision === 'completely_recovered' && (
+                <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--success)', fontSize: '13px' }}>
+                  <CheckCircle2 size={16} /> Every sub-slot of this gap was recovered.
                 </div>
               )}
             </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Metrics & Bounds Banner */}
-      <div className="grid-4 mb-4">
-        <div className="stat-card">
-          <div className="stat-label">Recovery Run Extent</div>
-          <div className="stat-value">
-            {searchedMb} MB / {totalMb} MB
-          </div>
-          <div className="stat-sub mt-4">
-            {recoveryRun ? (
-              recoveryRun.truncated ? (
-                <span className="badge badge-review">Bounded Scan (truncated)</span>
-              ) : (
-                <span className="badge badge-pass">Exhaustive Scan ({scanPercent}%)</span>
-              )
-            ) : (
-              <span className="badge badge-unknown">Not scanned</span>
-            )}
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-label">Recovery Validation State</div>
-          <div className="mt-4">
-            <span className={getValidationBadge(recoveryRun?.validation_state?.state || 'UNKNOWN')}>
-              {recoveryRun?.validation_state?.state || 'UNKNOWN'}
-            </span>
-          </div>
-          <div className="stat-sub mt-4" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {recoveryRun?.validation_state?.reason || 'No recovery scan has been run for this evidence'}
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-label">Candidates Accepted / Total</div>
-          <div className="stat-value" style={{ color: 'var(--success)' }}>
-            {recoveryRun?.accepted ?? candidates.length} / {recoveryRun?.candidate_count ?? candidates.length}
-          </div>
-          <div className="stat-sub">{recoveryRun?.rejected ?? 0} rejected by media QC</div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-label">Artifact Classification</div>
-          <div className="stat-value" style={{ fontSize: '18px' }}>Native + Derived</div>
-          <div className="stat-sub" style={{ color: 'var(--accent)' }}>Strict Lineage Separation (Req 5.9)</div>
-        </div>
-      </div>
-
-      {/* Main Candidates Table */}
-      <div className="panel" style={{ padding: '0', overflow: 'hidden' }}>
+      {/* Detected gaps list */}
+      <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="panel-header" style={{ margin: 0, padding: '16px' }}>
-          <h3 style={{ margin: 0, fontSize: '14px' }}>Reconstructed Recording Candidates ({candidates.length})</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Layers size={16} style={{ color: 'var(--accent)' }} />
+            <h3 style={{ margin: 0, fontSize: '14px' }}>Detected Gaps ({gaps.length})</h3>
+          </div>
         </div>
-        <div className="table-container" style={{ border: 'none', borderTop: '1px solid var(--border)', borderRadius: '0' }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Candidate / Channel</th>
-                <th>Timestamp & Duration</th>
-                <th>DataState (Physical)</th>
-                <th>RecoveryStatus</th>
-                <th>Level</th>
-                <th>Artifacts</th>
-                <th>Validation</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map(cand => (
-                <tr key={cand.id}>
-                  <td>
-                    <div style={{ fontWeight: 600 }}>{cand.id}</div>
-                    <div className="text-muted" style={{ fontSize: '11px' }}>CH {cand.channel} | {cand.codec}</div>
-                  </td>
-                  <td>
-                    <div>{cand.time_native ?? 'Unknown'}</div>
-                    <div className="text-muted" style={{ fontSize: '11px' }}>
-                      {cand.duration_sec != null && cand.duration_sec > 0
-                        ? `${Math.floor(cand.duration_sec / 60)} min`
-                        : 'Duration not recorded'}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={getDataStateBadge(cand.data_state)}>
-                      {cand.data_state}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={getRecoveryStatusBadge(cand.recovery_status)}>
-                      {cand.recovery_status}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="badge badge-info">
-                      {cand.recovery_level}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
-                      {cand.has_native_artifact && (
-                        <span className="badge badge-info" style={{ fontSize: '9px', padding: '1px 4px' }}>
-                          [Native]
-                        </span>
-                      )}
-                      {cand.has_derived_artifact && (
-                        <span className="badge badge-unknown" style={{ fontSize: '9px', padding: '1px 4px' }}>
-                          [Derived Remux]
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={getValidationBadge(cand.validation.state)}>
-                      {cand.validation.state}
-                    </span>
-                    <div className="text-muted" style={{ fontSize: '11px', marginTop: '4px', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {cand.validation.reason}
-                    </div>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => handlePlayCandidate(cand)}
-                        disabled={reconstructing === cand.id}
-                      >
-                        {reconstructing === cand.id ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
-                        <span>{reconstructing === cand.id ? 'Remuxing...' : 'Play'}</span>
-                      </button>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => onNavigateToHex(cand.source_offset)}
-                      >
-                        Hex
-                      </button>
-                    </div>
-                  </td>
+        {gaps.length === 0 ? (
+          <div className="empty-state" style={{ padding: '28px' }}>
+            <Wrench size={24} />
+            <p>{loadingGaps ? 'Scanning for gaps…' : 'No gaps detected in this evidence.'}</p>
+          </div>
+        ) : (
+          <div className="table-container" style={{ border: 'none', borderTop: '1px solid var(--border)', borderRadius: 0 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Gap window (recorder time)</th>
+                  <th>Missing</th>
+                  <th>Byte region</th>
+                  <th>Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {gaps.map((g) => {
+                  const isSel = selected != null &&
+                    selected.channel === g.channel && selected.scanStart === g.scanStart && selected.scanEnd === g.scanEnd;
+                  return (
+                    <tr key={g.id} style={isSel ? { background: 'var(--surface-muted)' } : undefined}>
+                      <td><strong>Ch {g.channel}</strong></td>
+                      <td className="mono" style={{ fontSize: '12px' }}>
+                        {nativeTimeAdd(g, 0)} → {nativeTimeAdd(g, g.gapSeconds)}
+                      </td>
+                      <td style={{ color: 'var(--warning)' }}>{fmtDur(g.gapSeconds)}</td>
+                      <td className="mono" style={{ fontSize: '11px' }}>
+                        0x{g.scanStart.toString(16).toUpperCase()} → 0x{g.scanEnd.toString(16).toUpperCase()}
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => selectGap(g)}
+                          disabled={loadingRec && isSel}
+                          title="Run staged L1 → L2 → L3 recovery on this gap"
+                        >
+                          {loadingRec && isSel ? <RefreshCw size={12} className="spin" /> : <Wrench size={12} />}
+                          <span>Recover</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

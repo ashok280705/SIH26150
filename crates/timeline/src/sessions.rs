@@ -66,6 +66,10 @@ pub struct SessionGap {
     pub missing_seconds: i64,
     /// Byte offset of the segment before the gap, for navigation back to the image.
     pub previous_offset: u64,
+    /// Byte length of the segment before the gap. The recoverable byte region of the
+    /// gap is `[previous_offset + previous_length, next_offset]` — i.e. the physical
+    /// space between the two straddling segments, where deleted footage would reside.
+    pub previous_length: u64,
     /// Byte offset of the segment after the gap.
     pub next_offset: u64,
     /// Human-readable statement of what is missing.
@@ -323,6 +327,7 @@ fn build_session(
                 ends_before_normalized: next.instant.to_rfc3339(),
                 missing_seconds: missing,
                 previous_offset: prev.offset,
+                previous_length: prev.length,
                 next_offset: next.offset,
                 reason: format!(
                     "No footage on channel {channel} for {missing}s between segments \

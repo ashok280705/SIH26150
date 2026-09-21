@@ -378,8 +378,65 @@ export interface SessionGap {
   ends_before_normalized: string;
   missing_seconds: number;
   previous_offset: number;
+  /** Byte length of the segment before the gap. Recoverable region is
+   *  [previous_offset + previous_length, next_offset]. */
+  previous_length: number;
   next_offset: number;
   reason: string;
+}
+
+// ── Gap-targeted recovery (POST /api/evidence/:id/recovery/gap) ─────────────
+
+export interface GapRecoverySlot {
+  index: number;
+  /** "L1" | "L2" | "L3", or null when nothing could be carved. */
+  level: 'L1' | 'L2' | 'L3' | null;
+  data_state: DataState;
+  recovery_status: RecoveryStatus;
+  start_offset_sec: number;
+  end_offset_sec: number;
+  offset: number;
+  length: number;
+  codec: string;
+  nal_unit_count: number;
+  validation_state: string;
+  reason: string;
+}
+
+export interface GapRecoveryResponse {
+  channel: number;
+  oem_key: string;
+  scan_start: number;
+  scan_end: number;
+  nominal_seconds: number;
+  num_slots: number;
+  total_seconds: number;
+  recovered_seconds: number;
+  unrecovered_seconds: number;
+  decision: 'completely_recovered' | 'partially_recovered' | 'not_recovered';
+  slots: GapRecoverySlot[];
+}
+
+export interface GapRecoveryRequest {
+  channel: number;
+  scan_start: number;
+  scan_end: number;
+  gap_seconds: number;
+  nominal_seconds: number;
+  oem_key?: string;
+}
+
+/** A gap selected in the timeline and handed to the Recovery Engine to recover. */
+export interface GapRecoveryTarget {
+  channel: number;
+  scanStart: number;
+  scanEnd: number;
+  gapSeconds: number;
+  nominalSeconds: number;
+  startNative: string | null;
+  startNormalized: string;
+  endNative: string | null;
+  endNormalized: string;
 }
 
 /** A contiguous recording produced by one camera (timeline::RecordingSession). */

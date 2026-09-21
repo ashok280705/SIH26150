@@ -1104,6 +1104,184 @@ pub async fn run_recovery(
     Ok(Json(serde_json::to_value(response).unwrap()))
 }
 
+// ── Gap-targeted recovery ────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct GapRecoveryRequest {
+    pub channel: u32,
+    /// First byte of the gap's recoverable region (previous_offset + previous_length).
+    pub scan_start: u64,
+    /// One-past-the-last byte of the gap region (the next segment's offset).
+    pub scan_end: u64,
+    /// Total missing seconds in the gap (drives how many sub-slots are probed).
+    pub gap_seconds: i64,
+    /// Per-recording length in seconds (the channel's measured cadence).
+    pub nominal_seconds: i64,
+    pub oem_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GapSlotDto {
+    pub index: usize,
+    /// "L1" | "L2" | "L3", or null when nothing could be carved from this slot.
+    pub level: Option<String>,
+    pub data_state: forensic_core::DataState,
+    pub recovery_status: forensic_core::RecoveryStatus,
+    /// Seconds from the gap open at which this slot begins / ends.
+    pub start_offset_sec: i64,
+    pub end_offset_sec: i64,
+    pub offset: u64,
+    pub length: u64,
+    pub codec: String,
+    pub nal_unit_count: usize,
+    pub validation_state: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GapRecoveryResponse {
+    pub channel: u32,
+    pub oem_key: String,
+    pub scan_start: u64,
+    pub scan_end: u64,
+    pub nominal_seconds: i64,
+    pub num_slots: usize,
+    pub total_seconds: i64,
+    pub recovered_seconds: i64,
+    pub unrecovered_seconds: i64,
+    /// "completely_recovered" | "partially_recovered" | "not_recovered"
+    pub decision: String,
+    pub slots: Vec<GapSlotDto>,
+}
+
+/// True if the window contains an Annex-B start code (`00 00 01`), which also covers
+/// the 4-byte `00 00 00 01` form.
+fn has_annexb_start(b: &[u8]) -> bool {
+    b.windows(3).any(|w| w == [0x00, 0x00, 0x01])
+}
+
+/// POST /api/evidence/:id/recovery/gap
+///
+/// Runs a staged L1 -> L2 -> L3 recovery over ONE detected gap's byte region — the
+/// physical space between the two recordings that straddle the gap, where deleted
+/// footage would reside. The gap is probed as `nominal`-length sub-slots; each is
+/// classified at escalating strictness:
+///   * clean, decodable stream (valid parameter sets) -> L1 / Active / Recoverable
+///   * NAL data without a complete parameter set       -> L2 / Orphaned / Partial
+///   * bare Annex-B start codes, no NAL structure       -> L3 / Corrupted / Partial
+///   * neither                                          -> not recovered
+/// The response reports which time sub-ranges were recovered at which level and which
+/// remain missing, so partial recovery (e.g. 20s of a 30s gap) is explicit.
+pub async fn recover_gap(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Json(req): Json<GapRecoveryRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
+
+    let len = reader.len();
+    let scan_start = req.scan_start.min(len);
+    let scan_end = req.scan_end.min(len).max(scan_start);
+    let nominal = req.nominal_seconds.max(1);
+    let total_seconds = req.gap_seconds.max(nominal);
+    let num_slots = ((total_seconds as f64 / nominal as f64).round() as i64).max(1) as usize;
+
+    let region_len = scan_end - scan_start;
+    let slot_bytes = region_len / num_slots as u64;
+
+    let mut slots = Vec::with_capacity(num_slots);
+    let mut recovered_slots = 0usize;
+
+    for k in 0..num_slots {
+        let off = scan_start + (k as u64) * slot_bytes;
+        let this_len = if k + 1 == num_slots { scan_end.saturating_sub(off) } else { slot_bytes };
+        let read_len = this_len.min(4 * 1024 * 1024) as usize;
+        let bytes = reader.read_exact_at(off, read_len).unwrap_or_default();
+
+        let ev = recovery::VideoReconstructor::classify_codec(&bytes);
+        let score = ev.h264_score + ev.h265_score + ev.mjpeg_score;
+        let is_pass = matches!(ev.validation.state, forensic_core::ValidationStateKind::Pass);
+        let has_start = has_annexb_start(&bytes);
+
+        let (level, data_state, status, reason) = if is_pass {
+            (
+                Some("L1".to_string()),
+                forensic_core::DataState::Active,
+                forensic_core::RecoveryStatus::Recoverable,
+                format!("L1 indexed recovery: clean {:?} stream with valid parameter sets", ev.codec),
+            )
+        } else if score > 0 {
+            (
+                Some("L2".to_string()),
+                forensic_core::DataState::Orphaned,
+                forensic_core::RecoveryStatus::PartiallyRecoverable,
+                format!("L2 orphan carve: {:?} NAL data without a complete parameter set (score {score})", ev.codec),
+            )
+        } else if has_start {
+            (
+                Some("L3".to_string()),
+                forensic_core::DataState::Corrupted,
+                forensic_core::RecoveryStatus::PartiallyRecoverable,
+                "L3 raw carve: Annex-B start code(s) found but no decodable NAL structure".to_string(),
+            )
+        } else {
+            (
+                None,
+                forensic_core::DataState::Deleted,
+                forensic_core::RecoveryStatus::Unrecoverable,
+                "Not recovered: no codec signature or start code in this window".to_string(),
+            )
+        };
+
+        if level.is_some() {
+            recovered_slots += 1;
+        }
+
+        slots.push(GapSlotDto {
+            index: k,
+            level,
+            data_state,
+            recovery_status: status,
+            start_offset_sec: (k as i64) * nominal,
+            end_offset_sec: ((k as i64) + 1) * nominal,
+            offset: off,
+            length: this_len,
+            codec: format!("{:?}", ev.codec),
+            nal_unit_count: ev.nal_evidence.len(),
+            validation_state: format!("{:?}", ev.validation.state),
+            reason,
+        });
+    }
+
+    let recovered_seconds = recovered_slots as i64 * nominal;
+    let total = num_slots as i64 * nominal;
+    let unrecovered_seconds = (total - recovered_seconds).max(0);
+    let decision = if recovered_slots == 0 {
+        "not_recovered"
+    } else if recovered_slots == num_slots {
+        "completely_recovered"
+    } else {
+        "partially_recovered"
+    };
+
+    let resp = GapRecoveryResponse {
+        channel: req.channel,
+        oem_key: req.oem_key.unwrap_or_else(|| "auto".to_string()),
+        scan_start,
+        scan_end,
+        nominal_seconds: nominal,
+        num_slots,
+        total_seconds: total,
+        recovered_seconds,
+        unrecovered_seconds,
+        decision: decision.to_string(),
+        slots,
+    };
+
+    Ok(Json(serde_json::to_value(resp).unwrap()))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TimelineQuery {
     /// `Normalized` | `RecorderNative` | `Physical`. Defaults to `Normalized`.

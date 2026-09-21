@@ -2,36 +2,34 @@
 """
 Generate a "blind" DVR/NVR .raw evidence disk image for end-to-end testing.
 
-The filesystem family is deliberately NOT named in the on-screen output or the
-filename, so the platform's detection stage can be exercised without a spoiler.
-(The ground-truth answer key IS written to a separate file — open it only after
-you have tested detection.)
+The filesystem family is deliberately NOT named on screen or in the filename, so
+detection can be exercised without a spoiler. The ground-truth answer key is
+written to a separate file — open it only after testing detection.
 
-Recording model (matches how the platform reasons about DVR footage)
---------------------------------------------------------------------
-A DVR records continuously and stores the stream as back-to-back fixed-length
-segment files. Each segment here is a real, independently decodable 10-second
-clip, and consecutive segments are 10 seconds apart — so a "recording" IS a
-10-second clip, and the platform measures the per-channel cadence as 10s.
+Recording model
+---------------
+Each recording is a real, independently decodable 10-second clip; consecutive
+recordings are 10s apart (contiguous), so the platform measures the cadence as
+10s and a "recording" IS a 10s clip.
 
-  * 2 camera channels of real, decodable footage (H.264 + H.265).
-  * 3 days of recording per channel.
+  * 2 channels (H.264 + H.265), 3 days.
   * 5 present 10-second recordings per channel per day.
-  * A contiguous block of 3 missing 10-second slots per channel per day, i.e.
-    a 30-second GAP in the middle of each day's recording.
-  * The GAP is RECOVERABLE: the missing 10-second clips are written to the image
-    as ORPHANED elementary streams (no container framing, no index entry). The
-    normal parse misses them, so the recording timeline reports a 30-second gap;
-    the recovery/carving stage can still bring those bytes back because they
-    carry valid video signatures.
+  * A 50-second GAP per channel per day (5 missing 10s slots), whose footage is
+    written INTO the physical space between the two straddling recordings — this
+    is where deleted footage would reside — so a byte scan of the gap can find it.
 
-So each row of footage is a 10-second recording, gaps are reported in seconds,
-and the gap footage is physically present and carvable.
+Graduated, recoverable gap (per gap, in time order)
+---------------------------------------------------
+The 5 missing slots are crafted so a staged L1 -> L2 -> L3 recovery produces a
+mix of outcomes, demonstrating partial recovery:
 
-Usage
------
-  python3 generate_evidence_3day.py
-  python3 generate_evidence_3day.py --size 640x360 --image-size 14MiB
+  slot 3 (10s): clean elementary stream        -> L1 (Active,    Recoverable)
+  slot 4 (10s): clean elementary stream        -> L1 (Active,    Recoverable)
+  slot 5 (10s): NAL slice, no parameter sets   -> L2 (Orphaned,  Partial)
+  slot 6 (10s): zeros                          -> not recovered
+  slot 7 (10s): bare start code + noise        -> L3 (Corrupted, Partial)
+
+So a 50s gap recovers as 20s@L1 + 10s@L2 + 10s@L3, with 10s not recovered.
 
 Requires ffmpeg/ffprobe on PATH.
 """
@@ -53,11 +51,17 @@ OUTPUT_PATH = "dvr_3day_sample.raw"
 ANSWER_KEY_PATH = ".fixture_build/ANSWER_KEY_dvr_3day.md"
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Eight 10-second slots make up each day's recording per channel. Five are
-# PRESENT (recorded) and a contiguous block of three in the middle is MISSING,
-# producing a single 30-second gap that the surrounding recordings pin cleanly.
-PRESENT_SLOTS = [0, 1, 2, 6, 7]
-MISSING_SLOTS = [3, 4, 5]
+# 10 scheduled 10s slots per channel per day: 5 present, a 5-slot gap in the middle.
+PRESENT_SLOTS = [0, 1, 2, 8, 9]
+MISSING_SLOTS = [3, 4, 5, 6, 7]
+# Fixed byte size for each orphaned gap slot, so a proportional time->byte mapping
+# over the gap region lands cleanly on each slot.
+SLOT_BYTES = 160 * 1024
+# Leading zero pad inside each orphan slot; keeps a slot's real content clear of the
+# small boundary bleed from the proportional sub-slot mapping (max a few dozen bytes).
+LEAD_PAD = 1024
+# What each missing slot contains, driving the recovery level it resolves to.
+CASCADE = {3: "clean", 4: "clean", 5: "slice", 6: "empty", 7: "fragment"}
 
 
 def die(msg: str) -> None:
@@ -122,9 +126,9 @@ def encode_clip(codec: str, seconds: int, size: str, fps: int, crf: int, out_pat
         data = open(out_path, "rb").read()
         if not data:
             die(f"encoded clip is empty: {out_path}")
-        if forbidden not in data:
+        if forbidden not in data and len(data) + LEAD_PAD <= SLOT_BYTES:
             return data
-    die(f"could not encode a {codec} clip free of the packet tag after retries")
+    die(f"could not encode a {codec} clip that fits a slot and avoids the packet tag")
     return b""
 
 
@@ -144,6 +148,24 @@ def probe(path: str) -> tuple[int, int]:
         elif line.startswith("height=") and line[7:].isdigit():
             h = int(line[7:])
     return (w, h)
+
+
+def orphan_content(kind: str, payload: bytes) -> bytes:
+    """Build one SLOT_BYTES orphan slot whose bytes resolve to a specific level."""
+    b = bytearray(SLOT_BYTES)  # zero-filled
+    if kind == "clean":
+        b[LEAD_PAD:LEAD_PAD + len(payload)] = payload            # valid stream -> L1
+    elif kind == "slice":
+        frag = b"\x00\x00\x01\x65" + b"\xBB" * 256               # one IDR slice, no SPS/PPS -> L2
+        b[LEAD_PAD:LEAD_PAD + len(frag)] = frag
+    elif kind == "fragment":
+        frag = b"\x00\x00\x01\x01" + b"\xAA" * 256               # bare start code, non-scoring -> L3
+        b[LEAD_PAD:LEAD_PAD + len(frag)] = frag
+    elif kind == "empty":
+        pass                                                     # all zeros -> not recovered
+    else:
+        die(f"unknown orphan kind: {kind}")
+    return bytes(b)
 
 
 def pack_packet(buf: bytearray, offset: int, *, channel0: int, frame_seq: int,
@@ -185,18 +207,17 @@ def main() -> None:
     ap.add_argument("--fps", type=int, default=10)
     ap.add_argument("--crf", type=int, default=34)
     ap.add_argument("--start", default="2026-09-18T10:00:00", help="IST wall clock of the first slot each day")
-    ap.add_argument("--image-size", default="12MiB")
+    ap.add_argument("--image-size", default="14MiB")
     ap.add_argument("--output", default=OUTPUT_PATH)
     ap.add_argument("--answer-key", default=ANSWER_KEY_PATH)
     args = ap.parse_args()
 
     days = max(1, args.days)
-    clip = max(1, args.clip_seconds)   # segment length == cadence, so a recording is `clip` seconds
+    clip = max(1, args.clip_seconds)
     base = ist_to_unix(args.start)
     day_secs = 86400
 
     os.makedirs(BUILD_DIR, exist_ok=True)
-
     channels = [
         Channel(0, "h264", "h264", b"H.264/AVC", b"CH01_ENTRANCE"),
         Channel(1, "h265", "hevc", b"H.265/HEVC", b"CH02_PARKING"),
@@ -211,37 +232,37 @@ def main() -> None:
         ch.height = ch.height or int(args.size.split("x")[1])
         print(f"  {ch.name.decode()}: {ch.codec} {ch.width}x{ch.height} {len(ch.payload):,} B/clip")
 
-    # Schedule: contiguous 10s slots; PRESENT_SLOTS recorded, MISSING_SLOTS are
-    # the recoverable gap. The slot index * clip seconds gives the offset in time.
-    active, gaps = [], []
+    # ── Pass 1: plan the physical layout, interleaving each day's gap footage ──
+    # Layout per (channel, day): [present slots 0,1,2][orphan gap slots 3..7][present 8,9]
+    # The orphan slots occupy the physical space between the recordings that straddle
+    # the gap, exactly where the recovery scan looks.
+    active = []   # {offset, channel0, timestamp, payload, label, name, w, h}
+    orphans = []  # {offset, content, channel0, timestamp, slot, kind}
+    seq = 0
+    cursor = SECTOR_SIZE
+
+    def plan_active(ch, ts):
+        nonlocal cursor, seq
+        cursor = align_up(cursor)
+        seq += 1
+        payload = ch.payload
+        active.append(dict(offset=cursor, channel0=ch.index0, timestamp=ts, payload=payload,
+                           label=ch.label, name=ch.name, w=ch.width, h=ch.height, seq=seq))
+        cursor += DHAV_HEADER_SIZE + len(payload) + len(DHAV_FOOTER)
+
     for ch in channels:
         for d in range(days):
             day0 = base + d * day_secs
-            for s in PRESENT_SLOTS:
-                active.append(dict(channel0=ch.index0, name=ch.name, label=ch.label,
-                                   codec=ch.codec, payload=ch.payload, width=ch.width,
-                                   height=ch.height, timestamp=day0 + s * clip, day=d, slot=s))
+            for s in [0, 1, 2]:
+                plan_active(ch, day0 + s * clip)
             for s in MISSING_SLOTS:
-                gaps.append(dict(channel0=ch.index0, name=ch.name, label=ch.label,
-                                 codec=ch.codec, payload=ch.payload, width=ch.width,
-                                 height=ch.height, timestamp=day0 + s * clip, day=d, slot=s))
-
-    active.sort(key=lambda x: (x["timestamp"], x["channel0"]))
-    gaps.sort(key=lambda x: (x["timestamp"], x["channel0"]))
-
-    # ---- Physical layout ----------------------------------------------------
-    cursor = SECTOR_SIZE
-    for a in active:
-        a["offset"] = cursor
-        a["total"] = DHAV_HEADER_SIZE + len(a["payload"]) + len(DHAV_FOOTER)
-        cursor = align_up(cursor + a["total"])
-
-    orphan_region_start = align_up(cursor)
-    cursor = orphan_region_start
-    for g in gaps:
-        g["offset"] = cursor
-        g["length"] = len(g["payload"])
-        cursor = align_up(cursor + g["length"])
+                content = orphan_content(CASCADE[s], ch.payload)
+                orphans.append(dict(offset=cursor, content=content, channel0=ch.index0,
+                                    timestamp=day0 + s * clip, slot=s, kind=CASCADE[s]))
+                cursor += SLOT_BYTES
+            for s in [8, 9]:
+                plan_active(ch, day0 + s * clip)  # placed right after orphans (no align)
+            cursor = align_up(cursor)
 
     index_offset = align_up(cursor)
     index_size = 16 + len(active) * 32
@@ -250,32 +271,31 @@ def main() -> None:
     if disk_size > MAX_IMAGE_SIZE:
         die(f"image would be {disk_size/1048576:.1f} MiB (> {MAX_IMAGE_SIZE//1048576} MiB window).")
 
+    # ── Pass 2: write ──────────────────────────────────────────────────────────
     buf = bytearray(disk_size)
-
-    # ---- Superblock @ 0 -----------------------------------------------------
     buf[0:4] = b"DHFS"
     struct.pack_into("<IIIQQQQ", buf, 4,
                      0x00010000, SECTOR_SIZE, 65536, disk_size // 65536,
-                     active[0]["offset"] if active else SECTOR_SIZE, index_offset, base)
+                     active[0]["offset"], index_offset, base)
     buf[48:64] = b"NVR-8CH-2600".ljust(16, b"\x00")
     buf[64:96] = b"SN-2026-NVR-0007A3F19C42BB01".ljust(32, b"\x00")
     buf[96:112] = b"REC_VOLUME01".ljust(16, b"\x00")
     struct.pack_into("<I", buf, 508, 0xD4A0A5EF)
 
-    for seq, a in enumerate(active, start=1):
-        pack_packet(buf, a["offset"], channel0=a["channel0"], frame_seq=seq,
+    for a in active:
+        pack_packet(buf, a["offset"], channel0=a["channel0"], frame_seq=a["seq"],
                     timestamp=a["timestamp"], codec_label=a["label"], name=a["name"],
-                    width=a["width"], height=a["height"], payload=a["payload"])
-
-    for g in gaps:
-        buf[g["offset"]:g["offset"] + len(g["payload"])] = g["payload"]
+                    width=a["w"], height=a["h"], payload=a["payload"])
+    for o in orphans:
+        buf[o["offset"]:o["offset"] + len(o["content"])] = o["content"]
 
     buf[index_offset:index_offset + 4] = b"DIDX"
     struct.pack_into("<I", buf, index_offset + 4, len(active))
     for i, a in enumerate(active):
         e = index_offset + 16 + i * 32
         struct.pack_into("<BBHQQQI", buf, e, a["channel0"], 0xFD, 0x0000,
-                         a["offset"], a["total"], a["timestamp"], 0x1A2B3C4D + i)
+                         a["offset"], DHAV_HEADER_SIZE + len(a["payload"]) + len(DHAV_FOOTER),
+                         a["timestamp"], 0x1A2B3C4D + i)
 
     backup = disk_size - SECTOR_SIZE
     buf[backup:backup + 4] = b"DHFS"
@@ -285,38 +305,35 @@ def main() -> None:
     with open(args.output, "wb") as f:
         f.write(buf)
 
-    # ---- Self-check ---------------------------------------------------------
+    # ── Self-check ───────────────────────────────────────────────────────────
     problems = []
     if buf[0:4] != b"DHFS":
         problems.append("superblock magic missing")
-    if active and buf[active[0]["offset"]:active[0]["offset"] + 4] != b"DHAV":
+    if buf[active[0]["offset"]:active[0]["offset"] + 4] != b"DHAV":
         problems.append("first packet tag missing")
     if active[0]["offset"] >= 65536:
         problems.append("first packet not within 64 KiB")
     if buf[index_offset:index_offset + 4] != b"DIDX":
         problems.append("index magic missing")
-    orphan_end = align_up(gaps[-1]["offset"] + gaps[-1]["length"]) if gaps else orphan_region_start
-    if b"DHAV" in bytes(buf[orphan_region_start:orphan_end]):
-        problems.append("orphaned slack contains a stray packet tag")
+    for o in orphans:
+        if b"DHAV" in o["content"]:
+            problems.append(f"orphan slot {o['slot']} contains a stray packet tag")
+            break
     if problems:
         die("self-check failed: " + "; ".join(problems))
 
+    n_ch, n_gaps = len(channels), len(channels) * days
     print(f"\nWrote {args.output} ({len(buf):,} bytes / {len(buf)/1048576:.2f} MiB)")
-    print(f"  active (indexed) 10s recordings : {len(active)} "
-          f"({len(active)//len(channels)}/channel, {len(PRESENT_SLOTS)}/day/channel)")
-    print(f"  recoverable gap clips (orphaned): {len(gaps)} "
-          f"({len(MISSING_SLOTS)}/day/channel => a {clip*len(MISSING_SLOTS)}s gap/day)")
-    print(f"  channels                        : {len(channels)}")
-    print(f"  schedule                        : {days} day(s), {len(PRESENT_SLOTS)} present + "
-          f"{len(MISSING_SLOTS)} missing {clip}s slots/day, cadence {clip}s")
+    print(f"  active (indexed) 10s recordings : {len(active)} ({len(active)//n_ch}/channel, {len(PRESENT_SLOTS)}/day/channel)")
+    print(f"  gaps                            : {n_gaps} (one {clip*len(MISSING_SLOTS)}s gap/channel/day)")
+    print(f"  orphaned gap slots (recoverable): {len(orphans)} ({len(MISSING_SLOTS)}/gap: 2 clean, 1 slice, 1 empty, 1 fragment)")
+    print(f"  channels                        : {n_ch}")
     print(f"\nGround-truth answer key: {args.answer_key} (open only after testing detection)")
 
-    write_answer_key(args, channels, active, gaps, disk_size, index_offset,
-                     orphan_region_start, days, clip)
+    write_answer_key(args, channels, active, orphans, disk_size, index_offset, days, clip)
 
 
-def write_answer_key(args, channels, active, gaps, disk_size, index_offset,
-                     orphan_region_start, days, clip):
+def write_answer_key(args, channels, active, orphans, disk_size, index_offset, days, clip):
     n_ch = len(channels)
     gap_secs = clip * len(MISSING_SLOTS)
     L = []
@@ -325,50 +342,42 @@ def write_answer_key(args, channels, active, gaps, disk_size, index_offset,
     L.append("> SPOILER: names the filesystem family. Read only after testing detection.")
     L.append("")
     L.append("## Filesystem family")
-    L.append("- **Dahua DHFS**: `DHFS` superblock @0, `DHAV` packets, `DIDX` index.")
-    L.append("  Detection => **Confirmed**. Model `NVR-8CH-2600`, volume `REC_VOLUME01`.")
-    L.append(f"- Image {disk_size:,} B ({disk_size/1048576:.0f} MiB), DIDX @ 0x{index_offset:08X} "
-             f"({len(active)} entries).")
+    L.append("- **Dahua DHFS**: `DHFS` superblock @0, `DHAV` packets, `DIDX` index. Detection => Confirmed.")
+    L.append(f"- Image {disk_size:,} B ({disk_size/1048576:.0f} MiB), DIDX @ 0x{index_offset:08X} ({len(active)} entries).")
     L.append("")
     L.append("## Recording model")
-    L.append(f"- Each recording is a **{clip}-second** clip; cadence is {clip}s (contiguous).")
-    L.append(f"- {n_ch} channels, {days} days, {len(PRESENT_SLOTS)} present {clip}s recordings "
-             f"per channel per day.")
-    L.append(f"- One contiguous block of {len(MISSING_SLOTS)} missing slots per channel per day "
-             f"=> a **{gap_secs}-second gap** per day.")
-    L.append(f"- Start {args.start} IST (UTC+05:30). Present slots {PRESENT_SLOTS}, "
-             f"missing slots {MISSING_SLOTS} (x{clip}s).")
+    L.append(f"- Each recording is a **{clip}s** clip; cadence {clip}s (contiguous).")
+    L.append(f"- {n_ch} channels, {days} days, {len(PRESENT_SLOTS)} present recordings/channel/day.")
+    L.append(f"- One **{gap_secs}s gap**/channel/day ({len(MISSING_SLOTS)} missing {clip}s slots), footage")
+    L.append("  interleaved into the physical space between the straddling recordings.")
     L.append("")
-    L.append("## Expected counts (cross-check these)")
-    L.append(f"- ACTIVE {clip}s recordings (indexed, appear as clips): **{len(active)}** "
-             f"({len(active)//n_ch}/channel).")
-    L.append(f"- Per-channel/day recording sessions: **{n_ch*days}** "
-             f"(one per channel per day), each with {len(PRESENT_SLOTS)} segments.")
-    L.append(f"- GAPS: **{n_ch*days}** (one {gap_secs}s gap per channel per day). "
-             f"Total missing = {n_ch*days*gap_secs}s.")
-    L.append(f"- Measured cadence per channel = {clip}s, so each clip duration reads {clip}s.")
-    L.append(f"- Session coverage = {len(PRESENT_SLOTS)*clip}s recorded / "
-             f"{(max(PRESENT_SLOTS)+1)*clip}s span.")
+    L.append("## Expected counts")
+    L.append(f"- ACTIVE recordings (clip list): **{len(active)}** ({len(active)//n_ch}/channel).")
+    L.append(f"- Sessions: **{n_ch*days}**; GAPS: **{n_ch*days}** (each {gap_secs}s).")
     L.append("")
-    L.append("## Recoverable gap footage (orphaned)")
-    L.append(f"- {len(gaps)} orphaned {clip}s clips (no DHAV framing / no DIDX entry) start at "
-             f"0x{orphan_region_start:08X}.")
-    L.append("- Parser misses them (=> shown as gaps); pipeline recovery carves them by NAL")
-    L.append("  signature. Each is an independently decodable clip (proven with ffprobe).")
+    L.append("## Staged gap recovery (per gap, time order)")
+    L.append("| slot time | content | level | outcome |")
+    L.append("|-----------|---------|-------|---------|")
+    L.append("| +0–10s  | clean stream          | L1 | Active, Recoverable |")
+    L.append("| +10–20s | clean stream          | L1 | Active, Recoverable |")
+    L.append("| +20–30s | NAL slice, no SPS/PPS  | L2 | Orphaned, Partial |")
+    L.append("| +30–40s | zeros                  | —  | NOT recovered |")
+    L.append("| +40–50s | start code + noise     | L3 | Corrupted, Partial |")
+    L.append(f"- Net per {gap_secs}s gap: 20s@L1 + 10s@L2 + 10s@L3 recovered, 10s not recovered.")
     L.append("")
     L.append("## ACTIVE recordings")
     L.append("| # | channel | codec | recorder-native (IST) | offset | payload B |")
     L.append("|---|---------|-------|-----------------------|--------|-----------|")
     for i, a in enumerate(active, 1):
-        L.append(f"| {i} | CH{a['channel0']+1:02d} | {a['codec']} | {fmt_ist(a['timestamp'])} | "
-                 f"0x{a['offset']:08X} | {len(a['payload']):,} |")
+        L.append(f"| {i} | CH{a['channel0']+1:02d} | {channels[a['channel0']].codec} | "
+                 f"{fmt_ist(a['timestamp'])} | 0x{a['offset']:08X} | {len(a['payload']):,} |")
     L.append("")
-    L.append("## GAP (orphaned, recoverable) clips")
-    L.append("| # | channel | codec | recorder-native (IST) | day | slot | orphan offset | bytes |")
-    L.append("|---|---------|-------|-----------------------|-----|------|---------------|-------|")
-    for i, g in enumerate(gaps, 1):
-        L.append(f"| {i} | CH{g['channel0']+1:02d} | {g['codec']} | {fmt_ist(g['timestamp'])} | "
-                 f"{g['day']+1} | {g['slot']} | 0x{g['offset']:08X} | {g['length']:,} |")
+    L.append("## Orphaned gap slots (recoverable footage)")
+    L.append("| # | channel | slot | kind | recorder-native (IST) | offset |")
+    L.append("|---|---------|------|------|-----------------------|--------|")
+    for i, o in enumerate(orphans, 1):
+        L.append(f"| {i} | CH{o['channel0']+1:02d} | {o['slot']} | {o['kind']} | "
+                 f"{fmt_ist(o['timestamp'])} | 0x{o['offset']:08X} |")
     L.append("")
     os.makedirs(os.path.dirname(args.answer_key), exist_ok=True)
     with open(args.answer_key, "w") as f:

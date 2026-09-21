@@ -273,6 +273,26 @@ export async function getArtifact(artifactId: string): Promise<ArtifactRecord> {
   return res.json();
 }
 
+import { GapRecoveryRequest, GapRecoveryResponse } from '../types';
+
+/**
+ * Runs a staged L1->L2->L3 recovery over one detected gap's byte region and returns
+ * which time sub-ranges were recovered at which level and which remain missing.
+ */
+export async function recoverGap(evidenceId: string, req: GapRecoveryRequest): Promise<GapRecoveryResponse> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/recovery/gap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to recover gap');
+  }
+  return res.json();
+}
+
 export async function verifyArtifact(artifactId: string): Promise<ArtifactVerificationResult> {
   const res = await fetch(`${API_BASE}/artifacts/${artifactId}/verify`, { method: 'POST' });
   if (!res.ok) {

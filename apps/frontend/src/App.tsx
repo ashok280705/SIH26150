@@ -18,7 +18,7 @@ import { HexViewer } from './components/HexViewer';
 import { WelcomeModal } from './components/onboarding/WelcomeModal';
 import { TourOverlay } from './components/onboarding/TourOverlay';
 import { HelpModal } from './components/onboarding/HelpModal';
-import { Case, Evidence, Acquisition, SourceSafetyReport } from './types';
+import { Case, Evidence, Acquisition, SourceSafetyReport, GapRecoveryTarget } from './types';
 import { OnboardingState, TourContext } from './types/onboarding';
 import { getSourceSafety, getCase, listCaseEvidence } from './services/api';
 import { loadStorage, saveStorage, removeStorage } from './utils/storage';
@@ -40,6 +40,8 @@ export const App: React.FC = () => {
   const [safetyReport, setSafetyReport] = useState<SourceSafetyReport | null>(() => loadStorage('forensic_safety_report', null));
   const [ingestHash, setIngestHash] = useState<string | null>(() => loadStorage('forensic_ingest_hash', null));
   const [hexOffset, setHexOffset] = useState<number | undefined>(() => loadStorage('forensic_hex_offset', undefined));
+  // A gap chosen in the Preliminary Timeline to recover in the Recovery Engine.
+  const [recoveryTarget, setRecoveryTarget] = useState<GapRecoveryTarget | null>(null);
 
   // Sequential workflow state, keyed per evidence. Drives which analysis stages are unlocked.
   const [workflow, setWorkflow] = useState<WorkflowState>(() => loadWorkflow(loadStorage<Evidence | null>('forensic_active_evidence', null)?.id ?? null));
@@ -198,6 +200,11 @@ export const App: React.FC = () => {
     setActiveTab('hex_viewer');
   };
 
+  const handleNavigateToRecovery = (target: GapRecoveryTarget) => {
+    setRecoveryTarget(target);
+    setActiveTab('recovery');
+  };
+
   // Onboarding handlers
   const handleStartTour = () => {
     setOnboardingState('onboarding_in_progress');
@@ -343,6 +350,7 @@ export const App: React.FC = () => {
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
             onNavigateToHex={handleNavigateToHex}
+            onNavigateToRecovery={handleNavigateToRecovery}
             workflow={workflow}
             onWorkflow={patchWorkflow}
           />
@@ -356,6 +364,8 @@ export const App: React.FC = () => {
             onNavigateToHex={handleNavigateToHex} 
             workflow={workflow}
             onWorkflow={patchWorkflow}
+            gapTarget={recoveryTarget}
+            onClearGapTarget={() => setRecoveryTarget(null)}
           />
         )}
 

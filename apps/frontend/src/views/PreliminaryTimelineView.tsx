@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   ListTree, RefreshCw, HardDrive, CheckCircle2, AlertTriangle, ArrowRight,
-  Film, Clock, Scissors, Video, Play, ChevronUp, ChevronDown, Filter, Calendar,
+  Film, Clock, Scissors, Video, Play, ChevronUp, ChevronDown, Filter, Calendar, Wrench,
 } from 'lucide-react';
-import { Evidence, PipelineRun, RecordingSession } from '../types';
+import { Evidence, PipelineRun, RecordingSession, GapRecoveryTarget } from '../types';
 import { runFullPipeline, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { VideoPlayer } from '../components/video/VideoPlayer';
@@ -93,6 +93,10 @@ interface ClipRow {
   sizeBytes: number;
   offset: number;
   length: number;
+  // Gap rows only: the recoverable byte region and the channel's cadence.
+  scanStart?: number;
+  scanEnd?: number;
+  nominalSeconds?: number;
 }
 
 type SortKey = 'no' | 'channel' | 'start' | 'duration' | 'size';
@@ -154,6 +158,9 @@ function buildRows(sessions: RecordingSession[]): ClipRow[] {
         sizeBytes: 0,
         offset: g.next_offset,
         length: 0,
+        scanStart: g.previous_offset + g.previous_length,
+        scanEnd: g.next_offset,
+        nominalSeconds: s.nominal_segment_seconds || 0,
       });
     }
   }
@@ -198,11 +205,12 @@ interface Props {
   evidenceList?: Evidence[];
   onSelectEvidence?: (e: Evidence) => void;
   onNavigateToHex: (offset: number) => void;
+  onNavigateToRecovery?: (target: GapRecoveryTarget) => void;
   workflow?: WorkflowState;
   onWorkflow?: (patch: Partial<WorkflowState>) => void;
 }
 
-export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, onWorkflow, onNavigateToHex }) => {
+export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, onWorkflow, onNavigateToHex, onNavigateToRecovery }) => {
   const [run, setRun] = useState<PipelineRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -717,6 +725,28 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
                                   >
                                     {reconstructing === clip.key ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
                                     <span>{reconstructing === clip.key ? 'Remuxing…' : 'Play'}</span>
+                                  </button>
+                                )}
+                                {isGap && onNavigateToRecovery && (
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() =>
+                                      onNavigateToRecovery({
+                                        channel: clip.channel,
+                                        scanStart: clip.scanStart ?? clip.offset,
+                                        scanEnd: clip.scanEnd ?? clip.offset,
+                                        gapSeconds: clip.durationSec,
+                                        nominalSeconds: clip.nominalSeconds || 10,
+                                        startNative: clip.startNative,
+                                        startNormalized: clip.startNormalized,
+                                        endNative: clip.endNative,
+                                        endNormalized: clip.endNormalized,
+                                      })
+                                    }
+                                    title="Recover this gap in the Recovery Engine (staged L1 → L2 → L3)"
+                                  >
+                                    <Wrench size={12} />
+                                    <span>Recover</span>
                                   </button>
                                 )}
                                 <button

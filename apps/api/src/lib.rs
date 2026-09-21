@@ -65,6 +65,7 @@ pub fn app_router(state: AppState) -> Router {
         .route("/api/evidence/:id/detection", post(handlers::run_detection))
         .route("/api/evidence/:id/parsing", post(handlers::run_parsing))
         .route("/api/evidence/:id/recovery", post(handlers::run_recovery))
+        .route("/api/evidence/:id/recovery/gap", post(handlers::recover_gap))
         .route("/api/evidence/:id/timeline", get(handlers::get_timeline))
         .route("/api/evidence/:id/pipeline/run", post(handlers::run_full_pipeline))
         .route("/api/evidence/:id/report", get(handlers::get_report))
