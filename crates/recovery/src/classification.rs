@@ -10,7 +10,7 @@ use forensic_core::{DataState, RecoveryAssessment, RecoveryLevel, RecoveryStatus
 use parsers_core::storage::AllocationEvidence;
 use serde::{Deserialize, Serialize};
 
-use crate::claims::{ClaimMap, ClaimedRegion, UnclaimedKind};
+use crate::claims::{ClaimAccessibility, ClaimMap, ClaimedRegion, UnclaimedKind};
 
 /// What the OEM's index evidence says about one specific physical region.
 ///
@@ -24,12 +24,34 @@ pub enum RegionClaim {
     Indexed {
         /// Identifier of the claiming index entry, for provenance.
         recording_id: String,
+        /// The OEM partition the entry came from, when the storage is partitioned.
+        partition: Option<u32>,
         /// Channel, only if the index recorded one.
         channel: Option<u32>,
         /// Start time as unix seconds, only if the index recorded one.
         start_time_unix: Option<i64>,
+        /// End time as unix seconds, only if the index recorded one.
+        end_time_unix: Option<i64>,
         /// Allocation state the OEM structures record for that entry.
         allocation: AllocationEvidence,
+    },
+    /// OEM metadata describing these bytes **survives**, but the recorder does not reach the
+    /// recording through its current structures — the *available* case.
+    ///
+    /// This is stronger evidence than an unreferenced gap: the recorder's own structures still
+    /// say what channel this was and when it ran, they just no longer reach it. It is
+    /// nonetheless **not** a deletion finding; that needs
+    /// [`AllocationEvidence::FreeMarked`].
+    AvailableUnreferenced {
+        /// Identifier of the metadata entry that describes these bytes.
+        recording_id: String,
+        partition: Option<u32>,
+        channel: Option<u32>,
+        start_time_unix: Option<i64>,
+        end_time_unix: Option<i64>,
+        allocation: AllocationEvidence,
+        /// The OEM's own account of why the recording is no longer reachable.
+        reason: String,
     },
     /// An authoritative index governs these bytes and does **not** claim them. This is
     /// positive evidence of non-reference, and the only basis for an orphan finding.
@@ -57,7 +79,7 @@ impl RegionClaim {
     /// The lookup is the *only* way production code obtains a claim, which keeps
     /// "is this indexed?" answerable exclusively from index evidence.
     pub fn resolve(map: &ClaimMap, offset: u64) -> RegionClaim {
-        if let Some(claim) = map.claim_at(offset) {
+        if let Some(claim) = map.any_claim_at(offset) {
             return RegionClaim::from_claim(claim);
         }
         match map.kind_at(offset) {
@@ -93,13 +115,27 @@ impl RegionClaim {
         }
     }
 
-    /// Build an `Indexed` claim from a resolved [`ClaimedRegion`].
+    /// Build a claim from a resolved [`ClaimedRegion`], preserving whether the recorder still
+    /// reaches it.
     pub fn from_claim(claim: &ClaimedRegion) -> RegionClaim {
-        RegionClaim::Indexed {
-            recording_id: claim.recording_id.clone(),
-            channel: claim.channel,
-            start_time_unix: claim.start_time_unix,
-            allocation: claim.allocation,
+        match &claim.accessibility {
+            ClaimAccessibility::Accessible => RegionClaim::Indexed {
+                recording_id: claim.recording_id.clone(),
+                partition: claim.partition,
+                channel: claim.channel,
+                start_time_unix: claim.start_time_unix,
+                end_time_unix: claim.end_time_unix,
+                allocation: claim.allocation,
+            },
+            ClaimAccessibility::Available { reason } => RegionClaim::AvailableUnreferenced {
+                recording_id: claim.recording_id.clone(),
+                partition: claim.partition,
+                channel: claim.channel,
+                start_time_unix: claim.start_time_unix,
+                end_time_unix: claim.end_time_unix,
+                allocation: claim.allocation,
+                reason: reason.clone(),
+            },
         }
     }
 
@@ -107,9 +143,45 @@ impl RegionClaim {
     pub fn label(&self) -> &'static str {
         match self {
             RegionClaim::Indexed { .. } => "indexed",
+            RegionClaim::AvailableUnreferenced { .. } => "available-unreferenced",
             RegionClaim::UnclaimedWithinIndexScope { .. } => "unclaimed-in-index-scope",
             RegionClaim::OutsideIndexScope { .. } => "outside-index-scope",
             RegionClaim::NoIndexEvidence { .. } => "no-index-evidence",
+        }
+    }
+
+    /// Recorder metadata this claim supplies, when it supplies any.
+    ///
+    /// Returned as a tuple so the scanner populates a fragment's channel/time from exactly one
+    /// place, and so an unclaimed region's `None`s cannot be confused with zero.
+    #[allow(clippy::type_complexity)]
+    pub fn recorder_metadata(
+        &self,
+    ) -> Option<(&str, Option<u32>, Option<u32>, Option<i64>, Option<i64>)> {
+        match self {
+            RegionClaim::Indexed {
+                recording_id,
+                partition,
+                channel,
+                start_time_unix,
+                end_time_unix,
+                ..
+            }
+            | RegionClaim::AvailableUnreferenced {
+                recording_id,
+                partition,
+                channel,
+                start_time_unix,
+                end_time_unix,
+                ..
+            } => Some((
+                recording_id.as_str(),
+                *partition,
+                *channel,
+                *start_time_unix,
+                *end_time_unix,
+            )),
+            _ => None,
         }
     }
 }
@@ -147,14 +219,16 @@ pub struct StateAssessment {
 ///
 /// # Rules
 ///
-/// | index evidence                 | video          | state       |
-/// |--------------------------------|----------------|-------------|
-/// | indexed, allocated/unknown     | valid          | `Active`    |
-/// | indexed, free-marked           | valid          | `Deleted`   |
-/// | unclaimed within index scope   | valid          | `Orphaned`  |
-/// | outside index scope            | valid          | `Unindexed` |
-/// | no index evidence              | valid          | `Unindexed` |
-/// | any                            | signature only | `Corrupted` |
+/// | index evidence                    | video          | state       |
+/// |-----------------------------------|----------------|-------------|
+/// | indexed, allocated/unknown        | valid          | `Active`    |
+/// | indexed, free-marked              | valid          | `Deleted`   |
+/// | available (metadata, unreachable) | valid          | `Orphaned`  |
+/// | available **and** free-marked     | valid          | `Deleted`   |
+/// | unclaimed within index scope      | valid          | `Orphaned`  |
+/// | outside index scope               | valid          | `Unindexed` |
+/// | no index evidence                 | valid          | `Unindexed` |
+/// | any                               | signature only | `Corrupted` |
 ///
 /// Two rules are load-bearing and deliberately absent:
 ///
@@ -179,7 +253,8 @@ pub fn classify_region_state(
             recovery_status: RecoveryStatus::PartiallyRecoverable,
             recovery_level: match claim {
                 RegionClaim::Indexed { .. } => RecoveryLevel::L1,
-                RegionClaim::UnclaimedWithinIndexScope { .. } => RecoveryLevel::L2,
+                RegionClaim::AvailableUnreferenced { .. }
+                | RegionClaim::UnclaimedWithinIndexScope { .. } => RecoveryLevel::L2,
                 _ => RecoveryLevel::L3,
             },
             reason: format!(
@@ -212,6 +287,43 @@ pub fn classify_region_state(
             recovery_level: RecoveryLevel::L1,
             reason: format!(
                 "Region is claimed by authoritative index entry {recording_id} (allocation: {allocation:?}) and valid video was validated there"
+            ),
+        },
+        // Available metadata that the OEM *also* marks free is the one case where a deletion
+        // finding is supported, and it is supported by the allocation field, not by
+        // unreachability.
+        RegionClaim::AvailableUnreferenced {
+            recording_id,
+            allocation: AllocationEvidence::FreeMarked,
+            reason,
+            ..
+        } => StateAssessment {
+            data_state: DataState::Deleted,
+            recovery_status: RecoveryStatus::Recoverable,
+            recovery_level: RecoveryLevel::L2,
+            reason: format!(
+                "OEM metadata entry {recording_id} still describes this region and the OEM \
+                 structures mark it free, which is explicit deallocation evidence; valid video is \
+                 still physically present. Reachability: {reason}"
+            ),
+        },
+        RegionClaim::AvailableUnreferenced {
+            recording_id,
+            partition,
+            reason,
+            ..
+        } => StateAssessment {
+            data_state: DataState::Orphaned,
+            recovery_status: RecoveryStatus::Recoverable,
+            recovery_level: RecoveryLevel::L2,
+            reason: format!(
+                "Valid video is physically present here and the recorder's own metadata entry \
+                 {recording_id}{partition_note} still describes it, but the recording is not part \
+                 of the accessible recording set: {reason}. Reported as orphaned; this is not \
+                 evidence of deletion, and no deallocation marker was found",
+                partition_note = partition
+                    .map(|p| format!(" in partition {p}"))
+                    .unwrap_or_default()
             ),
         },
         RegionClaim::UnclaimedWithinIndexScope { index_entry_count } => StateAssessment {
@@ -309,9 +421,23 @@ mod tests {
     fn indexed(allocation: AllocationEvidence) -> RegionClaim {
         RegionClaim::Indexed {
             recording_id: "didx#2".into(),
+            partition: Some(0),
             channel: Some(1),
             start_time_unix: Some(1_700_000_000),
+            end_time_unix: None,
             allocation,
+        }
+    }
+
+    fn available(allocation: AllocationEvidence) -> RegionClaim {
+        RegionClaim::AvailableUnreferenced {
+            recording_id: "dahua:p0:blk7".into(),
+            partition: Some(0),
+            channel: Some(3),
+            start_time_unix: Some(1_700_000_000),
+            end_time_unix: Some(1_700_000_600),
+            allocation,
+            reason: "no traversal from a declared first block reached these blocks".into(),
         }
     }
 
@@ -368,6 +494,66 @@ mod tests {
     }
 
     #[test]
+    fn available_metadata_plus_valid_video_is_orphaned_never_deleted() {
+        for allocation in [AllocationEvidence::Unknown, AllocationEvidence::Allocated] {
+            let a = classify_region_state(&available(allocation), VALID).unwrap();
+            assert_eq!(a.data_state, DataState::Orphaned, "allocation {allocation:?}");
+            assert_ne!(a.data_state, DataState::Deleted);
+            assert_ne!(a.data_state, DataState::Active, "available is not active");
+            assert_eq!(a.recovery_level, RecoveryLevel::L2);
+            assert_eq!(a.recovery_status, RecoveryStatus::Recoverable);
+            assert!(
+                a.reason.contains("not evidence of deletion"),
+                "the finding must say so: {}",
+                a.reason
+            );
+            assert!(a.reason.contains("dahua:p0:blk7"), "cite the metadata entry");
+            assert!(a.reason.contains("partition 0"));
+        }
+    }
+
+    #[test]
+    fn available_metadata_that_is_also_free_marked_is_deleted_on_the_allocation_evidence() {
+        // The deletion conclusion comes from the free marker, not from unreachability.
+        let a = classify_region_state(&available(AllocationEvidence::FreeMarked), VALID).unwrap();
+        assert_eq!(a.data_state, DataState::Deleted);
+        assert!(a.reason.contains("explicit deallocation evidence"));
+        // Still recoverable: the two dimensions stay independent.
+        assert_eq!(a.recovery_status, RecoveryStatus::Recoverable);
+    }
+
+    #[test]
+    fn available_metadata_with_only_a_signature_is_corrupted_at_l2() {
+        let a = classify_region_state(&available(AllocationEvidence::Unknown), SIGNATURE_ONLY)
+            .unwrap();
+        assert_eq!(a.data_state, DataState::Corrupted);
+        assert_eq!(a.recovery_level, RecoveryLevel::L2);
+        assert_eq!(a.recovery_status, RecoveryStatus::PartiallyRecoverable);
+    }
+
+    #[test]
+    fn claims_expose_their_recorder_metadata_and_unclaimed_regions_expose_none() {
+        let claim = available(AllocationEvidence::Unknown);
+        let (id, partition, channel, start, end) = claim.recorder_metadata().unwrap();
+        assert_eq!(id, "dahua:p0:blk7");
+        assert_eq!(partition, Some(0));
+        assert_eq!(channel, Some(3));
+        assert_eq!(start, Some(1_700_000_000));
+        assert_eq!(end, Some(1_700_000_600));
+
+        assert!(RegionClaim::UnclaimedWithinIndexScope {
+            index_entry_count: 1
+        }
+        .recorder_metadata()
+        .is_none());
+        assert!(RegionClaim::NoIndexEvidence {
+            reason: "x".into()
+        }
+        .recorder_metadata()
+        .is_none());
+    }
+
+    #[test]
     fn index_entry_marked_free_is_deleted_not_orphaned() {
         let a = classify_region_state(&indexed(AllocationEvidence::FreeMarked), VALID).unwrap();
         assert_eq!(a.data_state, DataState::Deleted);
@@ -416,6 +602,8 @@ mod tests {
     #[test]
     fn overwritten_is_never_inferred_from_missing_index_linkage() {
         for claim in [
+            available(AllocationEvidence::Unknown),
+            available(AllocationEvidence::FreeMarked),
             RegionClaim::UnclaimedWithinIndexScope { index_entry_count: 2 },
             RegionClaim::OutsideIndexScope { reason: "x".into() },
             RegionClaim::NoIndexEvidence { reason: "x".into() },

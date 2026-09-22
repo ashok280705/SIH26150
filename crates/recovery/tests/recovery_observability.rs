@@ -76,6 +76,7 @@ fn the_pipeline_emits_the_forensic_engineering_counters() {
             parser: &parser,
             bounds: &bounds(),
             scan_window: None,
+            read_window_bytes: None,
         })
         .unwrap();
 
@@ -140,9 +141,16 @@ fn the_pipeline_emits_the_forensic_engineering_counters() {
         logged.contains("recovery candidate produced"),
         "each candidate decision must be traceable:\n{logged}"
     );
+    // Both orphan discovery paths are distinguishable in the log. They are different evidence:
+    // one is a metadata-described recording the recorder no longer reaches, the other is video in
+    // a region the block table governs but does not claim.
+    assert!(
+        logged.contains("available-metadata-probe"),
+        "the metadata-driven orphan path must be visible:\n{logged}"
+    );
     assert!(
         logged.contains("unclaimed-scan-in-index-scope"),
-        "the orphan discovery method must be visible:\n{logged}"
+        "the unclaimed-in-scope orphan path must be visible:\n{logged}"
     );
     assert!(
         logged.contains("index-claimed-probe"),
@@ -152,6 +160,17 @@ fn the_pipeline_emits_the_forensic_engineering_counters() {
         logged.contains("Orphaned"),
         "the orphan state must be visible in the per-candidate log:\n{logged}"
     );
+    // Structural recovery is distinguishable from window classification.
+    assert!(
+        logged.contains("oem-container-record"),
+        "the framing that bounded each fragment must be visible:\n{logged}"
+    );
+    for field in ["available_claim_count", "available_bytes", "container_record_candidates"] {
+        assert!(
+            logged.contains(field),
+            "the run summary is missing `{field}`.\nEmitted:\n{logged}"
+        );
+    }
 
     // ── Byte totals in the log agree with the returned metrics ──────────────
     assert!(
@@ -172,7 +191,16 @@ fn the_pipeline_emits_the_forensic_engineering_counters() {
     // The check is for a long unbroken run of hex digits, which is what any byte dump
     // looks like and which nothing in this pipeline's legitimate output produces (offsets
     // are short hex, counts are decimal).
-    let longest_hex_run = logged
+    //
+    // `fragment_id` is excluded before the scan. It is a digest of the evidence id and the
+    // fragment's physical range — a derived identifier, not evidence content — and stripping it
+    // keeps the heuristic tight on everything else rather than forcing the threshold up.
+    let scanned: String = logged
+        .split_whitespace()
+        .filter(|tok| !tok.starts_with("fragment_id="))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let longest_hex_run = scanned
         .split(|c: char| !c.is_ascii_hexdigit())
         .map(|s| s.len())
         .max()

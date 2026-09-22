@@ -42,7 +42,7 @@ use parsers_core::storage::IndexAuthority;
 
 use crate::claims::UnclaimedKind;
 use crate::fragment::DiscoveredFragment;
-use crate::levels::{scan_target, ScanContext};
+use crate::levels::{scan_target_all, ScanContext, DEFAULT_SCAN_WINDOW_BYTES};
 use crate::metrics::RecoveryMetrics;
 use crate::plan::{plan_recovery, RecoveryPlan};
 
@@ -70,6 +70,35 @@ pub struct RecoveryRequest<'a> {
     /// A window here narrows *reasoning*, not just reading: claims are clipped to it and
     /// the complement is computed within it, so absolute physical offsets are preserved.
     pub scan_window: Option<Region>,
+    /// Largest number of bytes one classification read pulls into memory.
+    ///
+    /// A memory/throughput knob, never a semantic limit: an OEM container record longer than
+    /// this is still described in full from its own declared length. `None` uses
+    /// [`DEFAULT_SCAN_WINDOW_BYTES`].
+    pub read_window_bytes: Option<u64>,
+}
+
+impl<'a> RecoveryRequest<'a> {
+    /// A request over the whole evidence item with the default read window.
+    pub fn new(
+        evidence_id: EvidenceId,
+        reader: &'a dyn EvidenceReader,
+        profile: &'a OemProfile,
+        oem_key: &'a str,
+        parser: &'a dyn Parser,
+        bounds: &'a RecoveryBounds,
+    ) -> Self {
+        Self {
+            evidence_id,
+            reader,
+            profile,
+            oem_key,
+            parser,
+            bounds,
+            scan_window: None,
+            read_window_bytes: None,
+        }
+    }
 }
 
 /// The full result of a recovery run.
@@ -129,6 +158,7 @@ impl RecoveryEngine {
             parser,
             bounds,
             scan_window,
+            read_window_bytes: scan_window_bytes,
         } = request;
 
         let disk = Region::new(0, reader.len())?;
@@ -217,6 +247,7 @@ impl RecoveryEngine {
             profile_hash: profile.profile_hash.clone(),
             parser_id: parser.id().to_string(),
             parser_version: parser.version().to_string(),
+            max_window_bytes: scan_window_bytes.unwrap_or(DEFAULT_SCAN_WINDOW_BYTES),
         };
 
         let mut run = RecoveryRun {
@@ -278,40 +309,62 @@ impl RecoveryEngine {
             run.searched_regions.push(target.region);
             run.searched_bytes = run.searched_bytes.saturating_add(target.region.length);
 
-            match scan_target(reader, profile, parser, &ctx, target) {
-                Ok(Some(finding)) => {
-                    let state = finding.candidate.data_state;
-                    metrics.record_state(state);
-                    run.candidate_count += 1;
-                    let structurally_valid = matches!(
-                        finding.candidate.validation.structure.state,
-                        ValidationStateKind::Pass
-                    );
-                    if structurally_valid {
-                        run.accepted += 1;
-                    } else {
-                        // Surfaced for review, never silently dropped.
-                        run.rejected += 1;
-                        metrics.validation_failures += 1;
+            // One target can hold many records. `scan_target_all` reports every one of them,
+            // so a sweep chunk is no longer forced to stand for exactly one recording.
+            match scan_target_all(reader, profile, parser, &ctx, target) {
+                Ok(findings) => {
+                    for finding in findings {
+                        if run.candidate_count >= bounds.max_candidates {
+                            run.truncated = true;
+                            break;
+                        }
+                        let state = finding.candidate.data_state;
+                        metrics.record_state(state);
+                        run.candidate_count += 1;
+                        let structurally_valid = matches!(
+                            finding.candidate.validation.structure.state,
+                            ValidationStateKind::Pass
+                        );
+                        if structurally_valid {
+                            run.accepted += 1;
+                        } else {
+                            // Surfaced for review, never silently dropped.
+                            run.rejected += 1;
+                            metrics.validation_failures += 1;
+                        }
+                        if finding.fragment.discovery_method
+                            == crate::fragment::DiscoveryMethod::AvailableMetadataProbe
+                        {
+                            metrics.available_candidate_count += 1;
+                        }
+                        if matches!(
+                            finding.fragment.framing,
+                            crate::fragment::FragmentFraming::OemContainerRecord
+                        ) {
+                            metrics.container_record_candidate_count += 1;
+                        }
+                        tracing::debug!(
+                            target: "recovery::candidate",
+                            scanned_offset = target.region.offset,
+                            scanned_length = target.region.length,
+                            fragment_offset = finding.fragment.physical_region.offset,
+                            fragment_length = finding.fragment.physical_region.length,
+                            fragment_id = %finding.fragment.fragment_id,
+                            claim = target.claim.label(),
+                            discovery = target.discovery_method.label(),
+                            framing = finding.fragment.framing.label(),
+                            data_state = ?state,
+                            recovery_status = ?finding.candidate.recovery_status,
+                            level = ?finding.candidate.recovery_level,
+                            codec = %finding.fragment.codec,
+                            oem_format_recognised = finding.oem_format_recognised,
+                            reason = %finding.candidate.provenance.validation_state.reason,
+                            "recovery candidate produced"
+                        );
+                        candidates.push(finding.candidate);
+                        fragments.push(finding.fragment);
                     }
-                    tracing::debug!(
-                        target: "recovery::candidate",
-                        offset = target.region.offset,
-                        length = target.region.length,
-                        claim = target.claim.label(),
-                        discovery = target.discovery_method.label(),
-                        data_state = ?state,
-                        recovery_status = ?finding.candidate.recovery_status,
-                        level = ?finding.candidate.recovery_level,
-                        codec = %finding.fragment.codec,
-                        oem_format_recognised = finding.oem_format_recognised,
-                        reason = %finding.candidate.provenance.validation_state.reason,
-                        "recovery candidate produced"
-                    );
-                    candidates.push(finding.candidate);
-                    fragments.push(finding.fragment);
                 }
-                Ok(None) => {}
                 Err(e) => {
                     // Hostile/unreadable region: record and keep going.
                     tracing::debug!(
@@ -397,6 +450,8 @@ fn build_metrics(plan: &RecoveryPlan, oem_key: &str, profile: &OemProfile) -> Re
         index_entry_count: plan.claim_map.claims.len(),
         claimed_range_count: plan.claim_map.claimed.count(),
         claimed_bytes: plan.claim_map.claimed_bytes(),
+        available_claim_count: plan.claim_map.available_claims.len(),
+        available_bytes: plan.claim_map.available_bytes(),
         unclaimed_region_count: plan.claim_map.unclaimed.count(),
         unclaimed_bytes: plan.claim_map.unclaimed_bytes(),
         orphan_eligible_region_count: orphan_regions.len(),

@@ -51,7 +51,9 @@ pub mod validation;
 pub mod video;
 pub mod wrap_storage;
 
-pub use claims::{build_claim_map, ClaimMap, ClaimedRegion, UnclaimedKind, UnclaimedRegion};
+pub use claims::{
+    build_claim_map, ClaimAccessibility, ClaimMap, ClaimedRegion, UnclaimedKind, UnclaimedRegion,
+};
 pub use classification::{
     classify_recovery, classify_region_state, RegionClaim, StateAssessment, VideoEvidence,
 };
@@ -60,8 +62,12 @@ pub use ffmpeg::{
     hash_file_sha256, reverify_artifact_sha256, FfmpegInfo, FfmpegService, ProbeResult,
     RemuxOptions, RemuxResult,
 };
-pub use fragment::{DiscoveredFragment, DiscoveryMethod, FieldEvidence};
-pub use levels::{scan_target, ScanContext, ScanFinding};
+pub use fragment::{
+    DiscoveredFragment, DiscoveryMethod, FieldEvidence, FragmentFraming, VideoFragment,
+};
+pub use levels::{
+    scan_target, scan_target_all, ScanContext, ScanFinding, DEFAULT_SCAN_WINDOW_BYTES,
+};
 pub use metrics::RecoveryMetrics;
 pub use plan::{plan_recovery, RecoveryPlan, ScanTarget, CLAIM_PROBE_BYTES, UNCLAIMED_CHUNK_BYTES};
 pub use reconstructor::{MediaMetadata, ReconstructionOutput, VideoCodec, VideoReconstructor};

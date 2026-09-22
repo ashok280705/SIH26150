@@ -1,101 +1,54 @@
-//! # DHFS storage geometry and DIDX recording index readers
+//! # Provisional flat-superblock + `DIDX` fallback
 //!
-//! This module is the Dahua-specific half of the OEM/generic boundary. It turns raw
-//! evidence bytes into [`StorageGeometry`] and [`RecordingIndex`] — plain physical byte
-//! ranges plus explicitly-optional metadata — so the recovery engine never has to know
-//! what "DHFS", "DHAV" or "DIDX" mean.
+//! This module reads a **flat** Dahua-shaped volume: descriptive geometry fields at fixed
+//! superblock offsets, and one global `DIDX` recording-index table located through them.
 //!
-//! ## Forensic rules this module follows
+//! ## This is a fallback, and it says so
 //!
-//! * Every structure offset comes from the versioned profile `[layout]` table. Nothing
-//!   OEM-factual is a source constant.
-//! * Reads are bounds-checked against the evidence length before use; hostile or
-//!   truncated images yield a degraded [`IndexAuthority`], never a panic and never a
-//!   fabricated entry.
-//! * A field that cannot be read is `None`. A field that can be read but is implausible
-//!   (zero sector size, index before the video region, region past end of evidence) is
-//!   also `None`, with the reason recorded in the returned [`ValidationState`].
-//! * [`IndexAuthority::Authoritative`] is granted only when the `DIDX` header verified,
-//!   the declared entry count is non-zero, and **every** declared entry parsed in-bounds.
-//!   Any shortfall degrades to [`IndexAuthority::Partial`], which downstream
-//!   classification treats as "absence proves nothing".
+//! It is **not** the DHFS 4.1 structure set. A real DHFS 4.1 volume keeps its authoritative
+//! geometry in the partition table at `0x3C00` and its recording metadata in per-partition
+//! block tables; that is what [`crate::volume`] reads, and it is what runs first.
+//!
+//! This path is retained because the platform's corpus contains volumes that present the flat
+//! structures, and removing a working reader would lose that capability. It is entered only
+//! when:
+//!
+//! 1. the DHFS 4.1 partition table did **not** verify, **and**
+//! 2. a `DIDX` header **does** verify at the superblock-declared offset.
+//!
+//! Every geometry and index value it produces is labelled as coming from the provisional
+//! model, so it can never be mistaken for a reading of the real filesystem.
+//!
+//! ## Forensic rules
+//!
+//! * Every structure offset comes from the versioned profile `[layout]` table.
+//! * Reads are bounds-checked before use; a truncated or hostile image yields a degraded
+//!   [`IndexAuthority`], never a panic and never a fabricated entry.
+//! * A field that cannot be read is `None`. A field that reads but is implausible (zero sector
+//!   size, index before the video region, region past end of evidence) is also `None`, with the
+//!   reason recorded.
+//! * [`IndexAuthority::Authoritative`] requires the `DIDX` header verified, a non-zero declared
+//!   count, and **every** declared entry parsed in bounds. Anything less degrades to
+//!   [`IndexAuthority::Partial`], which downstream classification treats as "absence proves
+//!   nothing".
+//! * Container framing inside a claimed region is separated by the one authoritative DHAV
+//!   parser in [`crate::dhav`] — never by a second, divergent notion of where a payload starts.
 
 use std::collections::BTreeMap;
 
 use evidence_reader::EvidenceReader;
-use forensic_core::{ForensicError, OemProfile, Region, ValidationState, ValidationStateKind};
+use forensic_core::{ForensicError, OemProfile, Region, ValidationStateKind};
 use parsers_core::storage::{
     AllocationEvidence, CircularBufferEvidence, IndexAuthority, IndexedRecording, RecordingIndex,
     StorageGeometry,
 };
 
-/// Build a `ValidationState` without a fallible call site.
-///
-/// `ValidationState::new` only rejects an empty reason. Every reason produced here is
-/// non-empty by construction, and the fallback substitutes a static non-empty reason so
-/// this helper is total — evidence handling never gains a panic path.
-fn vs(kind: ValidationStateKind, reason: impl Into<String>, op: &str, subject: &str) -> ValidationState {
-    let reason = reason.into();
-    ValidationState::new(kind, reason, op, subject).unwrap_or_else(|_| {
-        ValidationState::new(kind, "reason unavailable", op, subject)
-            .expect("static fallback reason is non-empty")
-    })
-}
+use crate::layout::{ascii_at, key, magic, u32_at, u64_at, u64_from, usize_from, vs};
 
-/// Read an i64 from the profile `[layout]` table, falling back to a documented default.
-///
-/// A missing key is a profile-completeness problem, not an evidence problem, so the
-/// fallback keeps the parser operational on older profile revisions rather than failing
-/// the whole run. Negative values are rejected because every layout value is an offset
-/// or a size.
-fn layout_u64(profile: &OemProfile, key: &str, fallback: u64) -> u64 {
-    match profile.layout.get(key) {
-        Some(v) if *v >= 0 => *v as u64,
-        _ => fallback,
-    }
-}
+/// Tag applied to every value this module produces, so the provisional model is visible.
+const MODEL_TAG: &str = "provisional flat superblock + DIDX model (not the DHFS 4.1 structure set)";
 
-fn layout_usize(profile: &OemProfile, key: &str, fallback: usize) -> usize {
-    layout_u64(profile, key, fallback as u64) as usize
-}
-
-/// Little-endian u32 at `off` inside `buf`, or `None` if out of range.
-fn u32_at(buf: &[u8], off: usize) -> Option<u32> {
-    buf.get(off..off + 4)
-        .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
-}
-
-/// Little-endian u64 at `off` inside `buf`, or `None` if out of range.
-fn u64_at(buf: &[u8], off: usize) -> Option<u64> {
-    buf.get(off..off + 8).map(|s| {
-        u64::from_le_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]])
-    })
-}
-
-/// Trim a fixed-width ASCII field; returns `None` when the field is absent or blank.
-fn ascii_at(buf: &[u8], off: usize, len: usize) -> Option<String> {
-    let s = buf.get(off..off.saturating_add(len))?;
-    let text = String::from_utf8_lossy(s)
-        .trim_matches('\0')
-        .trim()
-        .to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
-/// Resolve the profile-declared magic pattern for a signature name.
-fn magic_bytes(profile: &OemProfile, name: &str) -> Option<Vec<u8>> {
-    profile
-        .signatures
-        .iter()
-        .find(|s| s.name == name)
-        .and_then(|s| s.pattern_bytes().ok())
-}
-
-/// Parsed DHFS superblock fields, before plausibility filtering.
+/// Parsed flat superblock fields, before plausibility filtering.
 struct Superblock {
     sector_size: Option<u64>,
     block_size: Option<u64>,
@@ -108,91 +61,105 @@ struct Superblock {
     volume_label: Option<String>,
 }
 
-/// Read and verify the DHFS superblock at offset 0.
+/// Read the flat superblock at offset 0.
 ///
-/// Returns `Ok(None)` when the superblock magic is absent — i.e. this evidence is not a
-/// DHFS volume, so no geometry can be claimed from it.
+/// Returns `Ok(None)` when the DHFS family magic is absent — this evidence is not a Dahua
+/// volume at all, so no geometry can be claimed from it.
 fn read_superblock(
     reader: &dyn EvidenceReader,
     profile: &OemProfile,
 ) -> Result<Option<Superblock>, ForensicError> {
-    let sb_size = layout_u64(profile, "superblock_size", 512);
+    let sb_size = u64_from(profile, key::SUPERBLOCK_SIZE, 512);
     if sb_size == 0 || reader.len() < sb_size {
         return Ok(None);
     }
 
-    let magic = match magic_bytes(profile, "dhfs_magic") {
-        Some(m) if !m.is_empty() => m,
-        // Without a profile-declared magic the parser has no way to verify the
-        // structure, and verifying is the whole point. Refuse rather than guess.
-        _ => return Ok(None),
+    let family = match magic(profile, "dhfs_magic") {
+        Some(m) => m,
+        // Without a profile-declared magic there is no way to verify the structure, and
+        // verifying is the whole point. Refuse rather than guess.
+        None => return Ok(None),
     };
 
-    // A short read here means the image is truncated inside its own superblock.
     let buf = match reader.read_exact_at(0, sb_size as usize) {
         Ok(b) => b,
+        // A short read here means the image is truncated inside its own first sector.
         Err(_) => return Ok(None),
     };
-    if !buf.starts_with(&magic) {
+    if !buf.starts_with(&family) {
         return Ok(None);
     }
 
-    let sector_size = u32_at(&buf, layout_usize(profile, "superblock_sector_size_offset", 8))
-        .map(u64::from);
-    let block_size =
-        u32_at(&buf, layout_usize(profile, "superblock_block_size_offset", 12)).map(u64::from);
-    let total_blocks = u64_at(&buf, layout_usize(profile, "superblock_total_blocks_offset", 16));
-    let video_start = u64_at(&buf, layout_usize(profile, "superblock_dhav_start_offset", 24));
-    let index_offset = u64_at(&buf, layout_usize(profile, "superblock_index_offset_offset", 32));
-    let ctime_unix = u64_at(&buf, layout_usize(profile, "superblock_ctime_offset", 40));
-
-    let model = ascii_at(
-        &buf,
-        layout_usize(profile, "superblock_model_offset", 48),
-        layout_usize(profile, "superblock_model_len", 16),
-    );
-    let serial = ascii_at(
-        &buf,
-        layout_usize(profile, "superblock_serial_offset", 64),
-        layout_usize(profile, "superblock_serial_len", 32),
-    );
-    let volume_label = ascii_at(
-        &buf,
-        layout_usize(profile, "superblock_volume_label_offset", 96),
-        layout_usize(profile, "superblock_volume_label_len", 16),
-    );
-
     Ok(Some(Superblock {
-        sector_size,
-        block_size,
-        total_blocks,
-        video_start,
-        index_offset,
-        ctime_unix,
-        model,
-        serial,
-        volume_label,
+        sector_size: u32_at(&buf, usize_from(profile, key::SB_SECTOR_SIZE_OFFSET, 8))
+            .map(u64::from),
+        block_size: u32_at(&buf, usize_from(profile, key::SB_BLOCK_SIZE_OFFSET, 12)).map(u64::from),
+        total_blocks: u64_at(&buf, usize_from(profile, key::SB_TOTAL_BLOCKS_OFFSET, 16)),
+        video_start: u64_at(&buf, usize_from(profile, key::SB_DHAV_START_OFFSET, 24)),
+        index_offset: u64_at(&buf, usize_from(profile, key::SB_INDEX_OFFSET_OFFSET, 32)),
+        ctime_unix: u64_at(&buf, usize_from(profile, key::SB_CTIME_OFFSET, 40)),
+        model: ascii_at(
+            &buf,
+            usize_from(profile, key::SB_MODEL_OFFSET, 48),
+            usize_from(profile, key::SB_MODEL_LEN, 16),
+        ),
+        serial: ascii_at(
+            &buf,
+            usize_from(profile, key::SB_SERIAL_OFFSET, 64),
+            usize_from(profile, key::SB_SERIAL_LEN, 32),
+        ),
+        volume_label: ascii_at(
+            &buf,
+            usize_from(profile, key::SB_VOLUME_LABEL_OFFSET, 96),
+            usize_from(profile, key::SB_VOLUME_LABEL_LEN, 16),
+        ),
     }))
 }
 
-/// Derive [`StorageGeometry`] from the DHFS superblock.
+/// Whether a `DIDX` header verifies at the superblock-declared index offset.
 ///
-/// Returns `Ok(None)` when the volume is not DHFS. Individual fields degrade to `None`
-/// independently, so a damaged `index_offset` does not cost us the block size.
+/// This is the gate [`crate::volume`] uses to decide whether the flat fallback applies at
+/// all. It deliberately verifies the structure rather than merely finding a plausible offset.
+pub fn didx_header_verifies(
+    reader: &dyn EvidenceReader,
+    profile: &OemProfile,
+) -> Result<bool, ForensicError> {
+    let Some(sb) = read_superblock(reader, profile)? else {
+        return Ok(false);
+    };
+    let Some(tag) = magic(profile, "didx_magic") else {
+        return Ok(false);
+    };
+    let Some(start) = sb.index_offset else {
+        return Ok(false);
+    };
+    let need = tag.len() as u64;
+    if start >= reader.len() || start.saturating_add(need) > reader.len() {
+        return Ok(false);
+    }
+    Ok(reader
+        .read_exact_at(start, need as usize)
+        .map(|b| b.starts_with(&tag))
+        .unwrap_or(false))
+}
+
+/// Derive [`StorageGeometry`] from the flat superblock.
+///
+/// Returns `Ok(None)` when the volume carries no DHFS family magic. Individual fields degrade
+/// to `None` independently, so a damaged `index_offset` does not cost us the block size.
 pub fn read_storage_geometry(
     reader: &dyn EvidenceReader,
     profile: &OemProfile,
 ) -> Result<Option<StorageGeometry>, ForensicError> {
-    let sb = match read_superblock(reader, profile)? {
-        Some(sb) => sb,
-        None => return Ok(None),
+    let Some(sb) = read_superblock(reader, profile)? else {
+        return Ok(None);
     };
 
     let disk_len = reader.len();
     let mut notes: Vec<String> = Vec::new();
 
-    // Plausibility filters. A value that fails one is reported as unknown, with the
-    // reason surfaced, rather than silently propagated into range arithmetic.
+    // Plausibility filters. A value that fails one is reported as unknown, with the reason
+    // surfaced, rather than silently propagated into range arithmetic.
     let sector_size = sb
         .sector_size
         .filter(|s| *s > 0 && s.is_power_of_two() && *s <= 65536);
@@ -210,31 +177,29 @@ pub fn read_storage_geometry(
         ));
     }
 
-    // The index region: [index_offset, index_offset + header + count*entry_size).
-    // Its true length needs the entry count, so it is read here directly from the header.
-    let index_magic = magic_bytes(profile, "didx_magic");
-    let header_size = layout_u64(profile, "index_header_size", 16);
-    let entry_size = layout_u64(profile, "index_entry_size", 32);
-    let count_off = layout_u64(profile, "index_entry_count_offset", 4);
+    // The index region: [index_offset, index_offset + header + count*entry_size). Its true
+    // length needs the entry count, so the header is read here directly.
+    let index_tag = magic(profile, "didx_magic");
+    let header_size = u64_from(profile, key::INDEX_HEADER_SIZE, 16);
+    let entry_size = u64_from(profile, key::INDEX_ENTRY_SIZE, 32);
+    let count_off = u64_from(profile, key::INDEX_ENTRY_COUNT_OFFSET, 4);
 
     let mut index_region: Option<Region> = None;
     let mut index_start_verified: Option<u64> = None;
-    if let (Some(start), Some(magic)) = (sb.index_offset, index_magic.as_ref()) {
+    if let (Some(start), Some(tag)) = (sb.index_offset, index_tag.as_ref()) {
         let want = header_size.max(count_off.saturating_add(4));
         if start < disk_len && start.saturating_add(want) <= disk_len {
             if let Ok(hdr) = reader.read_exact_at(start, want as usize) {
-                if hdr.starts_with(magic) {
+                if hdr.starts_with(tag) {
                     index_start_verified = Some(start);
                     let count = u32_at(&hdr, count_off as usize).unwrap_or(0) as u64;
-                    let declared_len =
-                        header_size.saturating_add(count.saturating_mul(entry_size));
-                    // Clamp to the evidence: a declared length must never describe bytes
-                    // outside the image.
+                    let declared_len = header_size.saturating_add(count.saturating_mul(entry_size));
+                    // A declared length must never describe bytes outside the image.
                     let clamped = declared_len.min(disk_len.saturating_sub(start));
                     index_region = Region::new(start, clamped).ok();
                 } else {
                     notes.push(format!(
-                        "superblock index_offset 0x{start:X} does not carry the index header magic"
+                        "superblock index_offset 0x{start:X} does not carry the DIDX header magic"
                     ));
                 }
             }
@@ -245,10 +210,10 @@ pub fn read_storage_geometry(
         }
     }
 
-    // The video payload region runs from the declared video start to the start of the
-    // index when the index was verified, otherwise to end of evidence. It is only
-    // claimed when the bounds are internally consistent — this region is what licenses
-    // an orphan finding, so a sloppy bound here would be a forensic error.
+    // The video payload region runs from the declared video start to the start of the index
+    // when the index verified, otherwise to end of evidence. It is claimed only when the
+    // bounds are internally consistent — this region is what licenses an orphan finding, so a
+    // sloppy bound here would be a forensic error.
     let video_region = match sb.video_start {
         Some(start) if start < disk_len => {
             let end = index_start_verified
@@ -258,7 +223,8 @@ pub fn read_storage_geometry(
                 Region::new(start, end - start).ok()
             } else {
                 notes.push(format!(
-                    "declared video start 0x{start:X} is not before the index region; video region reported as unknown"
+                    "declared video start 0x{start:X} is not before the index region; video region \
+                     reported as unknown"
                 ));
                 None
             }
@@ -273,11 +239,13 @@ pub fn read_storage_geometry(
     };
 
     let metadata_region = sector_size
-        .or(Some(layout_u64(profile, "superblock_size", 512)))
+        .or(Some(u64_from(profile, key::SUPERBLOCK_SIZE, 512)))
         .filter(|s| *s <= disk_len)
         .and_then(|s| Region::new(0, s).ok());
 
     let mut oem_fields: BTreeMap<String, String> = BTreeMap::new();
+    oem_fields.insert("structural_model".into(), "flat-didx-fallback".into());
+    oem_fields.insert("structural_model_note".into(), MODEL_TAG.into());
     if let Some(v) = sb.model {
         oem_fields.insert("model".into(), v);
     }
@@ -295,24 +263,33 @@ pub fn read_storage_geometry(
     }
 
     let mut reason = format!(
-        "DHFS superblock verified at offset 0; video_region={}, index_region={}, block_size={}, sector_size={}",
-        video_region.map(|r| r.to_string()).unwrap_or_else(|| "unknown".into()),
-        index_region.map(|r| r.to_string()).unwrap_or_else(|| "unknown".into()),
-        block_size.map(|b| b.to_string()).unwrap_or_else(|| "unknown".into()),
-        sector_size.map(|s| s.to_string()).unwrap_or_else(|| "unknown".into()),
+        "{MODEL_TAG}: superblock verified at offset 0; video_region={}, index_region={}, \
+         block_size={}, sector_size={}",
+        video_region
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        index_region
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        block_size
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        sector_size
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".into()),
     );
     if !notes.is_empty() {
         reason.push_str("; ");
         reason.push_str(&notes.join("; "));
     }
 
-    // Geometry with an unreadable video region cannot support claim reasoning, so it is
-    // surfaced for review rather than passed off as a clean read.
-    let evidence = if video_region.is_some() && notes.is_empty() {
-        vs(ValidationStateKind::Pass, reason, "dhfs_storage_geometry", "superblock")
-    } else {
-        vs(ValidationStateKind::Review, reason, "dhfs_storage_geometry", "superblock")
-    };
+    // Geometry from a provisional model is never Pass: the model itself is the caveat.
+    let evidence = vs(
+        ValidationStateKind::Review,
+        reason,
+        "dhfs_flat_storage_geometry",
+        "flat_superblock",
+    );
 
     Ok(Some(StorageGeometry {
         physical_size: disk_len,
@@ -321,33 +298,32 @@ pub fn read_storage_geometry(
         metadata_region,
         block_size,
         sector_size,
-        // The DHFS structures this platform has evidence for carry no write cursor or
-        // wrap flag. Reporting anything other than Unknown here would be fabrication.
+        // The flat structures carry no write cursor or wrap flag. Reporting anything other
+        // than Unknown here would be fabrication.
         circular_buffer: CircularBufferEvidence::Unknown,
         oem_fields,
         evidence,
     }))
 }
 
-/// Read the DIDX recording index located via the superblock's `index_offset`.
+/// Read the `DIDX` recording index located via the superblock's `index_offset`.
 ///
-/// Returns `Ok(None)` when the volume is not DHFS at all. When the volume is DHFS but
-/// the index cannot be located or fully parsed, a `RecordingIndex` is still returned
-/// with a non-authoritative [`IndexAuthority`], because "we looked and could not
-/// establish it" is materially different information from "we never looked".
+/// Returns `Ok(None)` when the volume carries no DHFS family magic. When it does but the index
+/// cannot be located or fully parsed, a [`RecordingIndex`] is still returned with a
+/// non-authoritative [`IndexAuthority`], because "we looked and could not establish it" is
+/// materially different information from "we never looked".
 pub fn read_recording_index(
     reader: &dyn EvidenceReader,
     profile: &OemProfile,
 ) -> Result<Option<RecordingIndex>, ForensicError> {
-    let sb = match read_superblock(reader, profile)? {
-        Some(sb) => sb,
-        None => return Ok(None),
+    let Some(sb) = read_superblock(reader, profile)? else {
+        return Ok(None);
     };
 
     let disk_len = reader.len();
-    let header_size = layout_u64(profile, "index_header_size", 16);
-    let entry_size = layout_u64(profile, "index_entry_size", 32);
-    let count_off = layout_usize(profile, "index_entry_count_offset", 4);
+    let header_size = u64_from(profile, key::INDEX_HEADER_SIZE, 16);
+    let entry_size = u64_from(profile, key::INDEX_ENTRY_SIZE, 32);
+    let count_off = usize_from(profile, key::INDEX_ENTRY_COUNT_OFFSET, 4);
 
     let not_found = |reason: String| -> Result<Option<RecordingIndex>, ForensicError> {
         Ok(Some(RecordingIndex {
@@ -355,27 +331,31 @@ pub fn read_recording_index(
                 reason: reason.clone(),
             },
             recordings: Vec::new(),
+            unreferenced_recordings: Vec::new(),
             declared_entry_count: None,
             index_region: None,
-            evidence: vs(ValidationStateKind::Review, reason, "dhfs_recording_index", "didx"),
+            evidence: vs(
+                ValidationStateKind::Review,
+                reason,
+                "dhfs_flat_recording_index",
+                "didx",
+            ),
         }))
     };
 
-    let magic = match magic_bytes(profile, "didx_magic") {
-        Some(m) if !m.is_empty() => m,
-        _ => {
-            return not_found(
-                "profile declares no index header signature; DIDX entries cannot be verified"
-                    .to_string(),
-            )
-        }
+    let tag = match magic(profile, "didx_magic") {
+        Some(m) => m,
+        None => return not_found(
+            "the profile declares no DIDX header signature, so index entries cannot be verified"
+                .to_string(),
+        ),
     };
 
     let start = match sb.index_offset {
         Some(s) => s,
         None => {
             return not_found(
-                "DHFS superblock does not declare an index_offset; no recording index located"
+                "the flat superblock declares no index_offset; no recording index located"
                     .to_string(),
             )
         }
@@ -383,7 +363,8 @@ pub fn read_recording_index(
 
     if start >= disk_len || start.saturating_add(header_size) > disk_len {
         return not_found(format!(
-            "DHFS superblock declares index_offset 0x{start:X}, outside the {disk_len}-byte evidence"
+            "the flat superblock declares index_offset 0x{start:X}, outside the {disk_len}-byte \
+             evidence"
         ));
     }
 
@@ -395,25 +376,21 @@ pub fn read_recording_index(
             ))
         }
     };
-    if !hdr.starts_with(&magic) {
+    if !hdr.starts_with(&tag) {
         return not_found(format!(
-            "no DIDX index header magic at the superblock-declared offset 0x{start:X}"
+            "no DIDX header magic at the superblock-declared offset 0x{start:X}"
         ));
     }
 
     let declared = u32_at(&hdr, count_off).unwrap_or(0) as usize;
     let table_start = start.saturating_add(header_size);
 
-    // Field offsets inside one 32-byte entry.
-    let f_channel = layout_usize(profile, "index_entry_channel_offset", 0);
-    let f_frame_type = layout_usize(profile, "index_entry_frame_type_offset", 1);
-    let f_offset = layout_usize(profile, "index_entry_offset_offset", 4);
-    let f_length = layout_usize(profile, "index_entry_length_offset", 12);
-    let f_timestamp = layout_usize(profile, "index_entry_timestamp_offset", 20);
-    let f_crc = layout_usize(profile, "index_entry_crc_offset", 28);
-
-    let dhav_header = layout_u64(profile, "dhav_header_size", 64);
-    let dhav_footer = layout_u64(profile, "dhav_footer_size", 4);
+    let f_channel = usize_from(profile, key::INDEX_ENTRY_CHANNEL_OFFSET, 0);
+    let f_frame_type = usize_from(profile, key::INDEX_ENTRY_FRAME_TYPE_OFFSET, 1);
+    let f_offset = usize_from(profile, key::INDEX_ENTRY_OFFSET_OFFSET, 4);
+    let f_length = usize_from(profile, key::INDEX_ENTRY_LENGTH_OFFSET, 12);
+    let f_timestamp = usize_from(profile, key::INDEX_ENTRY_TIMESTAMP_OFFSET, 20);
+    let f_crc = usize_from(profile, key::INDEX_ENTRY_CRC_OFFSET, 28);
 
     let mut recordings: Vec<IndexedRecording> = Vec::new();
     let mut rejected: Vec<String> = Vec::new();
@@ -440,100 +417,119 @@ pub fn read_recording_index(
             }
         };
 
-        let rec_offset = match u64_at(&e, f_offset) {
-            Some(v) => v,
-            None => {
-                rejected.push(format!("entry {i}: offset field out of entry bounds"));
-                continue;
-            }
+        let Some(rec_offset) = u64_at(&e, f_offset) else {
+            rejected.push(format!("entry {i}: offset field out of entry bounds"));
+            continue;
         };
-        let rec_length = match u64_at(&e, f_length) {
-            Some(v) => v,
-            None => {
-                rejected.push(format!("entry {i}: length field out of entry bounds"));
-                continue;
-            }
+        let Some(rec_length) = u64_at(&e, f_length) else {
+            rejected.push(format!("entry {i}: length field out of entry bounds"));
+            continue;
         };
 
-        // An entry that describes bytes outside the evidence is not silently clamped
-        // into something plausible — it is rejected and recorded, because a clamped
-        // claim would misstate what the recorder actually said.
+        // An entry describing bytes outside the evidence is rejected and recorded, never
+        // clamped into something plausible: a clamped claim would misstate what the recorder
+        // actually said.
         if rec_length == 0 {
             rejected.push(format!(
                 "entry {i}: declares a zero-length recording at 0x{rec_offset:X}"
             ));
             continue;
         }
-        let rec_end = match rec_offset.checked_add(rec_length) {
-            Some(v) => v,
-            None => {
-                rejected.push(format!(
-                    "entry {i}: offset 0x{rec_offset:X} + length {rec_length} overflows u64"
-                ));
-                continue;
-            }
+        let Some(rec_end) = rec_offset.checked_add(rec_length) else {
+            rejected.push(format!(
+                "entry {i}: offset 0x{rec_offset:X} + length {rec_length} overflows u64"
+            ));
+            continue;
         };
         if rec_end > disk_len {
             rejected.push(format!(
-                "entry {i}: claims [0x{rec_offset:X}..0x{rec_end:X}) beyond the {disk_len}-byte evidence"
+                "entry {i}: claims [0x{rec_offset:X}..0x{rec_end:X}) beyond the {disk_len}-byte \
+                 evidence"
             ));
             continue;
         }
 
         let physical = Region::new(rec_offset, rec_length)?;
 
-        // The elementary-stream payload sits between the DHAV header and footer. When
-        // the packet is too small to hold both, no payload sub-range is claimed.
-        let framing = dhav_header.saturating_add(dhav_footer);
-        let payload_regions = if rec_length > framing {
-            match Region::new(
-                rec_offset.saturating_add(dhav_header),
-                rec_length - framing,
-            ) {
-                Ok(r) => vec![r],
-                Err(_) => Vec::new(),
-            }
-        } else {
-            Vec::new()
-        };
+        // Payload separation goes through the one authoritative DHAV parser, so this path
+        // cannot develop its own idea of where a payload begins. When the claimed bytes do
+        // not parse as a frame, no payload sub-range is claimed at all.
+        let mut oem_metadata: BTreeMap<String, String> = BTreeMap::new();
+        oem_metadata.insert("structural_model".into(), "flat-didx-fallback".into());
+        oem_metadata.insert("structural_model_note".into(), MODEL_TAG.into());
+        oem_metadata.insert("index_entry_number".into(), i.to_string());
+        oem_metadata.insert("index_entry_offset".into(), format!("0x{entry_at:X}"));
 
-        // Channel is stored 0-based on disk and reported 1-based, matching the
-        // recorder's own CH01/CH02 labelling used elsewhere in the Dahua parser.
+        let mut payload_regions = Vec::new();
+        let mut codec_hint = None;
+        match crate::dhav::parse_frame_at(reader, profile, rec_offset, rec_end)? {
+            Ok(frame) => {
+                if let Some(p) = frame.payload_region {
+                    payload_regions.push(p);
+                }
+                codec_hint = frame.codec.clone();
+                oem_metadata.insert("dhav_frame_kind".into(), frame.kind.label());
+                oem_metadata.insert(
+                    "dhav_extra_header_length".into(),
+                    frame.extra_header_length.to_string(),
+                );
+                oem_metadata.insert(
+                    "dhav_trailer_tag_verified".into(),
+                    frame.trailer_tag_verified.to_string(),
+                );
+                oem_metadata.insert("dhav_frame_evidence".into(), frame.evidence.reason.clone());
+                if let Some(w) = &frame.timestamp.recorder_wall_clock {
+                    oem_metadata.insert("dahua_recorder_wall_clock".into(), w.clone());
+                }
+            }
+            Err(rejection) => {
+                oem_metadata.insert(
+                    "dhav_frame_evidence".into(),
+                    format!(
+                        "the claimed region does not parse as a DHAV frame, so no payload sub-range \
+                         is claimed: {}",
+                        rejection.reason
+                    ),
+                );
+            }
+        }
+
+        // Channel is stored 0-based on disk and reported 1-based, matching the recorder's own
+        // CH01/CH02 labelling.
         let channel = e.get(f_channel).map(|b| *b as u32 + 1);
-        let frame_type = e.get(f_frame_type).copied();
+        if let Some(ft) = e.get(f_frame_type) {
+            oem_metadata.insert("index_entry_frame_type".into(), format!("0x{ft:02X}"));
+        }
+        if let Some(c) = u32_at(&e, f_crc) {
+            oem_metadata.insert("declared_crc32".into(), format!("0x{c:08X}"));
+        }
         // A zero timestamp is the absence of a timestamp in this structure, not 1970.
         let start_time_unix = u64_at(&e, f_timestamp)
             .filter(|t| *t > 0)
             .and_then(|t| i64::try_from(t).ok());
-        let crc = u32_at(&e, f_crc);
-
-        let mut oem_metadata: BTreeMap<String, String> = BTreeMap::new();
-        oem_metadata.insert("index_entry_number".into(), i.to_string());
-        oem_metadata.insert("index_entry_offset".into(), format!("0x{entry_at:X}"));
-        if let Some(ft) = frame_type {
-            oem_metadata.insert("dhav_frame_type".into(), format!("0x{ft:02X}"));
-        }
-        if let Some(c) = crc {
-            oem_metadata.insert("declared_crc32".into(), format!("0x{c:08X}"));
-        }
 
         recordings.push(IndexedRecording {
             recording_id: format!("didx#{i}"),
+            // The flat model describes a single unpartitioned region, so there is no
+            // partition to report. That is a fact about the model, not a missing value.
+            partition: None,
             channel,
             start_time_unix,
-            // The DIDX entry carries no duration or end timestamp, so the end time is
-            // genuinely unknown. Deriving it from the next entry would be an inference,
-            // not a reading.
+            // The entry carries no duration or end timestamp, so the end time is genuinely
+            // unknown. Deriving it from the next entry would be an inference, not a reading.
             end_time_unix: None,
             physical_regions: vec![physical],
             payload_regions,
-            // The index entry carries no codec label; the DHAV packet header does, and
-            // reading that is the container walker's job, not the index reader's.
-            codec_hint: None,
-            // DHFS as understood today has no per-entry allocation/tombstone field.
+            codec_hint,
+            // The flat structures carry no allocation/tombstone field.
             allocation: AllocationEvidence::Unknown,
             oem_metadata,
-            evidence: vs(ValidationStateKind::Pass, format!("DIDX entry {i} parsed: claims {physical}"), "dhfs_recording_index", "didx_entry"),
+            evidence: vs(
+                ValidationStateKind::Pass,
+                format!("DIDX entry {i} parsed: claims {physical} ({MODEL_TAG})"),
+                "dhfs_flat_recording_index",
+                "didx_entry",
+            ),
         });
     }
 
@@ -543,21 +539,28 @@ pub fn read_recording_index(
         Region::new(start, clamped).ok()
     };
 
-    // Authority: only a fully parsed, non-empty index is a complete statement about
-    // what the recorder currently claims. Anything else and absence proves nothing.
+    // Authority: only a fully parsed, non-empty index is a complete statement about what the
+    // recorder currently claims. Anything else and absence proves nothing.
     let (authority, evidence) = if declared == 0 {
         let reason = format!(
-            "DIDX header verified at 0x{start:X} but declares zero entries; the index makes no claim about any region"
+            "DIDX header verified at 0x{start:X} but declares zero entries; the index makes no claim \
+             about any region ({MODEL_TAG})"
         );
         (
             IndexAuthority::Partial {
                 reason: reason.clone(),
             },
-            vs(ValidationStateKind::Review, reason, "dhfs_recording_index", "didx"),
+            vs(
+                ValidationStateKind::Review,
+                reason,
+                "dhfs_flat_recording_index",
+                "didx",
+            ),
         )
     } else if !rejected.is_empty() || recordings.len() != declared {
         let reason = format!(
-            "DIDX at 0x{start:X} declares {declared} entries but only {parsed} parsed cleanly; absence from a partial index is not evidence of deletion. Rejected: {detail}",
+            "DIDX at 0x{start:X} declares {declared} entries but only {parsed} parsed cleanly; \
+             absence from a partial index is not evidence of deletion. Rejected: {detail} ({MODEL_TAG})",
             parsed = recordings.len(),
             detail = rejected.join("; ")
         );
@@ -565,15 +568,18 @@ pub fn read_recording_index(
             IndexAuthority::Partial {
                 reason: reason.clone(),
             },
-            vs(ValidationStateKind::Review, reason, "dhfs_recording_index", "didx"),
+            vs(
+                ValidationStateKind::Review,
+                reason,
+                "dhfs_flat_recording_index",
+                "didx",
+            ),
         )
     } else {
-        // The index governs the video payload region it indexes. Falling back to the
-        // span of its own claims keeps the governed region evidence-bounded when the
-        // superblock's video region could not be established.
-        let governs = match read_storage_geometry(reader, profile)?
-            .and_then(|g| g.video_region)
-        {
+        // The index governs the video payload region it indexes. Falling back to the span of
+        // its own claims keeps the governed region evidence-bounded when the superblock's
+        // video region could not be established.
+        let governs = match read_storage_geometry(reader, profile)?.and_then(|g| g.video_region) {
             Some(r) => r,
             None => {
                 let min = recordings
@@ -592,7 +598,8 @@ pub fn read_recording_index(
             }
         };
         let reason = format!(
-            "DIDX at 0x{start:X} fully parsed: {declared} entr{plural} claiming {bytes} bytes; authoritative over {governs}",
+            "DIDX at 0x{start:X} fully parsed: {declared} entr{plural} claiming {bytes} bytes; \
+             authoritative over {governs} ({MODEL_TAG})",
             plural = if declared == 1 { "y" } else { "ies" },
             bytes = recordings
                 .iter()
@@ -600,70 +607,254 @@ pub fn read_recording_index(
         );
         (
             IndexAuthority::Authoritative { governs },
-            vs(ValidationStateKind::Pass, reason, "dhfs_recording_index", "didx"),
+            vs(
+                ValidationStateKind::Review,
+                reason,
+                "dhfs_flat_recording_index",
+                "didx",
+            ),
         )
     };
 
     Ok(Some(RecordingIndex {
         authority,
         recordings,
+        // The flat model offers no way to distinguish a surviving-but-unreferenced recording
+        // from one that was never indexed, so it contributes no available set. Video found in
+        // its unclaimed space is reported as orphaned by the engine's own range algebra.
+        unreferenced_recordings: Vec::new(),
         declared_entry_count: Some(declared),
         index_region,
         evidence,
     }))
 }
 
-/// Whether the bytes visible through `reader` are shaped like Dahua DHAV container
-/// framing.
-///
-/// This is a **format** test, not an index lookup: it answers "do these bytes look like
-/// our container?" and nothing more. It deliberately does not consult the index, does
-/// not look at offset 0 of the volume, and must never be used to infer that a region is
-/// an active recording.
-///
-/// The window handed in by the recovery engine is relative to the region being
-/// examined, so only self-describing framing can be checked: the `DHAV` tag followed by
-/// a declared packet length that is internally consistent.
-pub fn window_looks_like_dhav(
-    reader: &dyn EvidenceReader,
-    profile: &OemProfile,
-) -> Result<bool, ForensicError> {
-    let tag = match magic_bytes(profile, "dhav_tag") {
-        Some(t) if !t.is_empty() => t,
-        _ => return Ok(false),
-    };
-    let header_size = layout_u64(profile, "dhav_header_size", 64);
-    let footer_size = layout_u64(profile, "dhav_footer_size", 4);
-    let min_len = header_size.saturating_add(footer_size);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dhav::builder::{h264_payload, FrameBuilder};
+    use crate::layout::tests_support::dahua_profile;
+    use crate::testing::MemReader;
 
-    // Bounded probe: enough to find framing near the start of the window without
-    // pulling a large region into memory.
-    const PROBE_BYTES: u64 = 64 * 1024;
-    let want = reader.len().min(PROBE_BYTES);
-    if want < tag.len() as u64 {
-        return Ok(false);
+    const SECTOR: u64 = 512;
+    const VIDEO_START: u64 = 512;
+    const SLOT: u64 = 64 * 1024;
+
+    struct Flat {
+        bytes: Vec<u8>,
+        frame_regions: Vec<Region>,
+        index_offset: u64,
     }
-    let mut buf = vec![0u8; want as usize];
-    let n = match reader.read_at(0, &mut buf) {
-        Ok(n) => n,
-        Err(_) => return Ok(false),
-    };
-    let slice = &buf[..n];
 
-    let length_field = layout_usize(profile, "dhav_packet_len_offset", 12);
-    let mut i = 0usize;
-    while i + tag.len() <= slice.len() {
-        if &slice[i..i + tag.len()] == tag.as_slice() {
-            // Verify the packet's own declared length is structurally plausible. A bare
-            // 4-byte tag match in random data is not container framing.
-            if let Some(declared) = u32_at(slice, i + length_field) {
-                let declared = declared as u64;
-                if declared >= min_len && declared <= 64 * 1024 * 1024 {
-                    return Ok(true);
-                }
-            }
+    /// Build a flat volume: superblock, real DHAV frames, and a DIDX table referencing
+    /// `indexed`-flagged frames.
+    fn flat_volume(frames: &[(u8, bool)]) -> Flat {
+        let built: Vec<Vec<u8>> = frames
+            .iter()
+            .enumerate()
+            .map(|(i, (ch0, _))| {
+                FrameBuilder::video_key(h264_payload(0x40 + i as u8))
+                    .channel_0_based(*ch0 as u16)
+                    .frame_number(i as u32 + 1)
+                    .build()
+            })
+            .collect();
+        let offsets: Vec<u64> = (0..built.len())
+            .map(|i| VIDEO_START + i as u64 * SLOT)
+            .collect();
+        let last_end = offsets[built.len() - 1] + built[built.len() - 1].len() as u64;
+        let index_offset = ((last_end + SLOT) / SECTOR) * SECTOR;
+        let indexed_count = frames.iter().filter(|f| f.1).count() as u64;
+        let total = index_offset + 16 + indexed_count * 32 + SECTOR;
+
+        let mut b = vec![0u8; total as usize];
+        b[..4].copy_from_slice(b"DHFS");
+        b[4..8].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+        b[8..12].copy_from_slice(&(SECTOR as u32).to_le_bytes());
+        b[12..16].copy_from_slice(&65536u32.to_le_bytes());
+        b[16..24].copy_from_slice(&(total / 65536).to_le_bytes());
+        b[24..32].copy_from_slice(&VIDEO_START.to_le_bytes());
+        b[32..40].copy_from_slice(&index_offset.to_le_bytes());
+        b[48..48 + 13].copy_from_slice(b"DHI-XVR5216AN");
+        b[96..96 + 12].copy_from_slice(b"DVR_REC_VOL0");
+
+        for (i, f) in built.iter().enumerate() {
+            let at = offsets[i] as usize;
+            b[at..at + f.len()].copy_from_slice(f);
         }
-        i += 1;
+
+        let io = index_offset as usize;
+        b[io..io + 4].copy_from_slice(b"DIDX");
+        b[io + 4..io + 8].copy_from_slice(&(indexed_count as u32).to_le_bytes());
+        let mut e = io + 16;
+        let mut frame_regions = Vec::new();
+        for (i, (ch0, indexed)) in frames.iter().enumerate() {
+            if !*indexed {
+                continue;
+            }
+            let len = built[i].len() as u64;
+            b[e] = *ch0;
+            b[e + 1] = 0xFD;
+            b[e + 4..e + 12].copy_from_slice(&offsets[i].to_le_bytes());
+            b[e + 12..e + 20].copy_from_slice(&len.to_le_bytes());
+            b[e + 20..e + 28].copy_from_slice(&1_790_500_000u64.to_le_bytes());
+            b[e + 28..e + 32].copy_from_slice(&0x1A2B_3C4Du32.to_le_bytes());
+            e += 32;
+            frame_regions.push(Region::new(offsets[i], len).unwrap());
+        }
+
+        Flat {
+            bytes: b,
+            frame_regions,
+            index_offset,
+        }
     }
-    Ok(false)
+
+    #[test]
+    fn the_flat_gate_requires_a_verified_didx_header() {
+        let p = dahua_profile();
+        let flat = flat_volume(&[(0, true)]);
+        assert!(didx_header_verifies(&MemReader::new(flat.bytes.clone()), &p).unwrap());
+
+        // Break the DIDX magic: the gate must close.
+        let mut broken = flat.bytes.clone();
+        let at = flat.index_offset as usize;
+        broken[at..at + 4].copy_from_slice(b"XXXX");
+        assert!(!didx_header_verifies(&MemReader::new(broken), &p).unwrap());
+
+        // A non-Dahua volume never opens it.
+        assert!(!didx_header_verifies(&MemReader::new(vec![0u8; 1 << 16]), &p).unwrap());
+    }
+
+    #[test]
+    fn flat_geometry_is_read_but_never_reported_as_a_clean_parse() {
+        let p = dahua_profile();
+        let flat = flat_volume(&[(0, true), (1, true)]);
+        let r = MemReader::new(flat.bytes);
+        let g = read_storage_geometry(&r, &p)
+            .unwrap()
+            .expect("flat geometry");
+
+        assert_eq!(g.sector_size, Some(SECTOR));
+        assert_eq!(g.block_size, Some(65536));
+        assert_eq!(g.video_region.map(|x| x.offset), Some(VIDEO_START));
+        assert_eq!(g.index_region.map(|x| x.offset), Some(flat.index_offset));
+        assert_eq!(
+            g.evidence.state,
+            ValidationStateKind::Review,
+            "a provisional model is never a clean parse"
+        );
+        assert!(g.evidence.reason.contains("not the DHFS 4.1 structure set"));
+        assert_eq!(
+            g.oem_fields.get("structural_model").map(|s| s.as_str()),
+            Some("flat-didx-fallback")
+        );
+    }
+
+    #[test]
+    fn didx_entries_become_claims_with_payloads_from_the_authoritative_dhav_parser() {
+        let p = dahua_profile();
+        let flat = flat_volume(&[(0, true), (1, false), (0, true)]);
+        let r = MemReader::new(flat.bytes);
+        let idx = read_recording_index(&r, &p).unwrap().expect("index");
+
+        assert!(idx.authority.is_authoritative());
+        assert_eq!(idx.recordings.len(), 2);
+        assert_eq!(idx.claimed_regions(), flat.frame_regions);
+        assert!(idx.unreferenced_recordings.is_empty());
+
+        let first = &idx.recordings[0];
+        assert_eq!(first.partition, None, "the flat model has no partitions");
+        assert_eq!(first.channel, Some(1));
+        // The payload sub-range comes from the real DHAV framing: 24-byte header, no extra
+        // header, 8-byte trailer.
+        assert_eq!(first.payload_regions.len(), 1);
+        assert_eq!(
+            first.payload_regions[0].offset,
+            first.physical_regions[0].offset + 24
+        );
+        assert_eq!(
+            first.payload_regions[0].length,
+            first.physical_regions[0].length - 32
+        );
+        assert_eq!(
+            first
+                .oem_metadata
+                .get("dhav_frame_kind")
+                .map(|s| s.as_str()),
+            Some("video-key-frame")
+        );
+    }
+
+    #[test]
+    fn a_claim_that_does_not_parse_as_dhav_yields_no_payload_sub_range() {
+        let p = dahua_profile();
+        let mut flat = flat_volume(&[(0, true)]);
+        // Destroy the frame's tag while leaving the DIDX claim intact.
+        let at = VIDEO_START as usize;
+        flat.bytes[at..at + 4].copy_from_slice(b"ZZZZ");
+        let r = MemReader::new(flat.bytes);
+        let idx = read_recording_index(&r, &p).unwrap().unwrap();
+
+        let entry = &idx.recordings[0];
+        assert!(entry.payload_regions.is_empty());
+        assert!(entry
+            .oem_metadata
+            .get("dhav_frame_evidence")
+            .unwrap()
+            .contains("does not parse as a DHAV frame"));
+    }
+
+    #[test]
+    fn an_out_of_bounds_claim_is_rejected_and_degrades_authority() {
+        let p = dahua_profile();
+        let mut flat = flat_volume(&[(0, true), (0, true)]);
+        // Point the second entry past the end of the image.
+        let e = flat.index_offset as usize + 16 + 32;
+        let bogus = flat.bytes.len() as u64 + 1_000_000;
+        flat.bytes[e + 4..e + 12].copy_from_slice(&bogus.to_le_bytes());
+        let r = MemReader::new(flat.bytes);
+        let idx = read_recording_index(&r, &p).unwrap().unwrap();
+
+        assert_eq!(idx.recordings.len(), 1, "the bad claim is not clamped in");
+        assert!(!idx.authority.is_authoritative());
+        match &idx.authority {
+            IndexAuthority::Partial { reason } => {
+                assert!(reason.contains("not evidence of deletion"))
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_zero_entry_index_is_partial_not_authoritative() {
+        let p = dahua_profile();
+        let mut flat = flat_volume(&[(0, true)]);
+        let at = flat.index_offset as usize;
+        flat.bytes[at + 4..at + 8].copy_from_slice(&0u32.to_le_bytes());
+        let r = MemReader::new(flat.bytes);
+        let idx = read_recording_index(&r, &p).unwrap().unwrap();
+        assert!(matches!(idx.authority, IndexAuthority::Partial { .. }));
+        assert!(idx.recordings.is_empty());
+    }
+
+    #[test]
+    fn a_volume_with_no_dahua_magic_yields_nothing_rather_than_a_guess() {
+        let p = dahua_profile();
+        let r = MemReader::new(vec![0u8; 1 << 16]);
+        assert!(read_storage_geometry(&r, &p).unwrap().is_none());
+        assert!(read_recording_index(&r, &p).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_missing_didx_header_is_not_found_not_a_fabricated_empty_index() {
+        let p = dahua_profile();
+        let mut flat = flat_volume(&[(0, true)]);
+        let at = flat.index_offset as usize;
+        flat.bytes[at..at + 4].copy_from_slice(b"XXXX");
+        let r = MemReader::new(flat.bytes);
+        let idx = read_recording_index(&r, &p).unwrap().unwrap();
+        assert!(matches!(idx.authority, IndexAuthority::NotFound { .. }));
+        assert!(idx.recordings.is_empty());
+    }
 }

@@ -291,6 +291,7 @@ fn request<'a>(
         parser,
         bounds,
         scan_window: None,
+        read_window_bytes: None,
     }
 }
 
@@ -362,6 +363,7 @@ fn test_evidence_id_is_stable_across_every_candidate() {
             parser: &parser,
             bounds: &bounds,
             scan_window: None,
+            read_window_bytes: None,
         })
         .unwrap();
 
@@ -407,6 +409,7 @@ fn test_scan_window_preserves_absolute_physical_offsets() {
             parser: &parser,
             bounds: &bounds,
             scan_window: Some(window),
+            read_window_bytes: None,
         })
         .unwrap();
 

@@ -488,12 +488,91 @@ pub async fn get_ffmpeg_status(
     Ok(Json(serde_json::to_value(status).unwrap()))
 }
 
+/// One physical byte range, as supplied by a caller that already knows where the bytes are.
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub struct RegionDto {
+    pub offset: u64,
+    pub length: u64,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct ReconstructPayload {
     pub offset_start: Option<u64>,
     pub length: Option<u64>,
     pub channel: Option<u32>,
     pub oem_key: Option<String>,
+    /// Explicit ordered physical ranges to export.
+    ///
+    /// This is the interface for exporting an **engine-discovered** recording. A Dahua
+    /// recording is a chain of 2 MiB blocks and a DHFS 4.1 stream is a list of frame payload
+    /// ranges, neither of which a single `offset_start`/`length` pair can express. The ranges
+    /// are concatenated in the order given and nothing is inserted between them.
+    pub regions: Option<Vec<RegionDto>>,
+    /// The recovery engine's stable fragment id for these bytes, when the caller has one.
+    ///
+    /// Recorded on the artifact's provenance so an exported artifact is traceable back to the
+    /// exact discovery it came from, rather than to a freshly minted identifier.
+    pub fragment_id: Option<String>,
+    /// An OEM recording/chain id to reconstruct, e.g. a Dahua `dahua:p0:blk1`.
+    ///
+    /// When supplied and the OEM parser can reconstruct it, the export uses the parser's own
+    /// frame-accurate payload ranges — block chain order, then DHII index order — instead of a
+    /// caller-supplied range list.
+    pub recording_chain_id: Option<String>,
+}
+
+/// Reconstruct an OEM recording chain into its frame-accurate payload ranges.
+///
+/// Returns `(ordered payload regions, channel, description)`, or `None` when the OEM has no
+/// chain reconstruction or the id does not resolve. The ranges are the parser's own: block-chain
+/// order first, then the DHII frame index inside each block. Nothing is inserted between them,
+/// so concatenating those exact evidence bytes reproduces the elementary stream.
+///
+/// This is the smallest interface that lets an **engine-discovered** recording be exported.
+/// Previously the export layer could only take one contiguous range, so a multi-block Dahua
+/// recording was not exportable at all without fabricating a recording row for it.
+#[allow(clippy::type_complexity)]
+fn reconstruct_oem_chain(
+    state: &AppState,
+    reader: &dyn evidence_reader::EvidenceReader,
+    oem_key: &str,
+    chain_id: &str,
+) -> Result<Option<(Vec<forensic_core::Region>, u32, String)>, ApiError> {
+    if !oem_key.eq_ignore_ascii_case("dahua") {
+        return Ok(None);
+    }
+    let profile = match state.profile_registry.find_applicable(oem_key, None, None, None) {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let volume = parser_dahua::volume::read_volume(reader, profile).map_err(map_err)?;
+    let Some(classified) = parser_dahua::find_chain(&volume, chain_id) else {
+        return Ok(None);
+    };
+    let reconstruction =
+        parser_dahua::reconstruct_recording(reader, profile, &classified.chain).map_err(map_err)?;
+    if reconstruction.payload_regions.is_empty() {
+        return Err(ApiError {
+            error: format!(
+                "Dahua chain '{chain_id}' was located but no frame payload could be established in \
+                 its blocks"
+            ),
+            details: Some(reconstruction.evidence.reason.clone()),
+        });
+    }
+    let description = format!(
+        "{chain_id}: {} block(s), {} frame(s), {} payload range(s), ordered by {}; {}",
+        reconstruction.block_regions.len(),
+        reconstruction.frames.len(),
+        reconstruction.payload_regions.len(),
+        reconstruction.ordering.label(),
+        reconstruction.evidence.reason
+    );
+    Ok(Some((
+        reconstruction.payload_regions.clone(),
+        reconstruction.channel.normalized,
+        description,
+    )))
 }
 
 /// POST /api/evidence/:id/recordings/:rec_id/reconstruct
@@ -521,13 +600,64 @@ pub async fn reconstruct_recording(
         None => None,
     };
 
-    let (source_regions, rec_channel) = if let Some(rec_info) = db_rec {
+    // Where the source ranges come from, recorded on the artifact so an examiner can see
+    // whether an export followed a parser-reconstructed stream, a caller-supplied range list, a
+    // persisted recording, or a fallback.
+    let mut region_source = "persisted recording row".to_string();
+    let mut reconstruction_note: Option<String> = None;
+
+    // A chain id asks the OEM parser to reconstruct the recording and export its own
+    // frame-accurate payload ranges. This is the path an engine-discovered Dahua recording
+    // takes: block chain order first, then the DHII frame index inside each block.
+    let chain_regions: Option<(Vec<forensic_core::Region>, u32, String)> =
+        match payload.recording_chain_id.as_deref() {
+            Some(chain_id) if !chain_id.trim().is_empty() => {
+                let oem_key = resolve_oem_key(&state, reader.as_ref(), payload.oem_key.clone())
+                    .await
+                    .unwrap_or_else(|_| "dahua".to_string());
+                reconstruct_oem_chain(&state, reader.as_ref(), &oem_key, chain_id)?
+            }
+            _ => None,
+        };
+
+    let (source_regions, rec_channel) = if let Some((regions, channel, note)) = chain_regions {
+        region_source = format!("OEM chain reconstruction of {note}");
+        reconstruction_note = Some(note);
+        (regions, channel)
+    } else if let Some(regions) = payload.regions.as_ref().filter(|r| !r.is_empty()) {
+        // Explicit ordered ranges from the caller — an engine-discovered multi-block recording.
+        // Each range is bounds-checked against the evidence before anything is read.
+        let mut out = Vec::with_capacity(regions.len());
+        for r in regions {
+            let region = forensic_core::Region::new(r.offset, r.length).map_err(map_err)?;
+            let end = region.end().unwrap_or(u64::MAX);
+            if end > reader.len() {
+                return Err(ApiError {
+                    error: format!(
+                        "requested region [0x{:X}..0x{end:X}) lies outside the {}-byte evidence",
+                        r.offset,
+                        reader.len()
+                    ),
+                    details: Some(
+                        "an export never reads past the end of the evidence, and a range is never \
+                         clamped to fit"
+                            .into(),
+                    ),
+                });
+            }
+            out.push(region);
+        }
+        region_source = format!("{} caller-supplied physical range(s)", out.len());
+        (out, payload.channel.unwrap_or(1))
+    } else if let Some(rec_info) = db_rec {
         (rec_info.0.source_offsets, rec_info.0.channel)
     } else if let (Some(off), Some(len)) = (payload.offset_start, payload.length) {
         let reg = forensic_core::Region::new(off, len).map_err(map_err)?;
+        region_source = "caller-supplied offset and length".to_string();
         (vec![reg], payload.channel.unwrap_or(1))
     } else {
         // Run parser detection if OEM key provided or auto-detect
+        region_source = "parser-located recording, or a bounded head-of-image fallback".to_string();
         let oem_key = payload.oem_key.as_deref().unwrap_or("tplink");
         let profile = state.profile_registry.find_applicable(oem_key, None, None, None);
         if let Some(prof) = profile {
@@ -602,10 +732,36 @@ pub async fn reconstruct_recording(
 
     let source_regions_prov: Vec<forensic_core::SourceRegion> = source_regions
         .iter()
-        .map(|r| forensic_core::SourceRegion::new(evidence_id, r.clone()).with_description(format!("Channel {} stream payload", rec_channel)))
+        .enumerate()
+        .map(|(i, r)| {
+            forensic_core::SourceRegion::new(evidence_id, *r).with_description(format!(
+                "channel {rec_channel} stream payload, ordered part {} of {} ({region_source})",
+                i + 1,
+                source_regions.len()
+            ))
+        })
         .collect();
 
-    let es_prov = forensic_core::Provenance::new(
+    // The provenance reason names every fact an examiner needs to re-derive this export: where
+    // the ranges came from, how many there were, the engine's own fragment id when the caller
+    // supplied one, and the OEM reconstruction detail when a chain was walked.
+    let mut es_reason = format!(
+        "Extracted exact {:?} Annex-B elementary stream ({} byte(s)) from {} ordered physical \
+         range(s) in this evidence item; source: {region_source}",
+        codec,
+        raw_payload.len(),
+        source_regions.len()
+    );
+    if let Some(fid) = payload.fragment_id.as_deref().filter(|s| !s.trim().is_empty()) {
+        // Preserved, never regenerated: the artifact carries the same identifier the recovery
+        // engine assigned the discovery.
+        es_reason.push_str(&format!("; recovery engine fragment id {fid}"));
+    }
+    if let Some(note) = reconstruction_note.as_deref() {
+        es_reason.push_str(&format!("; reconstruction: {note}"));
+    }
+
+    let mut es_prov = forensic_core::Provenance::new(
         evidence_id,
         es_hash.clone(),
         source_regions_prov.clone(),
@@ -613,11 +769,19 @@ pub async fn reconstruct_recording(
         "1.0.0",
         es_hash.clone(),
         forensic_core::ValidationState::pass(
-            format!("Extracted exact {:?} Annex-B elementary stream ({} bytes)", codec, raw_payload.len()),
+            es_reason.clone(),
             "materialize_elementary_stream",
             "ElementaryStream",
-        ).unwrap(),
+        )
+        .unwrap(),
     );
+    es_prov.add_transformation(forensic_core::TransformationStep {
+        operation: "materialize_elementary_stream".to_string(),
+        component: "forensic-api".to_string(),
+        component_version: env!("CARGO_PKG_VERSION").to_string(),
+        performed_at: Utc::now(),
+        notes: Some(es_reason.clone()),
+    });
 
     let es_artifact = forensic_core::DerivedArtifact {
         id: es_art_id,
@@ -939,12 +1103,22 @@ pub struct RecoveryRequest {
 #[derive(Debug, Serialize)]
 pub struct RecoveryCandidateDto {
     pub id: String,
+    /// The recovery engine's stable fragment id, when this candidate came from the engine.
+    ///
+    /// Deterministic from the evidence id and the physical range, so posting it back to the
+    /// reconstruct endpoint ties the exported artifact to this exact discovery.
+    pub fragment_id: Option<String>,
     /// `None` when no index entry supplied a channel. Video carved from unclaimed space
     /// genuinely has no channel and must not be reported as channel 0.
     pub channel: Option<u32>,
+    /// The OEM storage partition, when the OEM's structures are partitioned.
+    pub partition: Option<u32>,
     pub time_native: Option<String>,
     pub time_normalized: Option<String>,
     pub timezone_state: String,
+    /// Recorder start/end as unix seconds, when OEM metadata supplied them.
+    pub start_time_unix: Option<i64>,
+    pub end_time_unix: Option<i64>,
     /// `None` when the container declares no duration. Not inferred from size.
     pub duration_sec: Option<u64>,
     pub data_state: forensic_core::DataState,
@@ -952,17 +1126,32 @@ pub struct RecoveryCandidateDto {
     pub recovery_level: forensic_core::RecoveryLevel,
     pub source_offset: u64,
     pub source_length: u64,
+    /// Every physical range this candidate's recording occupies, in recording order.
+    ///
+    /// A Dahua recording spans several 2 MiB blocks, so one offset/length pair cannot describe
+    /// it. Post these straight back to the reconstruct endpoint to export the whole recording.
+    pub source_regions: Vec<serde_json::Value>,
     pub integrity_status: String,
     pub codec: String,
     pub validation: forensic_core::ValidationState,
     pub nal_unit_count: usize,
     pub has_native_artifact: bool,
     pub has_derived_artifact: bool,
-    /// How this candidate was found: an index-claimed probe, or a scan of unclaimed space.
+    /// How this candidate was found: an index-claimed probe, an available-metadata probe, or a
+    /// scan of unclaimed space.
     pub discovery_method: String,
+    /// Whether the candidate's physical bounds are an OEM container record's or a scan window's.
+    pub framing: Option<String>,
+    /// The OEM recording/chain this candidate belongs to, when metadata established one.
+    pub parent_recording: Option<String>,
+    /// Confidence and the observations it was composed from, so the number is explainable.
+    pub confidence: Option<f64>,
+    pub confidence_basis: Option<String>,
     /// Why this candidate received its `data_state`, phrased for an examiner. The UI can
     /// show this verbatim so an Orphaned or Unindexed finding is never unexplained.
     pub state_reason: String,
+    /// OEM-specific facts read from the structures, verbatim.
+    pub oem_metadata: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1044,6 +1233,7 @@ pub async fn run_recovery(
             parser,
             bounds: &bounds,
             scan_window: None,
+            read_window_bytes: None,
         })
         .map_err(map_err)?;
     let mut run = outcome.run.clone();
@@ -1097,18 +1287,51 @@ pub async fn run_recovery(
             forensic_core::TimeZoneState::Unknown => "Unknown".to_string(),
         };
 
+        // Every range the recording occupies, in recording order, so a multi-block Dahua
+        // recording can be exported whole rather than truncated to its first block.
+        let all_regions: Vec<serde_json::Value> = rec
+            .source_offsets
+            .iter()
+            .map(|r| serde_json::json!({ "offset": r.offset, "length": r.length }))
+            .collect();
+        let (parent_recording, partition, start_unix, end_unix) = claim
+            .recorder_metadata()
+            .map(|(id, p, _c, s, e)| (Some(id.to_string()), p, s, e))
+            .unwrap_or((None, None, None, None));
+        // OEM-specific facts come from the index entry that describes these bytes, verbatim, so
+        // nothing OEM-specific is lost between the parser and the API surface.
+        let oem_metadata = parent_recording
+            .as_deref()
+            .and_then(|id| {
+                outcome.plan.index.as_ref().and_then(|ix| {
+                    ix.recordings
+                        .iter()
+                        .chain(ix.unreferenced_recordings.iter())
+                        .find(|e| e.recording_id == id)
+                        .map(|e| e.oem_metadata.clone())
+                })
+            })
+            .unwrap_or_default();
+
         candidates.push(RecoveryCandidateDto {
             id: format!("{}-ch{}-0x{:X}", oem_key, rec.channel, region.offset),
+            // A parser-located recording is not an engine discovery, so it carries no engine
+            // fragment id. Minting one here would invent an identity the engine never assigned.
+            fragment_id: None,
             channel: Some(rec.channel),
+            partition,
             time_native: rec.time.recorder_native.as_ref().map(|t| t.iso_8601.clone()),
             time_normalized: rec.time.normalized.as_ref().map(|t| t.iso_8601.clone()),
             timezone_state,
+            start_time_unix: start_unix,
+            end_time_unix: end_unix,
             duration_sec: None,
             data_state: assessment.data_state,
             recovery_status: assessment.recovery_status,
             recovery_level: assessment.recovery_level,
             source_offset: region.offset,
             source_length: region.length,
+            source_regions: all_regions,
             integrity_status: codec_evidence.validation.reason.clone(),
             codec: format!("{:?}", codec_evidence.codec),
             validation: codec_evidence.validation.clone(),
@@ -1117,7 +1340,12 @@ pub async fn run_recovery(
             has_derived_artifact,
             discovery_method: "parser-located recording, classified against the recording index"
                 .to_string(),
+            framing: None,
+            parent_recording,
+            confidence: None,
+            confidence_basis: None,
             state_reason: assessment.reason,
+            oem_metadata,
         });
     }
 
@@ -1140,6 +1368,31 @@ pub async fn run_recovery(
             continue;
         }
 
+        // The recording this fragment belongs to, when OEM metadata named one, gives every
+        // physical range of that recording — which is what makes a multi-block export possible.
+        let recording_regions: Vec<serde_json::Value> = frag
+            .parent_recording
+            .value()
+            .and_then(|id| {
+                outcome.plan.index.as_ref().and_then(|ix| {
+                    ix.recordings
+                        .iter()
+                        .chain(ix.unreferenced_recordings.iter())
+                        .find(|e| &e.recording_id == id)
+                        .map(|e| {
+                            e.physical_regions
+                                .iter()
+                                .map(|r| {
+                                    serde_json::json!({ "offset": r.offset, "length": r.length })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                })
+            })
+            .unwrap_or_else(|| {
+                vec![serde_json::json!({ "offset": region.offset, "length": region.length })]
+            });
+
         candidates.push(RecoveryCandidateDto {
             id: format!(
                 "{}-{}-0x{:X}",
@@ -1147,17 +1400,24 @@ pub async fn run_recovery(
                 frag.discovery_method.label(),
                 region.offset
             ),
-            // Only index evidence supplies a channel; carved video has none.
+            // The engine's own stable id, propagated rather than regenerated.
+            fragment_id: Some(frag.fragment_id.clone()),
+            // Only evidence supplies a channel; carved video with none stays null.
             channel: frag.camera_id.value().copied(),
+            partition: frag.partition.value().copied(),
             time_native: None,
             time_normalized: None,
+            // No recorder timezone offset is established by recovery, so none is claimed.
             timezone_state: "Unknown".to_string(),
+            start_time_unix: frag.timestamp_unix.value().copied(),
+            end_time_unix: frag.end_timestamp_unix.value().copied(),
             duration_sec: None,
             data_state: cand.data_state,
             recovery_status: cand.recovery_status,
             recovery_level: cand.recovery_level,
             source_offset: region.offset,
             source_length: region.length,
+            source_regions: recording_regions,
             integrity_status: frag.validation.reason.clone(),
             codec: frag.codec.clone(),
             validation: cand.validation.structure.clone(),
@@ -1165,7 +1425,15 @@ pub async fn run_recovery(
             has_native_artifact: false,
             has_derived_artifact: false,
             discovery_method: frag.discovery_method.label().to_string(),
+            framing: Some(frag.framing.label().to_string()),
+            parent_recording: frag.parent_recording.value().cloned(),
+            confidence: frag.confidence.value().copied(),
+            confidence_basis: match &frag.confidence {
+                recovery::FieldEvidence::Known { source, .. } => Some(source.clone()),
+                recovery::FieldEvidence::Unknown { reason } => Some(reason.clone()),
+            },
             state_reason: cand.provenance.validation_state.reason.clone(),
+            oem_metadata: frag.oem_metadata.clone(),
         });
     }
 

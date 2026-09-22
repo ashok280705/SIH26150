@@ -203,6 +203,7 @@ fn request<'a>(
         parser,
         bounds,
         scan_window: None,
+        read_window_bytes: None,
     }
 }
 
@@ -222,6 +223,7 @@ fn scan(
         profile_hash: profile.profile_hash.clone(),
         parser_id: parser.id().into(),
         parser_version: parser.version().into(),
+        max_window_bytes: recovery::DEFAULT_SCAN_WINDOW_BYTES,
     };
     let target = recovery::ScanTarget {
         region,

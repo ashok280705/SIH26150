@@ -34,10 +34,17 @@ use crate::classification::{classify_region_state, RegionClaim, StateAssessment,
 use crate::fragment::{DiscoveredFragment, DiscoveryMethod, FieldEvidence};
 use crate::plan::ScanTarget;
 use crate::reconstructor::{CodecEvidence, VideoCodec, VideoReconstructor};
+use parsers_core::storage::ContainerRecord;
+use std::collections::BTreeMap;
 
-/// Largest window a single scan will pull into memory in one pass. Regions larger than
-/// this are examined only up to this bound and the candidate is marked as a partial read.
-const MAX_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
+/// Default window a single codec-classification read pulls into memory.
+///
+/// This is a **memory** bound, not a semantic one. It bounds how much of a region is read in
+/// one pass to classify its codec; it never bounds what can be recovered, because the OEM
+/// structural carver ([`Parser::scan_region_for_candidates`]) describes records from their own
+/// declared lengths and reads in its own streaming windows. Callers override it through
+/// [`ScanContext::max_window_bytes`].
+pub const DEFAULT_SCAN_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Immutable context shared by every scan in one recovery run.
 ///
@@ -59,6 +66,47 @@ pub struct ScanContext {
     /// Parser id and version, for provenance.
     pub parser_id: String,
     pub parser_version: String,
+    /// Largest window one codec-classification read pulls into memory.
+    ///
+    /// Configurable so a run can trade memory for fewer reads. It does not limit what is
+    /// recoverable: an OEM container record longer than the window is still described in full
+    /// from its own declared length.
+    pub max_window_bytes: u64,
+}
+
+impl ScanContext {
+    /// A context with the default read window.
+    pub fn new(
+        evidence_id: EvidenceId,
+        oem_key: impl Into<String>,
+        profile_id: impl Into<String>,
+        profile_version: impl Into<String>,
+        profile_hash: Option<Hash>,
+        parser_id: impl Into<String>,
+        parser_version: impl Into<String>,
+    ) -> Self {
+        Self {
+            evidence_id,
+            oem_key: oem_key.into(),
+            profile_id: profile_id.into(),
+            profile_version: profile_version.into(),
+            profile_hash,
+            parser_id: parser_id.into(),
+            parser_version: parser_version.into(),
+            max_window_bytes: DEFAULT_SCAN_WINDOW_BYTES,
+        }
+    }
+
+    /// Override the read window. A zero or absurd value falls back to the default rather than
+    /// producing zero-length reads.
+    pub fn with_window(mut self, bytes: u64) -> Self {
+        self.max_window_bytes = if bytes == 0 {
+            DEFAULT_SCAN_WINDOW_BYTES
+        } else {
+            bytes
+        };
+        self
+    }
 }
 
 /// The result of scanning one target that held video.
@@ -71,7 +119,7 @@ pub struct ScanFinding {
     pub oem_format_recognised: bool,
 }
 
-/// Read up to [`MAX_WINDOW_BYTES`] of a region through a [`BoundedReader`].
+/// Read up to `window` bytes of a region through a [`BoundedReader`].
 ///
 /// Returns the bytes read and whether the region was longer than the window. Overflowing
 /// or out-of-bounds regions propagate the `BoundedReader` error unchanged — hostile
@@ -79,11 +127,13 @@ pub struct ScanFinding {
 fn read_bounded_window(
     reader: &dyn EvidenceReader,
     region: &Region,
+    window: u64,
 ) -> Result<(Vec<u8>, bool), ForensicError> {
     // Constructing the bounded reader is what enforces checked arithmetic and bounds.
     let bounded = BoundedReader::new(reader, region.offset, region.length)?;
-    let want = region.length.min(MAX_WINDOW_BYTES) as usize;
-    let truncated_view = region.length > MAX_WINDOW_BYTES;
+    let window = window.max(1);
+    let want = region.length.min(window) as usize;
+    let truncated_view = region.length > window;
 
     let mut buf = vec![0u8; want];
     let n = bounded.read_at(0, &mut buf)?;
@@ -122,6 +172,7 @@ fn validation_report(
     codec: &CodecEvidence,
     structurally_valid: bool,
     claim: &RegionClaim,
+    record: Option<&ContainerRecord>,
 ) -> FrameValidationReport {
     let signatures = if codec.codec != VideoCodec::Unknown || !codec.nal_evidence.is_empty() {
         vs(
@@ -143,39 +194,50 @@ fn validation_report(
         )
     };
 
-    let structure = if structurally_valid {
-        vs(
-            ValidationStateKind::Pass,
-            codec.validation.reason.clone(),
-            "region_scan",
-            "structure",
-        )
-    } else {
-        vs(
-            ValidationStateKind::Review,
-            codec.validation.reason.clone(),
-            "region_scan",
-            "structure",
-        )
+    // Structural validity combines the codec classifier's verdict with the OEM container
+    // record's own, when one was established. A record whose declared length or trailer failed
+    // verification must not read as structurally sound just because its payload decodes.
+    let record_state = record.map(|r| r.evidence.state);
+    let structure_pass = structurally_valid
+        && record_state
+            .map(|s| s == ValidationStateKind::Pass)
+            .unwrap_or(true);
+    let structure_reason = match record {
+        Some(r) => format!(
+            "{} | OEM container record at 0x{:X}: {}",
+            codec.validation.reason, r.physical_region.offset, r.evidence.reason
+        ),
+        None => codec.validation.reason.clone(),
     };
+    let structure = vs(
+        if structure_pass {
+            ValidationStateKind::Pass
+        } else {
+            ValidationStateKind::Review
+        },
+        structure_reason,
+        "region_scan",
+        "structure",
+    );
 
-    let (timestamps, channel) = match claim {
-        RegionClaim::Indexed {
-            recording_id,
-            channel: ch,
-            start_time_unix,
-            ..
-        } => {
+    // Timestamp and channel are only `Pass` when OEM metadata supplied them. A record's own
+    // container header can supply them too, which is why `record` is consulted: a carved DHAV
+    // frame genuinely carries a channel and a clock, and reporting those as Unknown would
+    // discard read evidence.
+    let (timestamps, channel) = match claim.recorder_metadata() {
+        Some((recording_id, _partition, ch, start_time_unix, _end)) => {
             let ts = match start_time_unix {
                 Some(t) => vs(
                     ValidationStateKind::Pass,
-                    format!("Recorder timestamp {t} read from index entry {recording_id}"),
+                    format!("Recorder timestamp {t} read from OEM metadata entry {recording_id}"),
                     "region_scan",
                     "timestamps",
                 ),
                 None => vs(
                     ValidationStateKind::Unknown,
-                    format!("Index entry {recording_id} records no timestamp for this region"),
+                    format!(
+                        "OEM metadata entry {recording_id} records no timestamp for this region"
+                    ),
                     "region_scan",
                     "timestamps",
                 ),
@@ -183,20 +245,65 @@ fn validation_report(
             let chan = match ch {
                 Some(c) => vs(
                     ValidationStateKind::Pass,
-                    format!("Channel {c} read from index entry {recording_id}"),
+                    format!("Channel {c} read from OEM metadata entry {recording_id}"),
                     "region_scan",
                     "channel",
                 ),
                 None => vs(
                     ValidationStateKind::Unknown,
-                    format!("Index entry {recording_id} records no channel for this region"),
+                    format!("OEM metadata entry {recording_id} records no channel for this region"),
                     "region_scan",
                     "channel",
                 ),
             };
             (ts, chan)
         }
-        _ => (
+        None if record.is_some() => {
+            let rec = record.expect("checked");
+            let ts = match rec.start_time_unix {
+                Some(t) => vs(
+                    ValidationStateKind::Pass,
+                    format!(
+                        "Recorder timestamp {t} decoded from the container record's own header at \
+                         0x{:X}",
+                        rec.physical_region.offset
+                    ),
+                    "region_scan",
+                    "timestamps",
+                ),
+                None => vs(
+                    ValidationStateKind::Unknown,
+                    format!(
+                        "the container record at 0x{:X} carries no decodable timestamp",
+                        rec.physical_region.offset
+                    ),
+                    "region_scan",
+                    "timestamps",
+                ),
+            };
+            let chan = match rec.channel {
+                Some(c) => vs(
+                    ValidationStateKind::Pass,
+                    format!(
+                        "Channel {c} decoded from the container record's own header at 0x{:X}",
+                        rec.physical_region.offset
+                    ),
+                    "region_scan",
+                    "channel",
+                ),
+                None => vs(
+                    ValidationStateKind::Unknown,
+                    format!(
+                        "the container record at 0x{:X} carries no channel",
+                        rec.physical_region.offset
+                    ),
+                    "region_scan",
+                    "channel",
+                ),
+            };
+            (ts, chan)
+        }
+        None => (
             vs(
                 ValidationStateKind::Unknown,
                 "No index entry covers this region, so no recorder timestamp is available",
@@ -238,6 +345,7 @@ fn validation_report(
 fn build_provenance(
     ctx: &ScanContext,
     target: &ScanTarget,
+    fragment_region: Region,
     window: &[u8],
     assessment: &StateAssessment,
     truncated_view: bool,
@@ -261,20 +369,30 @@ fn build_provenance(
         "RecoveryCandidate",
     );
 
-    let mut source_regions = vec![SourceRegion::new(ctx.evidence_id, target.region)
+    // The chain recorded is: evidence item → planner region → scanned region → fragment region.
+    // Each distinct step is recorded once, so a fragment carved out of a chunk of a claimed
+    // range is traceable through every level of the range algebra that reached it.
+    let mut source_regions = vec![SourceRegion::new(ctx.evidence_id, fragment_region)
         .with_description(format!(
-            "scanned region, discovery method {}",
+            "recovered fragment region, discovery method {}",
             target.discovery_method.label()
         ))];
+    if target.region != fragment_region {
+        source_regions.push(
+            SourceRegion::new(ctx.evidence_id, target.region)
+                .with_description("scanned region the fragment was carved from".to_string()),
+        );
+    }
     // Record the planner region separately when the scan only covered part of it, so the
     // provenance shows both what was targeted and what was actually read.
-    if target.originating_region != target.region {
+    if target.originating_region != target.region && target.originating_region != fragment_region {
         source_regions.push(
             SourceRegion::new(ctx.evidence_id, target.originating_region).with_description(
                 format!(
                     "originating {} region",
                     match target.discovery_method {
                         DiscoveryMethod::IndexClaimedProbe => "index-claimed",
+                        DiscoveryMethod::AvailableMetadataProbe => "available-metadata",
                         _ => "unclaimed",
                     }
                 ),
@@ -301,9 +419,10 @@ fn build_provenance(
         component_version: env!("CARGO_PKG_VERSION").to_string(),
         performed_at: chrono::Utc::now(),
         notes: Some(format!(
-            "claim={}, region={}, profile={}",
+            "claim={}, scanned={}, fragment={}, profile={}",
             target.claim.label(),
             target.region,
+            fragment_region,
             ctx.profile_id
         )),
     });
@@ -324,72 +443,134 @@ pub fn level_label(level: RecoveryLevel) -> &'static str {
 /// Recorder metadata is populated **only** from the index claim. A fragment found in
 /// unclaimed space carries explicit `Unknown` values with the reason attached, rather
 /// than channel 0 at the epoch.
+#[allow(clippy::too_many_arguments)]
 fn build_fragment(
     ctx: &ScanContext,
     target: &ScanTarget,
+    physical_region: Region,
     codec: &CodecEvidence,
     payload_region: Option<Region>,
+    record: Option<&ContainerRecord>,
     validation: ValidationState,
+    confidence: FieldEvidence<f64>,
     provenance: Provenance,
 ) -> DiscoveredFragment {
-    let (camera_id, timestamp_unix, frame_type) = match &target.claim {
-        RegionClaim::Indexed {
-            recording_id,
-            channel,
-            start_time_unix,
-            ..
-        } => {
-            let cam = match channel {
-                Some(c) => FieldEvidence::known(*c, format!("index entry {recording_id}")),
-                None => FieldEvidence::unknown(format!(
-                    "index entry {recording_id} records no channel"
-                )),
-            };
-            let ts = match start_time_unix {
-                Some(t) => FieldEvidence::known(*t, format!("index entry {recording_id}")),
-                None => FieldEvidence::unknown(format!(
-                    "index entry {recording_id} records no timestamp"
-                )),
-            };
-            (
-                cam,
-                ts,
-                FieldEvidence::unknown(
-                    "frame type is not established by a region scan in this phase".to_string(),
-                ),
-            )
+    // Recorder metadata comes from the OEM claim first — it is the recorder's own index — and
+    // from the container record's own header second. Both are read evidence; neither is
+    // invented. A region with neither keeps explicit `Unknown`s with the reason attached,
+    // rather than channel 0 at the epoch.
+    let mut partition = FieldEvidence::unknown(format!(
+        "no OEM metadata covers this region ({})",
+        target.claim.label()
+    ));
+    let mut camera_id = FieldEvidence::unknown(format!(
+        "no OEM metadata covers this region ({})",
+        target.claim.label()
+    ));
+    let mut timestamp_unix = FieldEvidence::unknown(format!(
+        "no OEM metadata covers this region ({})",
+        target.claim.label()
+    ));
+    let mut end_timestamp_unix = FieldEvidence::unknown(format!(
+        "no OEM metadata covers this region ({})",
+        target.claim.label()
+    ));
+    let mut parent_recording = FieldEvidence::unknown(format!(
+        "no OEM metadata associates this region with a recording ({})",
+        target.claim.label()
+    ));
+    let mut frame_type = FieldEvidence::unknown(
+        "no container record established a frame type for these bytes".to_string(),
+    );
+    let mut sequence_number = FieldEvidence::unknown(
+        "no on-disk sequence number was established for these bytes".to_string(),
+    );
+
+    if let Some((recording_id, part, channel, start, end)) = target.claim.recorder_metadata() {
+        let source = format!("OEM metadata entry {recording_id}");
+        parent_recording = FieldEvidence::known(recording_id.to_string(), source.clone());
+        if let Some(p) = part {
+            partition = FieldEvidence::known(p, source.clone());
+        } else {
+            partition = FieldEvidence::unknown(format!("{source} records no partition"));
         }
-        other => {
-            let reason = format!(
-                "no index entry covers this region ({})",
-                other.label()
-            );
-            (
-                FieldEvidence::unknown(reason.clone()),
-                FieldEvidence::unknown(reason.clone()),
-                FieldEvidence::unknown(reason),
-            )
+        if let Some(c) = channel {
+            camera_id = FieldEvidence::known(c, source.clone());
+        } else {
+            camera_id = FieldEvidence::unknown(format!("{source} records no channel"));
         }
-    };
+        if let Some(t) = start {
+            timestamp_unix = FieldEvidence::known(t, source.clone());
+        } else {
+            timestamp_unix = FieldEvidence::unknown(format!("{source} records no start timestamp"));
+        }
+        if let Some(t) = end {
+            end_timestamp_unix = FieldEvidence::known(t, source.clone());
+        } else {
+            end_timestamp_unix = FieldEvidence::unknown(format!("{source} records no end timestamp"));
+        }
+    }
+
+    let mut oem_metadata: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(rec) = record {
+        let source = format!(
+            "OEM container record header at 0x{:X}",
+            rec.physical_region.offset
+        );
+        // A record's own header is read evidence and fills in what the index did not supply.
+        if !camera_id.is_known() {
+            if let Some(c) = rec.channel {
+                camera_id = FieldEvidence::known(c, source.clone());
+            }
+        }
+        if !timestamp_unix.is_known() {
+            if let Some(t) = rec.start_time_unix {
+                timestamp_unix = FieldEvidence::known(t, source.clone());
+            }
+        }
+        if let Some(ft) = &rec.frame_type {
+            frame_type = FieldEvidence::known(ft.clone(), source.clone());
+        }
+        if let Some(seq) = rec
+            .oem_metadata
+            .get("dhav_frame_number")
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            sequence_number = FieldEvidence::known(seq, source.clone());
+        }
+        oem_metadata.extend(rec.oem_metadata.clone());
+        if let Some(codec_hint) = &rec.codec_hint {
+            oem_metadata.insert("oem_declared_codec".into(), codec_hint.clone());
+        }
+    }
 
     DiscoveredFragment {
         evidence_id: ctx.evidence_id,
-        physical_region: target.region,
+        // Derived from the evidence id and the exact range, so it is stable across runs and
+        // across every later representation of these same bytes.
+        fragment_id: DiscoveredFragment::derive_id(ctx.evidence_id, physical_region),
+        physical_region,
         payload_region,
+        framing: if record.is_some() {
+            crate::fragment::FragmentFraming::OemContainerRecord
+        } else {
+            crate::fragment::FragmentFraming::ScanWindow
+        },
         originating_region: target.originating_region,
         oem_key: ctx.oem_key.clone(),
         profile_id: ctx.profile_id.clone(),
         discovery_method: target.discovery_method,
         codec: format!("{:?}", codec.codec),
+        partition,
         camera_id,
         timestamp_unix,
-        // Sequence association is the next phase's job. Deriving a sequence number from
-        // a single isolated fragment would be an invention.
-        sequence_number: FieldEvidence::unknown(
-            "fragment sequence association is not performed in this phase".to_string(),
-        ),
+        end_timestamp_unix,
+        sequence_number,
         frame_type,
+        parent_recording,
+        oem_metadata,
         validation,
+        confidence,
         provenance,
     }
 }
@@ -409,12 +590,105 @@ pub fn scan_target(
     ctx: &ScanContext,
     target: &ScanTarget,
 ) -> Result<Option<ScanFinding>, ForensicError> {
-    let (window, truncated_view) = read_bounded_window(reader, &target.region)?;
+    Ok(scan_target_all(reader, profile, parser, ctx, target)?
+        .into_iter()
+        .next())
+}
 
+/// Scan one planned target and produce a finding for **every** piece of video in it.
+///
+/// This is the production entry point. It replaces the one-candidate-per-target rule that made
+/// a 1 MiB sweep chunk equal exactly one "recovered recording" regardless of how many records it
+/// actually held.
+///
+/// ```text
+///   target region
+///      │
+///      ├─ parser.scan_region_for_candidates()   ── OEM structural carve
+///      │     └─ N container records, absolute offsets, own declared lengths
+///      │           └─ one finding per record, classified against the target's claim
+///      │
+///      └─ (no carver, or no records)            ── fall back to one window classification
+/// ```
+///
+/// The target's [`RegionClaim`] is index evidence supplied by the planner, and this function
+/// never upgrades it: a `true` from `recognize_candidate`, or a successfully carved record,
+/// cannot turn an unclaimed region into an indexed one.
+pub fn scan_target_all(
+    reader: &dyn EvidenceReader,
+    profile: &OemProfile,
+    parser: &dyn Parser,
+    ctx: &ScanContext,
+    target: &ScanTarget,
+) -> Result<Vec<ScanFinding>, ForensicError> {
+    // Bounds and overflow are enforced here, before any OEM code sees the region.
+    let (window, truncated_view) = read_bounded_window(reader, &target.region, ctx.max_window_bytes)?;
+
+    // Corroborating observation only. Recorded on each finding, never fed into the state.
+    // Errors are surfaced as "not recognised" rather than failing the whole region, since a
+    // format probe is not load-bearing here.
+    let oem_format_recognised =
+        BoundedReader::new(reader, target.region.offset, target.region.length)
+            .ok()
+            .and_then(|bounded| parser.recognize_candidate(&bounded, profile).ok())
+            .unwrap_or(false);
+
+    // ── OEM structural carve ────────────────────────────────────────────────
+    // A parser with no carver returns an empty vector, which is an honest "this OEM path
+    // supplies no structural carver" rather than a failure.
+    let records = match parser.scan_region_for_candidates(reader, profile, target.region) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!(
+                target: "recovery::scan",
+                offset = target.region.offset,
+                length = target.region.length,
+                error = %e,
+                "the OEM structural carver failed; falling back to whole-window classification"
+            );
+            Vec::new()
+        }
+    };
+
+    if !records.is_empty() {
+        let mut findings = Vec::with_capacity(records.len());
+        for record in &records {
+            // A record the parser placed outside the region it was asked about would break the
+            // provenance chain, so it is dropped and recorded rather than trusted.
+            if !record.physical_region.overlaps(&target.region) {
+                tracing::warn!(
+                    target: "recovery::scan",
+                    record_offset = record.physical_region.offset,
+                    region_offset = target.region.offset,
+                    region_length = target.region.length,
+                    "the OEM carver reported a record outside the scanned region; discarded"
+                );
+                continue;
+            }
+            if let Some(finding) = finding_from_record(
+                reader,
+                ctx,
+                target,
+                record,
+                oem_format_recognised,
+            )? {
+                findings.push(finding);
+            }
+        }
+        if !findings.is_empty() {
+            // Deterministic order: ascending physical offset.
+            findings.sort_by_key(|f| {
+                f.fragment.physical_region.offset
+            });
+            return Ok(findings);
+        }
+    }
+
+    // ── Fallback: classify the window as a whole ─────────────────────────────
     let codec = VideoReconstructor::classify_codec(&window);
     let signature_found = codec.codec != VideoCodec::Unknown || !codec.nal_evidence.is_empty();
     if !signature_found {
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
     // Structural validity comes from the codec classifier's own verdict — a signature
@@ -428,22 +702,15 @@ pub fn scan_target(
     };
 
     let Some(assessment) = classify_region_state(&target.claim, video) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
 
-    // Corroborating observation only. Recorded on the finding, never fed into the state.
-    // Errors are surfaced as "not recognised" rather than failing the whole region, since
-    // a format probe is not load-bearing here.
-    let oem_format_recognised = BoundedReader::new(reader, target.region.offset, target.region.length)
-        .ok()
-        .and_then(|bounded| parser.recognize_candidate(&bounded, profile).ok())
-        .unwrap_or(false);
+    let report = validation_report(&codec, structurally_valid, &target.claim, None);
+    let provenance =
+        build_provenance(ctx, target, target.region, &window, &assessment, truncated_view);
 
-    let report = validation_report(&codec, structurally_valid, &target.claim);
-    let provenance = build_provenance(ctx, target, &window, &assessment, truncated_view);
-
-    // The payload sub-range comes from the OEM parser via the planner. It is never
-    // inferred here — an unclaimed region has no established framing.
+    // The payload sub-range comes from the OEM parser via the planner. It is never inferred
+    // here — a region with no established framing has no payload boundary.
     let payload_region = target.payload_region;
 
     let fragment_validation = vs(
@@ -465,12 +732,16 @@ pub fn scan_target(
         "DiscoveredFragment",
     );
 
+    let confidence = window_confidence(&codec, &target.claim, truncated_view);
     let fragment = build_fragment(
         ctx,
         target,
+        target.region,
         &codec,
         payload_region,
+        None,
         fragment_validation,
+        confidence,
         provenance.clone(),
     );
 
@@ -484,11 +755,200 @@ pub fn scan_target(
         provenance,
     };
 
+    Ok(vec![ScanFinding {
+        candidate,
+        fragment,
+        oem_format_recognised,
+    }])
+}
+
+/// Build a finding from one OEM container record.
+///
+/// The record's own declared bounds become the fragment's physical region, so the fragment
+/// describes a record rather than an arbitrary slice of a scan chunk. Its payload is classified
+/// from the payload bytes the record identified, which is a stricter test than classifying a
+/// window that happens to contain framing.
+fn finding_from_record(
+    reader: &dyn EvidenceReader,
+    ctx: &ScanContext,
+    target: &ScanTarget,
+    record: &ContainerRecord,
+    oem_format_recognised: bool,
+) -> Result<Option<ScanFinding>, ForensicError> {
+    let classify_region = record.payload_region.unwrap_or(record.physical_region);
+    let (bytes, truncated_view) =
+        match read_bounded_window(reader, &classify_region, ctx.max_window_bytes) {
+            Ok(v) => v,
+            // A record pointing at unreadable bytes is not a recovered candidate. Recorded at
+            // debug level and skipped, rather than failing the whole region.
+            Err(e) => {
+                tracing::debug!(
+                    target: "recovery::scan",
+                    offset = classify_region.offset,
+                    length = classify_region.length,
+                    error = %e,
+                    "an OEM container record's bytes could not be read; skipped"
+                );
+                return Ok(None);
+            }
+        };
+
+    let codec = VideoReconstructor::classify_codec(&bytes);
+    let signature_found = codec.codec != VideoCodec::Unknown || !codec.nal_evidence.is_empty();
+    if !signature_found {
+        // The record exists structurally but carries no decodable video. Reporting it as a
+        // recovered video candidate would be a finding the bytes do not support.
+        return Ok(None);
+    }
+    let structurally_valid = matches!(codec.validation.state, ValidationStateKind::Pass)
+        && record.evidence.state == ValidationStateKind::Pass;
+
+    let video = VideoEvidence {
+        signature_found,
+        physically_present: !bytes.is_empty(),
+        structurally_valid,
+    };
+    let Some(assessment) = classify_region_state(&target.claim, video) else {
+        return Ok(None);
+    };
+
+    let report = validation_report(&codec, structurally_valid, &target.claim, Some(record));
+    let provenance = build_provenance(
+        ctx,
+        target,
+        record.physical_region,
+        &bytes,
+        &assessment,
+        truncated_view,
+    );
+
+    let fragment_validation = vs(
+        if truncated_view {
+            ValidationStateKind::Review
+        } else if structurally_valid {
+            ValidationStateKind::Pass
+        } else {
+            ValidationStateKind::Review
+        },
+        format!(
+            "{} | OEM container record: {} | {}",
+            codec.validation.reason,
+            record.evidence.reason,
+            if oem_format_recognised {
+                format!("{} container framing recognised in this region", ctx.oem_key)
+            } else {
+                format!(
+                    "{} container framing was not recognised across the whole region",
+                    ctx.oem_key
+                )
+            }
+        ),
+        "region_scan",
+        "DiscoveredFragment",
+    );
+
+    let confidence = record_confidence(&codec, record, &target.claim, truncated_view);
+    let fragment = build_fragment(
+        ctx,
+        target,
+        record.physical_region,
+        &codec,
+        record.payload_region,
+        Some(record),
+        fragment_validation,
+        confidence,
+        provenance.clone(),
+    );
+
+    let candidate = RecoveryCandidate {
+        recovery_level: assessment.recovery_level,
+        data_state: assessment.data_state,
+        recovery_status: assessment.recovery_status,
+        source_offsets: vec![record.physical_region],
+        validation: report,
+        provenance,
+    };
+
     Ok(Some(ScanFinding {
         candidate,
         fragment,
         oem_format_recognised,
     }))
+}
+
+/// Confidence for a fragment established from an OEM container record.
+///
+/// Composed from named, additive observations so the number is explainable rather than a magic
+/// weight. It is capped below 1.0: a bounded search can never be certain.
+fn record_confidence(
+    codec: &CodecEvidence,
+    record: &ContainerRecord,
+    claim: &RegionClaim,
+    truncated_view: bool,
+) -> FieldEvidence<f64> {
+    let mut score = 0.0f64;
+    let mut basis: Vec<&str> = Vec::new();
+
+    if record.evidence.state == ValidationStateKind::Pass {
+        score += 0.45;
+        basis.push("OEM container record fully verified (+0.45)");
+    } else {
+        score += 0.20;
+        basis.push("OEM container record structurally located but not fully verified (+0.20)");
+    }
+    if codec.validation.state == ValidationStateKind::Pass {
+        score += 0.30;
+        basis.push("codec validated from parameter sets (+0.30)");
+    } else if !codec.nal_evidence.is_empty() {
+        score += 0.10;
+        basis.push("codec signature observed but not validated (+0.10)");
+    }
+    if claim.recorder_metadata().is_some() {
+        score += 0.15;
+        basis.push("OEM metadata supplies channel/time for this region (+0.15)");
+    }
+    if record.payload_region.is_some() {
+        score += 0.05;
+        basis.push("payload boundary separated from framing (+0.05)");
+    }
+    if truncated_view {
+        score -= 0.10;
+        basis.push("only part of the record was read in one pass (-0.10)");
+    }
+
+    FieldEvidence::known(score.clamp(0.0, 0.95), basis.join("; "))
+}
+
+/// Confidence for a fragment established only from a window classification.
+fn window_confidence(
+    codec: &CodecEvidence,
+    claim: &RegionClaim,
+    truncated_view: bool,
+) -> FieldEvidence<f64> {
+    let mut score = 0.0f64;
+    let mut basis: Vec<&str> = Vec::new();
+
+    if codec.validation.state == ValidationStateKind::Pass {
+        score += 0.35;
+        basis.push("codec validated from parameter sets (+0.35)");
+    } else if !codec.nal_evidence.is_empty() {
+        score += 0.10;
+        basis.push("codec signature observed but not validated (+0.10)");
+    }
+    if claim.recorder_metadata().is_some() {
+        score += 0.20;
+        basis.push("OEM metadata supplies channel/time for this region (+0.20)");
+    }
+    basis.push(
+        "no OEM container record bounds these bytes, so the fragment covers a scan window rather \
+         than a record (no credit)",
+    );
+    if truncated_view {
+        score -= 0.10;
+        basis.push("only part of the window was read in one pass (-0.10)");
+    }
+
+    FieldEvidence::known(score.clamp(0.0, 0.95), basis.join("; "))
 }
 
 #[cfg(test)]
@@ -631,6 +1091,7 @@ mod tests {
             profile_hash: Some(Hash::sha256(vec![0; 32])),
             parser_id: "yes".into(),
             parser_version: "1.0".into(),
+            max_window_bytes: DEFAULT_SCAN_WINDOW_BYTES,
         }
     }
 
@@ -660,8 +1121,10 @@ mod tests {
             Region::new(0, reader.len()).unwrap(),
             RegionClaim::Indexed {
                 recording_id: "didx#0".into(),
+                partition: Some(0),
                 channel: Some(1),
                 start_time_unix: Some(1_700_000_000),
+                end_time_unix: None,
                 allocation: AllocationEvidence::Unknown,
             },
             DiscoveryMethod::IndexClaimedProbe,
@@ -796,8 +1259,10 @@ mod tests {
             Region::new(0, 4096).unwrap(),
             RegionClaim::Indexed {
                 recording_id: "didx#0".into(),
+                partition: None,
                 channel: Some(1),
                 start_time_unix: None,
+                end_time_unix: None,
                 allocation: AllocationEvidence::Allocated,
             },
             DiscoveryMethod::IndexClaimedProbe,
