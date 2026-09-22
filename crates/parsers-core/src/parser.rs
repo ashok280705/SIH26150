@@ -15,7 +15,9 @@ use forensic_core::OemProfile;
 
 use evidence_reader::EvidenceReader;
 
-use crate::storage::{RecordingIndex, StorageGeometry};
+use forensic_core::Region;
+
+use crate::storage::{ContainerRecord, RecordingIndex, StorageGeometry};
 
 /// Common interface for all OEM storage parsers.
 pub trait Parser: Send + Sync {
@@ -110,5 +112,33 @@ pub trait Parser: Send + Sync {
         _profile: &OemProfile,
     ) -> Result<Option<RecordingIndex>, ForensicError> {
         Ok(None)
+    }
+
+    /// Structurally carve a physical range, reporting **every** self-describing container
+    /// record found in it at its exact absolute offset.
+    ///
+    /// This is the OEM half of the raw-carving fallback. The generic engine hands over a
+    /// byte range it has established nothing about; the parser walks its own framing and
+    /// returns what is verifiably there. Returning several records is the normal case —
+    /// a scan range is not "one candidate".
+    ///
+    /// # Contract
+    ///
+    /// * Offsets in the returned records are absolute in the evidence, never rebased.
+    /// * A record whose declared length is implausible is either reported with a
+    ///   non-`Pass` evidence state or omitted. It is never repaired with a substituted
+    ///   length, and a record is never truncated to fit a convenient window.
+    /// * Records must not be fabricated to cover the whole range: bytes with no framing
+    ///   produce no record.
+    /// * The default implementation returns an empty vector, which the engine reads as
+    ///   "this OEM path supplies no structural carver" and falls back to classifying the
+    ///   window as a whole. That is an honest degradation, not a failure.
+    fn scan_region_for_candidates(
+        &self,
+        _reader: &dyn EvidenceReader,
+        _profile: &OemProfile,
+        _region: Region,
+    ) -> Result<Vec<ContainerRecord>, ForensicError> {
+        Ok(Vec::new())
     }
 }

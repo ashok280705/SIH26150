@@ -34,6 +34,7 @@ parsers-core = { path = "../crates/parsers-core" }
 recovery = { path = "../crates/recovery" }
 timeline = { path = "../crates/timeline" }
 reporting = { path = "../crates/reporting" }
+pipeline = { path = "../crates/pipeline" }
 chrono = { workspace = true }
 tempfile = "3"
 

@@ -145,6 +145,13 @@ impl IndexAuthority {
 pub struct IndexedRecording {
     /// Stable identifier derived from the index itself (e.g. "didx#3"), for provenance.
     pub recording_id: String,
+    /// The OEM partition/volume this recording lives in, when the storage structures are
+    /// partitioned and the parser established which partition described it.
+    ///
+    /// `None` for OEMs whose structures describe a single flat region — that is an
+    /// accurate statement about the format, not a missing value.
+    #[serde(default)]
+    pub partition: Option<u32>,
     /// Camera/channel, if the index records one.
     pub channel: Option<u32>,
     /// Recording start, as unix seconds, if the index records one.
@@ -184,7 +191,27 @@ pub struct RecordingIndex {
     pub authority: IndexAuthority,
     /// Entries successfully parsed. May be shorter than the declared count, in which
     /// case `authority` is `Partial`.
+    ///
+    /// These are the recordings the recorder's metadata **currently references** — the
+    /// accessible set. Only these can support an `Active` conclusion.
     pub recordings: Vec<IndexedRecording>,
+    /// Recordings whose OEM metadata survives and describes real physical bytes, but
+    /// which are **not** part of the accessible recording set.
+    ///
+    /// This is the "available" / orphaned case: the filesystem still carries enough
+    /// structure to say where the recording was, what channel it belonged to and when it
+    /// ran, yet the recorder no longer reaches it through its active metadata. Examples
+    /// this platform has evidence for: a Dahua block chain whose blocks are valid but
+    /// unreachable from any first block, and every chain on a volume where a secondary
+    /// partition table downgrades the whole accessible set.
+    ///
+    /// It is deliberately a separate list rather than a flag on `recordings`, so a
+    /// consumer that only knows about `recordings` cannot accidentally report an
+    /// available recording as active. It is **not** evidence of deletion: entries here
+    /// classify as orphaned, never as `Deleted`, unless the OEM structures separately
+    /// record a free/deallocated marker in [`IndexedRecording::allocation`].
+    #[serde(default)]
+    pub unreferenced_recordings: Vec<IndexedRecording>,
     /// Entry count the index header itself declared, if it declares one.
     pub declared_entry_count: Option<usize>,
     /// Physical extent of the index structure.
@@ -194,11 +221,60 @@ pub struct RecordingIndex {
 }
 
 impl RecordingIndex {
-    /// Every physical region claimed by every entry, in index order.
+    /// Every physical region claimed by every accessible entry, in index order.
     pub fn claimed_regions(&self) -> Vec<Region> {
         self.recordings
             .iter()
             .flat_map(|r| r.physical_regions.iter().copied())
             .collect()
     }
+
+    /// Every physical region described by metadata that survives but is not accessible.
+    pub fn unreferenced_regions(&self) -> Vec<Region> {
+        self.unreferenced_recordings
+            .iter()
+            .flat_map(|r| r.physical_regions.iter().copied())
+            .collect()
+    }
 }
+
+/// One self-describing container record located by structural scanning of a physical
+/// range, rather than by reading an index.
+///
+/// This is how an OEM parser reports "there are three DHAV frames in the range you
+/// handed me, at these exact absolute offsets" without the generic engine learning
+/// anything about DHAV. It exists so raw carving is not forced to assume one candidate
+/// per scan chunk.
+///
+/// # This is not an index claim
+///
+/// A `ContainerRecord` says a structure is physically present and internally
+/// consistent. It says nothing about whether the recorder references it, so it can
+/// never produce `Active`. Index/claim reasoning stays with
+/// [`RecordingIndex`]/[`IndexAuthority`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContainerRecord {
+    /// Exact absolute physical range of the whole record, framing included. Never
+    /// rebased to the start of the scanned region.
+    pub physical_region: Region,
+    /// The elementary-stream payload sub-range, when the framing was understood well
+    /// enough to separate it. `None` when it was not.
+    pub payload_region: Option<Region>,
+    /// Channel as decoded from the record's own header, 1-based, when it carries one.
+    pub channel: Option<u32>,
+    /// Record timestamp as unix seconds, when the header carries a decodable one. Never
+    /// substituted with the epoch or with wall-clock time.
+    pub start_time_unix: Option<i64>,
+    /// Frame/record type label from the container header, when it carries one.
+    pub frame_type: Option<String>,
+    /// Codec as labelled by the container header. Never inferred from payload bytes
+    /// here — that is a separate downstream signal.
+    pub codec_hint: Option<String>,
+    /// Verbatim OEM-specific fields (declared length, extra-header length, raw channel
+    /// value, trailer verification, resolution, ...).
+    pub oem_metadata: BTreeMap<String, String>,
+    /// Why this record is or is not structurally trustworthy. A record whose declared
+    /// length or trailer failed verification must not be `Pass`.
+    pub evidence: ValidationState,
+}
+

@@ -1,5 +1,5 @@
 profile_id = "dahua-dhfs-v1.0"
-profile_version = "1.0.0"
+profile_version = "1.1.0"
 schema_version = "1.0"
 oem = "dahua"
 storage_family = "DHFS"
@@ -8,7 +8,15 @@ storage_family = "DHFS"
 models = ["XVR", "NVR", "DVR"]
 firmwares = []
 storage_variants = ["single_disk", "jbod"]
-reference = "Dahua Forensics Research & DHFS Specification 2024"
+reference = "Dahua DHFS 4.1 on-disk structure notes; DHAV container framing cross-checked against the public FFmpeg 'dhav' demuxer (libavformat/dhav.c)"
+
+# ---------------------------------------------------------------------------------
+# Signatures
+# ---------------------------------------------------------------------------------
+# `dhfs_magic` is deliberately the 4-byte "DHFS" prefix rather than the full
+# "DHFS4.1\0" string: it is the attribution signal, and it must keep matching DHFS
+# variants whose version suffix this platform has no evidence for. Version
+# discrimination is the parser's job (see `dhfs41_magic` below), not the detector's.
 
 [[signatures]]
 name = "dhfs_magic"
@@ -22,13 +30,28 @@ explanation = "Dahua file system superblock magic identifier at sector 0"
 type = "exact"
 offset = 0
 
+# The full DHFS 4.1 volume signature. Used by the parser to decide whether the
+# DHFS 4.1 partition-table model applies. It contributes no detection weight of its
+# own — the Dahua detector does not evaluate it — so `confidence_weights` is unchanged.
+[[signatures]]
+name = "dhfs41_magic"
+pattern_hex = "44 48 46 53 34 2E 31 00" # "DHFS4.1\0"
+evidence_status = "validated"
+weight = 0.01
+is_exclusive = false
+explanation = "Dahua DHFS 4.1 volume signature at volume offset 0. Distinguishes a recognised DHFS 4.1 volume from an unsupported DHFS variant; not used for OEM attribution."
+
+[[signatures.offset_constraints]]
+type = "exact"
+offset = 0
+
 [[signatures]]
 name = "dhav_tag"
 pattern_hex = "44 48 41 56" # "DHAV"
 evidence_status = "provisional"
 weight = 0.40
 is_exclusive = false
-explanation = "Dahua container stream packet header tag"
+explanation = "Dahua container frame header tag"
 
 [[signatures.offset_constraints]]
 type = "aligned_range"
@@ -36,18 +59,56 @@ start = 0
 end = 10485760 # 10 MiB
 alignment = 512
 
-# The recording index table header. Located via the superblock's index_offset field,
-# never by scanning, so it carries no offset_constraints and contributes no detection
-# weight of its own — it is a structural verification marker used by the index reader,
-# not an attribution signal. The Dahua detector does not evaluate it, so
-# confidence_weights below are unchanged.
+# The lowercase frame trailer that closes a DHAV frame. Located relative to a frame's
+# own declared length, never by scanning, so it carries no offset constraints and
+# contributes no attribution weight.
+[[signatures]]
+name = "dhav_footer_tag"
+pattern_hex = "64 68 61 76" # "dhav"
+evidence_status = "validated"
+weight = 0.01
+is_exclusive = false
+explanation = "Dahua DHAV frame trailer tag, located at frame_start + total_length - 8. Used to corroborate a frame's declared length; not used for OEM attribution."
+
+# Dahua per-clip frame index header. Located via a video block's own contents, never by
+# a global scan.
+[[signatures]]
+name = "dhii_magic"
+pattern_hex = "44 48 49 49" # "DHII"
+evidence_status = "provisional"
+weight = 0.01
+is_exclusive = false
+explanation = "Dahua DHII per-clip frame index header. Located inside a video block; used to order frames within a clip, not for OEM attribution."
+
+# The two partition-table identifiers observed at partition-table offset +304. Both end
+# in the AA55AA55 marker pair; the leading dword distinguishes the table generation.
+[[signatures]]
+name = "partition_table_id_gen0"
+pattern_hex = "00 00 00 00 AA 55 AA 55"
+evidence_status = "provisional"
+weight = 0.01
+is_exclusive = false
+explanation = "DHFS 4.1 partition table identifier (generation 0) at partition table offset +304. Verified before any partition entry is trusted; not used for OEM attribution."
+
+[[signatures]]
+name = "partition_table_id_gen1"
+pattern_hex = "01 00 00 00 AA 55 AA 55"
+evidence_status = "provisional"
+weight = 0.01
+is_exclusive = false
+explanation = "DHFS 4.1 partition table identifier (generation 1) at partition table offset +304. Verified before any partition entry is trusted; not used for OEM attribution."
+
+# The legacy recording index table header. Located via the flat superblock's
+# index_offset field, never by scanning. It is NOT part of the DHFS 4.1 structure set;
+# it is retained as a provisional fallback for volumes that present it, and the parser
+# records the fallback in its evidence rather than presenting it as the real filesystem.
 [[signatures]]
 name = "didx_magic"
 pattern_hex = "44 49 44 58" # "DIDX"
 evidence_status = "provisional"
 weight = 0.01
 is_exclusive = false
-explanation = "Dahua DIDX recording index table header, located via the superblock index_offset field. Used to verify the index structure before its entries are trusted; not used for OEM attribution."
+explanation = "Flat-model recording index table header, located via a superblock index_offset field. Provisional fallback only; the DHFS 4.1 authoritative structures are the partition table and per-partition block tables."
 
 [confidence_weights]
 max_possible_score = 1.25
@@ -55,18 +116,166 @@ min_threshold = 0.65
 
 # --- Structural layout ------------------------------------------------------------
 #
-# Byte offsets of fields inside the DHFS superblock and DIDX index, all little-endian.
-# These are OEM facts and therefore live here as versioned profile DATA, never as Rust
-# source constants. Verified against the DHFS/DHAV/DIDX structures the platform's
-# Dahua corpus is built from (see tests/fixtures + generate_dahua_raw.py).
+# Byte offsets, strides and sizes of the Dahua on-disk structures, all little-endian
+# unless stated. These are OEM facts and therefore live here as versioned profile
+# DATA, never as Rust source constants.
 #
 # Any offset not listed here is one the platform has no evidence for; the parser
 # reports the corresponding field as Unknown rather than guessing.
 [layout]
-superblock_size = 512
-dhav_start = 512
 
-# DHFS superblock field offsets (from offset 0).
+# ── Volume / sector geometry ─────────────────────────────────────────────────────
+superblock_size = 512
+dhfs41_magic_length = 8
+# DHFS addresses every structure in 512-byte sectors. This is the unit used by
+# SectorOfPartitionStart, SectorOfPartitionInfoInPartition, IndexStartSector and
+# VideoStartSector, and is independent of the physical sector size of the medium.
+sector_size = 512
+# Byte offset of the DHFS filesystem inside the evidence. Zero for a whole-volume
+# image; a partitioned host disk would set this per-volume at acquisition time.
+filesystem_disk_offset = 0
+
+# ── Partition table ──────────────────────────────────────────────────────────────
+partition_table_primary_offset = 15360            # 0x3C00
+partition_table_secondary_offset_a = 15872        # 0x3E00
+partition_table_secondary_offset_b = 31744        # 0x7C00
+partition_table_identifier_offset = 304           # 8 bytes: ........AA55AA55
+partition_table_identifier_size = 8
+partition_table_size = 512
+partition_table_max_partitions = 4
+partition_entry_stride = 64
+partition_entry_base_offset = 0                   # first entry at table start
+# SectorOfPartitionInfoInPartition — i32, sectors from the partition start.
+partition_entry_info_sector_offset = 20
+# SectorOfPartitionStart — i64, sectors from the filesystem disk offset.
+partition_entry_start_sector_offset = 48
+
+# ── Partition information ────────────────────────────────────────────────────────
+# Read at: filesystem_disk_offset
+#          + (SectorOfPartitionStart + SectorOfPartitionInfoInPartition) * sector_size
+partition_info_size = 512
+partition_info_index_start_sector_offset = 68     # i32
+partition_info_video_start_sector_offset = 72     # i32
+partition_info_block_count_offset = 76            # i32
+
+# ── Block table ──────────────────────────────────────────────────────────────────
+# Table base: filesystem_disk_offset + (SectorOfPartitionStart + IndexStartSector) * 512
+# Block base: filesystem_disk_offset + (SectorOfPartitionStart + VideoStartSector) * 512
+#             + blockNumber * video_block_size
+block_table_entry_size = 32
+video_block_size = 2097152                        # 2 MiB
+block_entry_type_offset = 0                       # u8
+block_entry_legacy_channel_offset = 1             # u8, channel = (value & 0x0F) + 1
+block_entry_start_time_offset = 4                 # packed Dahua timestamp, u32
+block_entry_end_time_offset = 8                   # packed Dahua timestamp, u32
+block_entry_next_block_offset = 12                # i32
+block_entry_sector_count_offset = 16              # i16, only meaningful on the last block
+block_entry_previous_block_offset = 20            # i32
+block_entry_first_block_offset = 24               # i32
+block_entry_extended_channel_flag_offset = 29     # u8, bit 0 set => extended channel in use
+block_entry_extended_channel_offset = 31          # u8, channel = value & 0x1F
+block_entry_type_empty_primary = 254              # 0xFE
+block_entry_type_empty_secondary = 0              # 0x00
+block_entry_legacy_channel_mask = 15              # 0x0F
+block_entry_extended_channel_mask = 31            # 0x1F
+block_entry_extended_channel_flag_mask = 1        # bit 0 of +29
+# Upper bound on how many blocks one chain traversal will follow before the chain is
+# reported as unbounded. Also the loop guard: a chain can never exceed the block count.
+block_chain_max_length = 262144
+
+# ── DHII per-clip frame index ────────────────────────────────────────────────────
+dhii_header_size = 12
+dhii_index_length_offset = 4                      # u32, total index length
+dhii_count_offset = 8                             # i32, number of index-header entries
+dhii_header_entry_size = 12
+dhii_header_entry_type_offset = 0                 # u32
+dhii_header_entry_first_entry_offset = 4          # u32, from clip start
+dhii_header_entry_length_offset = 8               # u32
+dhii_header_entry_max_count = 4096
+# Frame index entry: u32 frame offset, i32 frame length, packed timestamp.
+dhii_entry_size = 12
+dhii_entry_frame_offset_offset = 0                # u32; 0xFFFFFFFF = no entry
+dhii_entry_frame_length_offset = 4                # i32
+dhii_entry_timestamp_offset = 8                   # packed Dahua timestamp, u32
+dhii_entry_offset_sentinel = 4294967295           # 0xFFFFFFFF
+dhii_entry_type_reference_frames = 1
+dhii_entry_type_jpeg_frames = 3
+dhii_entry_type_json_jpeg = 4
+dhii_entry_type_unknown_entries = 6
+
+# ── DHAV frame framing (authoritative) ───────────────────────────────────────────
+# Field offsets are relative to the "DHAV" tag. The 24-byte fixed header is followed
+# by `extra_header_length` bytes of TLV extension, then the elementary-stream payload,
+# then the 8-byte trailer ("dhav" + u32 of total_length - 8).
+dhav_fixed_header_size = 24
+dhav_frame_type_offset = 4                        # u8
+dhav_subtype_offset = 5                           # u8
+dhav_channel_offset = 6                           # channel field, 0-based
+dhav_channel_field_size = 2                       # bytes read for the channel field
+dhav_frame_number_offset = 8                      # u32
+dhav_total_length_offset = 12                     # i32, DHAV..dhav trailer inclusive
+dhav_packed_timestamp_offset = 16                 # packed Dahua timestamp, u32
+dhav_sub_timestamp_offset = 20                    # u16, intra-second counter
+dhav_extra_header_length_offset = 22              # u8
+dhav_checksum_offset = 23                         # u8
+dhav_trailer_size = 8                             # "dhav" + u32 back-reference
+dhav_footer_size = 4                              # the "dhav" tag itself
+dhav_min_total_length = 32                        # 24-byte header + 8-byte trailer
+dhav_max_total_length = 67108864                  # 64 MiB structural sanity bound
+# Frame type discriminators.
+dhav_frame_type_video_key = 253                   # 0xFD
+dhav_frame_type_video_delta = 252                 # 0xFC
+dhav_frame_type_audio = 240                       # 0xF0
+dhav_frame_type_info = 241                        # 0xF1, carries no payload
+# Extra-header TLV tags the platform can interpret.
+dhav_ext_tag_resolution_scaled = 128              # 0x80: skip 1, w = 8*u8, h = 8*u8
+dhav_ext_tag_codec = 129                          # 0x81: skip 1, codec u8, fps u8
+dhav_ext_tag_resolution_exact = 130               # 0x82: skip 3, w u16, h u16
+dhav_ext_tag_audio = 131                          # 0x83
+dhav_ext_record_size_short = 4
+dhav_ext_record_size_long = 8
+# Video codec identifiers carried by TLV 0x81.
+dhav_codec_mpeg4 = 1
+dhav_codec_mjpeg = 3
+dhav_codec_h264_a = 2
+dhav_codec_h264_b = 4
+dhav_codec_h264_c = 8
+dhav_codec_h265 = 12
+
+# ── Packed timestamp encoding ────────────────────────────────────────────────────
+# A 32-bit packed field: sec(6) min(6) hour(5) day(5) month(4) year(6), year base 2000.
+dahua_timestamp_base_year = 2000
+dahua_timestamp_second_shift = 0
+dahua_timestamp_second_mask = 63
+dahua_timestamp_minute_shift = 6
+dahua_timestamp_minute_mask = 63
+dahua_timestamp_hour_shift = 12
+dahua_timestamp_hour_mask = 31
+dahua_timestamp_day_shift = 17
+dahua_timestamp_day_mask = 31
+dahua_timestamp_month_shift = 22
+dahua_timestamp_month_mask = 15
+dahua_timestamp_year_shift = 26
+dahua_timestamp_year_mask = 63
+
+# ── Bounded scanning ─────────────────────────────────────────────────────────────
+# Window used by the raw DHAV carver for one streaming read. This is a performance
+# knob, never a semantic limit: a frame whose declared length exceeds the window is
+# still described in full, and the next window resumes at the frame's end.
+dhav_carve_window_bytes = 4194304
+# Overlap carried between carve windows so framing straddling a window boundary is
+# still found. Must be at least the fixed header size.
+dhav_carve_window_overlap_bytes = 64
+# Upper bound on frames described from one scan region, so a hostile image cannot
+# make one region produce unbounded output.
+dhav_carve_max_frames_per_region = 4096
+
+# --- Flat-model fallback layout ----------------------------------------------------
+#
+# Offsets for the provisional flat superblock + DIDX model. Retained so volumes that
+# present those structures keep working; the parser records that this path is a
+# fallback and does not present it as the DHFS 4.1 filesystem.
+dhav_start = 512
 superblock_version_offset = 4        # u32 LE
 superblock_sector_size_offset = 8    # u32 LE
 superblock_block_size_offset = 12    # u32 LE
@@ -80,24 +289,12 @@ superblock_serial_offset = 64        # 32 bytes ASCII
 superblock_serial_len = 32
 superblock_volume_label_offset = 96  # 16 bytes ASCII
 superblock_volume_label_len = 16
-
-# DIDX index layout.
 index_header_size = 16               # "DIDX" + u32 entry_count + 8 reserved
 index_entry_count_offset = 4         # u32 LE, relative to index start
 index_entry_size = 32
 index_entry_channel_offset = 0       # u8, 0-based on disk
 index_entry_frame_type_offset = 1    # u8 (0xFD = I-frame)
-index_entry_offset_offset = 4        # u64 LE — physical offset of the DHAV packet
-index_entry_length_offset = 12       # u64 LE — total DHAV packet length
+index_entry_offset_offset = 4        # u64 LE — physical offset of the DHAV frame
+index_entry_length_offset = 12       # u64 LE — total DHAV frame length
 index_entry_timestamp_offset = 20    # u64 LE — unix seconds
 index_entry_crc_offset = 28          # u32 LE
-
-# DHAV container framing, needed to separate the elementary-stream payload from the
-# container header/footer inside an index-claimed region, and to verify that a DHAV tag
-# match is real framing rather than four coincidental bytes.
-dhav_header_size = 64
-dhav_footer_size = 4
-dhav_frame_type_offset = 4    # u8, relative to the DHAV tag
-dhav_channel_offset = 5       # u8, 0-based
-dhav_packet_len_offset = 12   # u32 LE, total bytes DHAV..dhav inclusive
-dhav_timestamp_offset = 16    # u64 LE, unix seconds

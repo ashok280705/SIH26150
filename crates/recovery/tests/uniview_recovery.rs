@@ -148,6 +148,7 @@ fn request<'a>(
         parser,
         bounds,
         scan_window: None,
+        read_window_bytes: None,
     }
 }
 

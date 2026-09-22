@@ -349,7 +349,7 @@ fn candidates_to_events(
     fragments: &[recovery::DiscoveredFragment],
 ) -> (Vec<TimelineEvent>, usize) {
     use forensic_core::identifiers::ProfileId;
-    use forensic_core::{Hash, Provenance, RawTimestamp, TimeEvidence, TimeZoneState};
+    use forensic_core::{RawTimestamp, TimeEvidence, TimeZoneState};
 
     let mut events = Vec::new();
     let mut withheld = 0usize;
@@ -370,18 +370,14 @@ fn candidates_to_events(
             continue;
         };
 
-        // Provenance carries the candidate's real evidence id and source region, not a
-        // freshly minted one.
-        let prov = Provenance::new(
-            f.evidence_id,
-            Hash::sha256(vec![0; 32]),
-            vec![forensic_core::SourceRegion::new(f.evidence_id, region)
-                .with_description("recovered candidate region")],
-            "recovery-engine",
-            env!("CARGO_PKG_VERSION"),
-            Hash::sha256(vec![0; 32]),
-            c.validation.structure.clone(),
-        );
+        // The candidate's own provenance is reused verbatim rather than a fresh one being
+        // built: it already carries the real evidence id, the real source regions, the real
+        // content hashes computed by the scanner, and the recovery level. Rebuilding it here
+        // with placeholder digests is what previously broke the chain between a timeline event
+        // and the bytes behind it.
+        let prov = c.provenance.clone();
+        let content_hash = prov.output_hash.clone();
+        let event_profile_hash = prov.profile_hash.clone().unwrap_or(content_hash);
         let time = TimeEvidence {
             raw: RawTimestamp {
                 value: raw_value,
@@ -399,8 +395,9 @@ fn candidates_to_events(
             *channel,
             time,
             format!(
-                "Recovered {:?} candidate ({:?}/{:?}) at 0x{:X}, {} via {}",
+                "Recovered {:?} candidate {} ({:?}/{:?}) at 0x{:X}, {} via {}",
                 c.recovery_level,
+                f.fragment_id,
                 c.data_state,
                 c.recovery_status,
                 region.offset,
@@ -411,7 +408,10 @@ fn candidates_to_events(
             "recovery-engine".to_string(),
             env!("CARGO_PKG_VERSION").to_string(),
             ProfileId(f.profile_id.clone()),
-            Hash::sha256(vec![0; 32]),
+            // The profile hash the scanner actually applied, when it recorded one. Falling back
+            // to the candidate's content digest keeps the field a real digest rather than a
+            // zero-filled placeholder that would read as a verified hash in a report.
+            event_profile_hash,
         ));
     }
 
@@ -723,6 +723,7 @@ pub fn run_pipeline(
                 parser,
                 bounds: &bounds,
                 scan_window: None,
+                read_window_bytes: None,
             })?;
             let recovery::RecoveryOutcome {
                 candidates,

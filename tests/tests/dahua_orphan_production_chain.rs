@@ -1,178 +1,38 @@
-//! # Full production chain: OEM detection → index parsing → orphan discovery
+//! # Full production chain over a Dahua DHFS 4.1 volume
 //!
-//! The companion test in `crates/recovery/tests/dahua_index_aware_recovery.rs` proves the
-//! recovery engine's behaviour. This one proves the **whole production chain** in front of
-//! it, using the same orchestrators the API handler uses:
+//! Every stage is the real one, driven through the same orchestrators the API handler uses:
 //!
 //! ```text
 //!   RawReader (read-only)
-//!      ↓ DetectionOrchestrator::run          — real detectors, real profiles
-//!      ↓ ConfidenceEngine::classify          — real attribution
-//!      ↓ ProfileRegistry::find_applicable    — real versioned profile from profiles/
-//!      ↓ ParsingOrchestrator::parser_for     — the real registered Dahua parser
-//!      ↓ RecoveryEngine::execute_recovery    — the production recovery entry point
-//!      ↓ DataState::Orphaned                 — reached from index evidence
+//!      ↓ DetectionOrchestrator::run            — real detectors, real profiles
+//!      ↓ ConfidenceEngine::classify            — real attribution
+//!      ↓ ProfileRegistry::find_applicable      — the versioned profile from profiles/
+//!      ↓ ParsingOrchestrator::run_parsing      — the registered Dahua parser, all five stages
+//!      ↓ RecoveryEngine::execute_recovery      — the production recovery entry point
+//!      ↓ DataState::{Active, Orphaned, Unindexed}
+//!      ↓ parser_dahua::reconstruct_recording   — chain → ordered blocks → DHII → DHAV frames
+//!      ↓ VideoReconstructor::reconstruct       — native + derived artifacts, real digests
+//!      ↓ exportable evidence artifact
+//!   run_pipeline(...)                          — the audited end-to-end flow
 //! ```
 //!
-//! The load-bearing assertion is the separation the phase exists to establish:
-//! detection saying "this is Dahua" does **not** make any region `Active`, and the only
-//! thing that produces `Orphaned` is an authoritative index that governs bytes it does not
-//! reference.
+//! The load-bearing assertions are the separations the design exists to enforce: detection saying
+//! "this is Dahua" does not make any region `Active`; an unreachable chain is `Orphaned` and never
+//! `Deleted`; and an exported artifact traces back to the exact physical bytes and the same
+//! identifiers the engine assigned.
 
 use confidence::config::ConfidenceConfig;
 use confidence::engine::ConfidenceEngine;
 use detection::orchestrator::DetectionOrchestrator;
-use evidence_reader::RawReader;
+use evidence_reader::{EvidenceReader, RawReader};
 use forensic_core::{
     CancelToken, DataState, EvidenceId, ProfileRegistry, RecoveryBounds, RecoveryLevel, Region,
+    ValidationStateKind,
 };
+use forensic_tests::dahua_fixtures::{self as fx, realistic};
 use parsing::orchestrator::ParsingOrchestrator;
 use recovery::{RecoveryEngine, RecoveryRequest};
 use std::path::{Path, PathBuf};
-
-const SECTOR: u64 = 512;
-const DHAV_HEADER: u64 = 64;
-const DHAV_FOOTER: u64 = 4;
-const BLOCK_SIZE: u32 = 65536;
-const BASE_UNIX: u64 = 1_790_500_000;
-const SLOT: u64 = 1024 * 1024;
-
-/// A genuine H.264 Annex-B clip (SPS + PPS + IDR + P-slices).
-///
-/// Real parameter sets are required: the codec classifier only reports PASS on actual
-/// SPS/PPS NAL headers, and only validated video can reach `Active` or `Orphaned`. The
-/// test therefore cannot pass on a fabricated byte pattern.
-fn h264_clip(seed: u8) -> Vec<u8> {
-    let mut v = Vec::new();
-    v.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1F, 0x96, 0x54, 0x0A, 0x0F]);
-    v.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80]);
-    v.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04, seed, 0x11, 0x22, 0x33]);
-    for i in 0..8u8 {
-        v.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, seed, i]);
-    }
-    v
-}
-
-fn align_up(v: u64, a: u64) -> u64 {
-    ((v + a - 1) / a) * a
-}
-
-fn put_u32(b: &mut [u8], at: u64, v: u32) {
-    b[at as usize..at as usize + 4].copy_from_slice(&v.to_le_bytes());
-}
-
-fn put_u64(b: &mut [u8], at: u64, v: u64) {
-    b[at as usize..at as usize + 8].copy_from_slice(&v.to_le_bytes());
-}
-
-struct Layout {
-    bytes: Vec<u8>,
-    /// Physical regions of the DHAV packets the DIDX index references.
-    indexed_packets: Vec<Region>,
-    /// Physical region of the DHAV packet that is present but NOT referenced.
-    orphan_packet: Region,
-    index_offset: u64,
-    disk_size: u64,
-}
-
-/// Build a DHFS image with three recordings, two of which the DIDX index references.
-///
-/// Byte layout matches the DHFS superblock / DHAV packet / DIDX entry structures the
-/// `profiles/dahua/dahua-dhfs-v1.0.toml` `[layout]` table declares, which is the same
-/// layout `generate_dahua_raw.py` writes. Nothing here bypasses the parser: the parser has
-/// to read the superblock and walk the index for the test to see any claims at all.
-fn build_dhfs_image() -> Layout {
-    // (channel0, timestamp, payload, indexed)
-    let segments: Vec<(u8, u64, Vec<u8>, bool)> = vec![
-        (0, BASE_UNIX, h264_clip(0x51), true),
-        // Physically present, deliberately absent from the index.
-        (1, BASE_UNIX + 300, h264_clip(0x62), false),
-        (0, BASE_UNIX + 600, h264_clip(0x73), true),
-    ];
-
-    let video_start = SECTOR;
-    let offsets: Vec<u64> = (0..segments.len())
-        .map(|i| align_up(video_start + (i as u64) * SLOT, SECTOR))
-        .collect();
-    let totals: Vec<u64> = segments
-        .iter()
-        .map(|(_, _, p, _)| DHAV_HEADER + p.len() as u64 + DHAV_FOOTER)
-        .collect();
-
-    let indexed_count = segments.iter().filter(|s| s.3).count() as u64;
-    let last_end = offsets[segments.len() - 1] + totals[segments.len() - 1];
-    let index_offset = align_up(last_end + SLOT, SECTOR);
-    let index_len = 16 + indexed_count * 32;
-    let disk_size = align_up(index_offset + index_len + SECTOR, SLOT);
-
-    let mut b = vec![0u8; disk_size as usize];
-
-    // DHFS superblock.
-    b[0..4].copy_from_slice(b"DHFS");
-    put_u32(&mut b, 4, 0x0001_0000);
-    put_u32(&mut b, 8, SECTOR as u32);
-    put_u32(&mut b, 12, BLOCK_SIZE);
-    put_u64(&mut b, 16, disk_size / BLOCK_SIZE as u64);
-    put_u64(&mut b, 24, video_start);
-    put_u64(&mut b, 32, index_offset);
-    put_u64(&mut b, 40, BASE_UNIX);
-    b[48..48 + 13].copy_from_slice(b"DHI-XVR5216AN");
-    b[96..96 + 12].copy_from_slice(b"DVR_REC_VOL0");
-
-    // DHAV packets.
-    for (i, (ch0, ts, payload, _)) in segments.iter().enumerate() {
-        let at = offsets[i];
-        let a = at as usize;
-        b[a..a + 4].copy_from_slice(b"DHAV");
-        b[a + 4] = 0xFD;
-        b[a + 5] = *ch0;
-        put_u32(&mut b, at + 8, i as u32 + 1);
-        put_u32(&mut b, at + 12, totals[i] as u32);
-        put_u64(&mut b, at + 16, *ts);
-        b[a + 28..a + 30].copy_from_slice(&1280u16.to_le_bytes());
-        b[a + 30..a + 32].copy_from_slice(&720u16.to_le_bytes());
-        b[a + 32..a + 41].copy_from_slice(b"H.264/AVC");
-        let name = format!("CH{:02}", ch0 + 1).into_bytes();
-        b[a + 48..a + 48 + name.len()].copy_from_slice(&name);
-        let p = a + DHAV_HEADER as usize;
-        b[p..p + payload.len()].copy_from_slice(payload);
-        b[p + payload.len()..p + payload.len() + 4].copy_from_slice(b"dhav");
-    }
-
-    // DIDX index: only the indexed segments.
-    b[index_offset as usize..index_offset as usize + 4].copy_from_slice(b"DIDX");
-    put_u32(&mut b, index_offset + 4, indexed_count as u32);
-    let mut e = index_offset + 16;
-    for (i, (ch0, ts, _, indexed)) in segments.iter().enumerate() {
-        if !*indexed {
-            continue;
-        }
-        b[e as usize] = *ch0;
-        b[e as usize + 1] = 0xFD;
-        put_u64(&mut b, e + 4, offsets[i]);
-        put_u64(&mut b, e + 12, totals[i]);
-        put_u64(&mut b, e + 20, *ts);
-        put_u32(&mut b, e + 28, 0x1A2B_3C4D);
-        e += 32;
-    }
-
-    let indexed_packets = segments
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.3)
-        .map(|(i, _)| Region::new(offsets[i], totals[i]).unwrap())
-        .collect();
-    let orphan_idx = segments.iter().position(|s| !s.3).unwrap();
-    let orphan_packet = Region::new(offsets[orphan_idx], totals[orphan_idx]).unwrap();
-
-    Layout {
-        bytes: b,
-        indexed_packets,
-        orphan_packet,
-        index_offset,
-        disk_size,
-    }
-}
 
 fn profiles_dir() -> PathBuf {
     for p in ["profiles", "../profiles", "../../profiles"] {
@@ -195,19 +55,37 @@ fn bounds() -> RecoveryBounds {
     }
 }
 
+struct Chain {
+    image: fx::DhfsImage,
+    reader: RawReader,
+    registry: ProfileRegistry,
+    _dir: tempfile::TempDir,
+}
+
+fn open() -> Chain {
+    let image = fx::realistic_xvr_volume();
+    let dir = tempfile::tempdir().unwrap();
+    let path = image
+        .write_to_dir(dir.path(), "dahua_dhfs41_production.raw")
+        .unwrap();
+    let reader = RawReader::open(path.to_str().unwrap()).expect("evidence opens read-only");
+    let registry = ProfileRegistry::load_from_dir(&profiles_dir()).expect("profiles load");
+    Chain {
+        image,
+        reader,
+        registry,
+        _dir: dir,
+    }
+}
+
 #[test]
 fn full_chain_detection_to_orphan_discovery() {
-    let layout = build_dhfs_image();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("dahua_dhfs_production_chain.raw");
-    std::fs::write(&path, &layout.bytes).unwrap();
-    let reader = RawReader::open(path.to_str().unwrap()).expect("evidence opens read-only");
-
-    let registry = ProfileRegistry::load_from_dir(&profiles_dir()).expect("profiles load");
+    let c = open();
+    let p = c.image.partition(0).expect("partition 0");
 
     // ── 1. OEM detection ────────────────────────────────────────────────────
     let detector_outputs = DetectionOrchestrator::new()
-        .run(&reader, &registry)
+        .run(&c.reader, &c.registry)
         .expect("detection runs");
     let dahua = detector_outputs
         .iter()
@@ -216,12 +94,13 @@ fn full_chain_detection_to_orphan_discovery() {
     assert_eq!(
         dahua.status,
         detection::DetectionStatus::Confirmed,
-        "DHFS magic at 0 plus a DHAV tag in the header window is Confirmed"
+        "the DHFS 4.1 signature plus a verified partition table identifier is Confirmed: {:?}",
+        dahua.warnings
     );
 
     let classified = ConfidenceEngine::classify(
         &detector_outputs,
-        &registry,
+        &c.registry,
         &ConfidenceConfig::provisional_default(),
     )
     .expect("confidence classifies");
@@ -229,7 +108,8 @@ fn full_chain_detection_to_orphan_discovery() {
     let oem_key = classified.detector_output.oem_key.clone();
 
     // ── 2. Profile + parser, exactly as the API handler resolves them ───────
-    let profile = registry
+    let profile = c
+        .registry
         .find_applicable(&oem_key, None, None, None)
         .expect("the versioned Dahua profile");
     let orchestrator = ParsingOrchestrator::new();
@@ -242,120 +122,122 @@ fn full_chain_detection_to_orphan_discovery() {
     let outcome = RecoveryEngine::new()
         .execute_recovery(RecoveryRequest {
             evidence_id,
-            reader: &reader,
+            reader: &c.reader,
             profile,
             oem_key: &oem_key,
             parser,
             bounds: &bounds(),
             scan_window: None,
+            read_window_bytes: None,
         })
         .expect("recovery runs");
 
     eprintln!("plan: {}", outcome.plan.rationale);
-    for c in &outcome.candidates {
+    for (cand, frag) in outcome.candidates.iter().zip(outcome.fragments.iter()) {
         eprintln!(
-            "  candidate 0x{:X} len {} -> {:?}/{:?} {:?}",
-            c.source_offsets[0].offset,
-            c.source_offsets[0].length,
-            c.data_state,
-            c.recovery_status,
-            c.recovery_level
+            "  {} 0x{:X} len {} -> {:?}/{:?} {:?} via {}",
+            frag.fragment_id,
+            cand.source_offsets[0].offset,
+            cand.source_offsets[0].length,
+            cand.data_state,
+            cand.recovery_status,
+            cand.recovery_level,
+            frag.discovery_method.label()
         );
     }
 
-    // ── 4. Storage geometry and index came from evidence ────────────────────
-    let geometry = outcome.plan.geometry.as_ref().expect("geometry established");
-    assert_eq!(geometry.physical_size, layout.disk_size);
-    assert_eq!(geometry.block_size, Some(BLOCK_SIZE as u64));
+    // ── 4. Geometry and the recording index came from evidence ──────────────
+    let geometry = outcome
+        .plan
+        .geometry
+        .as_ref()
+        .expect("geometry established");
+    assert_eq!(geometry.physical_size, c.reader.len());
+    assert_eq!(geometry.block_size, Some(fx::VIDEO_BLOCK));
     assert_eq!(
         geometry.video_region.map(|r| r.offset),
-        Some(SECTOR),
-        "video region start comes from the superblock's dhav_start"
+        Some(p.video_base),
+        "the video region comes from the partition's VideoStartSector"
     );
     assert_eq!(
         geometry.index_region.map(|r| r.offset),
-        Some(layout.index_offset),
-        "index region located via the superblock's index_offset"
+        Some(p.block_table_offset),
+        "the block table comes from the partition's IndexStartSector"
     );
 
     let index = outcome.plan.index.as_ref().expect("index read");
     assert!(index.authority.is_authoritative());
-    assert_eq!(index.recordings.len(), 2);
-
-    // ── 5. Claimed ranges are exactly the indexed packets ───────────────────
+    assert_eq!(index.recordings.len(), 2, "two accessible chains");
     assert_eq!(
-        outcome.plan.claim_map.claimed.ranges(),
-        layout.indexed_packets.as_slice(),
-        "claimed ranges must match the index entries byte for byte"
+        index.unreferenced_recordings.len(),
+        1,
+        "one available chain"
     );
 
-    // ── 6. The orphan is unclaimed, inside scope, and classified Orphaned ───
-    assert!(!outcome
-        .plan
-        .claim_map
-        .claimed
-        .contains(layout.orphan_packet.offset));
-    assert_eq!(
-        outcome.plan.claim_map.kind_at(layout.orphan_packet.offset),
-        Some(recovery::UnclaimedKind::WithinAuthoritativeIndexScope)
-    );
-
+    // ── 5. The available chain is orphaned, never deleted ───────────────────
+    let available_frame = p.block(realistic::AVAILABLE_BLOCK).unwrap().frame_offsets[0];
     let orphan = outcome
         .candidates
         .iter()
-        .find(|c| {
-            c.data_state == DataState::Orphaned
-                && c.source_offsets[0].offset <= layout.orphan_packet.offset
-                && c.source_offsets[0].end().unwrap_or(0) > layout.orphan_packet.offset
+        .find(|cand| {
+            cand.data_state == DataState::Orphaned
+                && cand.source_offsets[0].offset == available_frame
         })
         .unwrap_or_else(|| {
-            panic!(
-                "no Orphaned candidate covers the unindexed recording at 0x{:X}",
-                layout.orphan_packet.offset
-            )
+            panic!("no Orphaned candidate at the available recording's frame 0x{available_frame:X}")
         });
     assert_eq!(orphan.recovery_level, RecoveryLevel::L2);
     assert_eq!(
         orphan.provenance.source_evidence_id, evidence_id,
         "provenance points back at the registered evidence item"
     );
+    assert!(orphan
+        .provenance
+        .validation_state
+        .reason
+        .contains("not evidence of deletion"));
 
-    // ── 7. The indexed recordings are Active, and only they ─────────────────
-    let active_offsets: Vec<u64> = outcome
+    // ── 6. Only the accessible chains' bytes are Active ─────────────────────
+    let mut expected_active: Vec<u64> = Vec::new();
+    for b in [
+        realistic::CH1_HEAD_BLOCK,
+        realistic::CH1_TAIL_BLOCK,
+        realistic::CH2_BLOCK,
+    ] {
+        expected_active.extend(p.block(b).unwrap().frame_offsets.iter().copied());
+    }
+    expected_active.sort_unstable();
+    let mut active: Vec<u64> = outcome
         .candidates
         .iter()
-        .filter(|c| c.data_state == DataState::Active)
-        .map(|c| c.source_offsets[0].offset)
+        .filter(|cand| cand.data_state == DataState::Active)
+        .map(|cand| cand.source_offsets[0].offset)
         .collect();
-    let mut expected: Vec<u64> = layout.indexed_packets.iter().map(|r| r.offset).collect();
-    expected.sort_unstable();
-    let mut got = active_offsets.clone();
-    got.sort_unstable();
-    assert_eq!(got, expected, "only index-claimed regions may be Active");
-
-    // ── 8. Nothing is called Deleted without deletion evidence ──────────────
+    active.sort_unstable();
     assert_eq!(
-        outcome.metrics.deleted_count, 0,
-        "unindexed data must never be reported as deleted"
+        active, expected_active,
+        "only bytes the accessible recording set claims may be Active"
     );
+
+    // ── 7. Nothing is called Deleted or Overwritten without evidence ────────
+    assert_eq!(outcome.metrics.deleted_count, 0);
     assert_eq!(outcome.metrics.overwritten_count, 0);
     assert!(outcome.metrics.orphaned_count >= 1);
+    assert!(
+        outcome.metrics.unindexed_count >= 1,
+        "slack video is unindexed"
+    );
 }
 
 #[test]
-fn parsing_stages_still_pass_on_an_indexed_dhfs_volume() {
-    // Guard that making `recognize_candidate` real and rewiring `parse_metadata` through
-    // the index reader did not regress the existing five-stage parsing contract.
-    let layout = build_dhfs_image();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("dahua_parse_contract.raw");
-    std::fs::write(&path, &layout.bytes).unwrap();
-    let reader = RawReader::open(path.to_str().unwrap()).unwrap();
-
-    let registry = ProfileRegistry::load_from_dir(&profiles_dir()).unwrap();
-    let profile = registry.find_applicable("dahua", None, None, None).unwrap();
+fn parsing_stages_pass_on_a_dhfs41_volume_and_report_real_structures() {
+    let c = open();
+    let profile = c
+        .registry
+        .find_applicable("dahua", None, None, None)
+        .unwrap();
     let result = ParsingOrchestrator::new()
-        .run_parsing("dahua", &reader, profile)
+        .run_parsing("dahua", &c.reader, profile)
         .expect("parsing runs");
 
     assert_eq!(result.parser_runs.len(), 5, "all five stages still run");
@@ -364,52 +246,370 @@ fn parsing_stages_still_pass_on_an_indexed_dhfs_volume() {
             "stage {} -> {:?} ({})",
             run.operation_name, run.validation_state.state, run.validation_state.reason
         );
-        assert_eq!(
-            run.validation_state.state,
-            forensic_core::ValidationStateKind::Pass,
-            "stage {} must still pass on a well-formed DHFS volume",
-            run.operation_name
-        );
     }
-    // All three DHAV packets are still extracted by the container walk, indexed or not —
-    // the walk reports what is physically there; the index decides what it means.
+
+    // The filesystem stage recognises DHFS 4.1 and reads its partition table.
+    let fs_stage = result
+        .parser_runs
+        .iter()
+        .find(|r| r.operation_name == "parse_filesystem")
+        .unwrap();
+    assert_eq!(fs_stage.validation_state.state, ValidationStateKind::Pass);
+    assert!(fs_stage.validation_state.reason.contains("DHFS 4.1"));
+
+    // One recording per chain: two accessible, one available.
     assert_eq!(result.recordings.len(), 3);
+    let mut channels: Vec<u32> = result.recordings.iter().map(|r| r.channel).collect();
+    channels.sort_unstable();
+    assert_eq!(channels, vec![1, 2, 3]);
+
+    // The available recording is flagged as such on the recording itself.
+    let available = result
+        .recordings
+        .iter()
+        .find(|r| r.channel == 3)
+        .expect("the channel-3 recording");
+    assert!(
+        available.integrity.iter().any(|f| match f {
+            forensic_core::IntegrityFlag::Custom(s) => s.contains("available"),
+            _ => false,
+        }),
+        "an available recording must be flagged, not silently presented as active: {:?}",
+        available.integrity
+    );
+
+    // A multi-block recording keeps every block, in chain order.
+    let ch1 = result.recordings.iter().find(|r| r.channel == 1).unwrap();
+    assert_eq!(ch1.source_offsets.len(), 2);
+    assert!(ch1.source_offsets[0].offset < ch1.source_offsets[1].offset);
+
+    // Timeline events exist for every chain that carried a decodable clock.
     assert_eq!(result.timeline_events.len(), 3);
 }
 
 #[test]
+fn no_parser_output_claims_a_timezone_the_evidence_did_not_state() {
+    let c = open();
+    let profile = c
+        .registry
+        .find_applicable("dahua", None, None, None)
+        .unwrap();
+    let result = ParsingOrchestrator::new()
+        .run_parsing("dahua", &c.reader, profile)
+        .unwrap();
+
+    for rec in &result.recordings {
+        assert_eq!(
+            rec.time.timezone,
+            forensic_core::TimeZoneState::Unknown,
+            "no recorder timezone offset is established by parsing, so none may be claimed"
+        );
+        // The recorder's own digits are reported with no zone suffix.
+        let native = rec
+            .time
+            .recorder_native
+            .as_ref()
+            .expect("a decoded wall clock")
+            .iso_8601
+            .clone();
+        assert!(!native.contains('+'), "no offset may be appended: {native}");
+        assert!(
+            !native.ends_with('Z'),
+            "and no zone may be asserted: {native}"
+        );
+        // The normalization method states explicitly that no offset was applied.
+        let method = rec.time.normalized.as_ref().unwrap().method.clone();
+        assert!(method.contains("no recorder timezone offset"), "{method}");
+        // The raw packed field is retained so the decoding is re-derivable.
+        assert_eq!(rec.time.raw.format, "DAHUA_PACKED_BASE2000_LE");
+        assert_ne!(rec.time.raw.value, 0);
+    }
+    for ev in &result.timeline_events {
+        assert_eq!(ev.time.timezone, forensic_core::TimeZoneState::Unknown);
+    }
+}
+
+#[test]
 fn recognize_candidate_is_format_recognition_not_an_index_lookup() {
-    // The defect this phase fixes: `recognize_candidate` returned `Ok(true)` for any bytes,
-    // which the engine then treated as proof of indexation. It must now answer a pure
-    // format question, and answer it honestly.
-    let layout = build_dhfs_image();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("dahua_recognize.raw");
-    std::fs::write(&path, &layout.bytes).unwrap();
-    let reader = RawReader::open(path.to_str().unwrap()).unwrap();
-
-    let registry = ProfileRegistry::load_from_dir(&profiles_dir()).unwrap();
-    let profile = registry.find_applicable("dahua", None, None, None).unwrap();
+    // The defect this guards: `recognize_candidate` once returned `Ok(true)` for any bytes, which
+    // the engine then treated as proof of indexation. It must answer a pure format question, and
+    // answer it honestly.
+    let c = open();
+    let profile = c
+        .registry
+        .find_applicable("dahua", None, None, None)
+        .unwrap();
     let parser = parser_dahua::DahuaParser::default();
+    let p = c.image.partition(0).unwrap();
 
-    // A window over a DHAV packet: framing present.
-    let at_packet = evidence_reader::BoundedReader::new(
-        &reader,
-        layout.orphan_packet.offset,
-        layout.orphan_packet.length,
+    // A window over a block that holds frames: framing present.
+    let frame_block = p.block(realistic::CH1_HEAD_BLOCK).unwrap();
+    let at_frames =
+        evidence_reader::BoundedReader::new(&c.reader, frame_block.offset, fx::VIDEO_BLOCK)
+            .unwrap();
+    assert!(
+        parsers_core::Parser::recognize_candidate(&parser, &at_frames, profile).unwrap(),
+        "DHAV framing is present in this block"
+    );
+
+    // A window over an empty block: no framing. Under the old implementation this also returned
+    // true, which is what suppressed every orphan and unindexed finding.
+    let empty_block = p.block(realistic::EMPTY_BLOCK).unwrap();
+    let at_empty =
+        evidence_reader::BoundedReader::new(&c.reader, empty_block.offset, fx::VIDEO_BLOCK)
+            .unwrap();
+    assert!(
+        !parsers_core::Parser::recognize_candidate(&parser, &at_empty, profile).unwrap(),
+        "an unused block carries no DHAV framing and must not be recognised"
+    );
+}
+
+// ── Recording and stream reconstruction, through to an exportable artifact ─────
+
+#[test]
+fn a_multi_block_recording_reconstructs_into_an_ordered_exportable_stream() {
+    let c = open();
+    let profile = c
+        .registry
+        .find_applicable("dahua", None, None, None)
+        .unwrap();
+    let volume = parser_dahua::volume::read_volume(&c.reader, profile).unwrap();
+
+    let classified =
+        parser_dahua::find_chain(&volume, realistic::CH1_CHAIN_ID).expect("the channel-1 chain");
+    assert_eq!(classified.chain.blocks.len(), 2, "a two-block recording");
+
+    let rec = parser_dahua::reconstruct_recording(&c.reader, profile, &classified.chain).unwrap();
+    let p = c.image.partition(0).unwrap();
+
+    // Blocks in chain order, frames in block-chain then container order.
+    assert_eq!(
+        rec.block_regions
+            .iter()
+            .map(|r| r.offset)
+            .collect::<Vec<_>>(),
+        vec![
+            p.block(realistic::CH1_HEAD_BLOCK).unwrap().offset,
+            p.block(realistic::CH1_TAIL_BLOCK).unwrap().offset
+        ]
+    );
+    let mut expected_frames: Vec<u64> = Vec::new();
+    expected_frames.extend(
+        p.block(realistic::CH1_HEAD_BLOCK)
+            .unwrap()
+            .frame_offsets
+            .iter(),
+    );
+    expected_frames.extend(
+        p.block(realistic::CH1_TAIL_BLOCK)
+            .unwrap()
+            .frame_offsets
+            .iter(),
+    );
+    assert_eq!(
+        rec.frames
+            .iter()
+            .map(|f| f.frame.physical_offset)
+            .collect::<Vec<_>>(),
+        expected_frames,
+        "frames are ordered by the block chain first"
+    );
+    // Dense sequence numbers and the recorder's own frame numbers agree.
+    assert_eq!(
+        rec.frames.iter().map(|f| f.sequence).collect::<Vec<_>>(),
+        (0..rec.frames.len()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        rec.frames
+            .iter()
+            .map(|f| f.frame.frame_number)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(rec.codec().as_deref(), Some("H.264"));
+    assert!(
+        rec.notes.is_empty(),
+        "no gaps in this recording: {:?}",
+        rec.notes
+    );
+    assert_eq!(rec.evidence.state, ValidationStateKind::Pass);
+
+    // ── The stream: concatenating exactly those payload ranges ──────────────
+    assert_eq!(rec.payload_regions.len(), 3);
+    let mut stream = Vec::with_capacity(rec.payload_bytes() as usize);
+    for region in &rec.payload_regions {
+        stream.extend_from_slice(
+            &c.reader
+                .read_exact_at(region.offset, region.length as usize)
+                .expect("payload bytes are present"),
+        );
+    }
+    assert_eq!(stream.len() as u64, rec.payload_bytes());
+    // The assembled stream is decodable H.264 — the payload boundaries were right.
+    let codec_evidence = recovery::VideoReconstructor::classify_codec(&stream);
+    assert_eq!(codec_evidence.codec, recovery::VideoCodec::H264);
+    assert_eq!(codec_evidence.validation.state, ValidationStateKind::Pass);
+
+    // ── Export: native + derived artifacts with real digests ────────────────
+    let evidence_id = EvidenceId::new();
+    let native_region = Region::new(rec.payload_regions[0].offset, rec.payload_bytes()).unwrap();
+    let out = recovery::VideoReconstructor::reconstruct(
+        evidence_id,
+        native_region,
+        stream.clone(),
+        false,
+        false,
+    );
+    assert_eq!(out.native_artifact.evidence_id, evidence_id);
+    assert_eq!(out.native_artifact.region, native_region);
+    assert_ne!(
+        out.native_artifact.hash,
+        forensic_core::Hash::sha256(vec![0; 32]),
+        "the native artifact must carry a real digest of the recovered bytes"
+    );
+    assert!(!out.derived_artifacts.is_empty());
+    for d in &out.derived_artifacts {
+        assert_eq!(d.provenance.source_evidence_id, evidence_id);
+        assert!(d
+            .provenance
+            .source_regions
+            .iter()
+            .all(|sr| sr.evidence_id == evidence_id));
+    }
+    // A decode test that did not run is Unknown, never Pass.
+    assert_eq!(out.validation_state.state, ValidationStateKind::Unknown);
+}
+
+#[test]
+fn a_dhii_indexed_recording_is_ordered_by_its_frame_index() {
+    let c = open();
+    let profile = c
+        .registry
+        .find_applicable("dahua", None, None, None)
+        .unwrap();
+    let volume = parser_dahua::volume::read_volume(&c.reader, profile).unwrap();
+    let classified =
+        parser_dahua::find_chain(&volume, realistic::CH2_CHAIN_ID).expect("the channel-2 chain");
+    let rec = parser_dahua::reconstruct_recording(&c.reader, profile, &classified.chain).unwrap();
+
+    assert_eq!(
+        rec.ordering,
+        parser_dahua::ReconstructionOrdering::BlockChainThenDhii,
+        "this block carries a DHII index, so it decides the frame order"
+    );
+    assert_eq!(rec.dhii_indexes.len(), 1);
+    assert!(rec
+        .frames
+        .iter()
+        .all(|f| f.source == parser_dahua::FrameSource::DhiiReferenceIndex));
+    let p = c.image.partition(0).unwrap();
+    assert_eq!(
+        rec.frames
+            .iter()
+            .map(|f| f.frame.physical_offset)
+            .collect::<Vec<_>>(),
+        p.block(realistic::CH2_BLOCK).unwrap().frame_offsets
+    );
+}
+
+#[test]
+fn an_available_recording_is_exportable_and_keeps_its_chain_identity() {
+    // An available recording is real recoverable video. It must be exportable, and the export must
+    // stay tied to the chain the filesystem metadata named.
+    let c = open();
+    let profile = c
+        .registry
+        .find_applicable("dahua", None, None, None)
+        .unwrap();
+    let volume = parser_dahua::volume::read_volume(&c.reader, profile).unwrap();
+
+    let classified = parser_dahua::find_chain(&volume, realistic::AVAILABLE_CHAIN_ID)
+        .expect("the available chain");
+    assert!(
+        !classified.accessibility.is_accessible(),
+        "this chain is available, not accessible"
+    );
+
+    let rec = parser_dahua::reconstruct_recording(&c.reader, profile, &classified.chain).unwrap();
+    assert_eq!(rec.chain_id, realistic::AVAILABLE_CHAIN_ID);
+    assert_eq!(rec.channel.normalized, 3);
+    assert_eq!(rec.payload_regions.len(), 1);
+
+    let mut stream = Vec::new();
+    for region in &rec.payload_regions {
+        stream.extend_from_slice(
+            &c.reader
+                .read_exact_at(region.offset, region.length as usize)
+                .unwrap(),
+        );
+    }
+    assert_eq!(
+        recovery::VideoReconstructor::classify_codec(&stream).codec,
+        recovery::VideoCodec::H264,
+        "an orphaned recording's bytes are as exportable as an active one's"
+    );
+}
+
+// ── The audited pipeline ───────────────────────────────────────────────────────
+
+#[test]
+fn the_audited_pipeline_runs_end_to_end_on_a_dhfs41_volume() {
+    let c = open();
+    let evidence_id = EvidenceId::new();
+    let run = pipeline::run_pipeline(
+        evidence_id,
+        &c.reader,
+        &c.registry,
+        &ConfidenceConfig::provisional_default(),
+        &pipeline::PipelineOptions::default(),
     )
-    .unwrap();
-    assert!(
-        parsers_core::Parser::recognize_candidate(&parser, &at_packet, profile).unwrap(),
-        "DHAV framing is present in this window"
-    );
+    .expect("the pipeline runs");
 
-    // A window over zeroed slack: no framing. Under the old implementation this also
-    // returned true, which is what suppressed every orphan and unindexed finding.
-    let slack_offset = layout.orphan_packet.end().unwrap() + 4096;
-    let at_slack = evidence_reader::BoundedReader::new(&reader, slack_offset, 65536).unwrap();
-    assert!(
-        !parsers_core::Parser::recognize_candidate(&parser, &at_slack, profile).unwrap(),
-        "zeroed slack carries no DHAV framing and must not be recognised"
+    for stage in &run.stages {
+        eprintln!("{:?} {:?}: {}", stage.stage, stage.status, stage.detail);
+    }
+
+    assert_eq!(
+        run.oem_key_used.as_deref(),
+        Some("dahua"),
+        "the Dahua parser was used, not the unified fallback"
     );
+    assert!(!run.used_unified_fallback);
+    assert!(
+        !run.requires_analyst,
+        "a clean DHFS 4.1 volume should not need analyst intervention: {:?}",
+        run.analyst_reasons
+    );
+    let attribution = run.attribution.as_ref().expect("attribution recorded");
+    assert_eq!(attribution.oem_key, "dahua");
+
+    let parsing = run.parsing.as_ref().expect("parsing recorded");
+    assert_eq!(parsing.recordings.len(), 3);
+
+    // Any recovery the pipeline ran must not have invented a deletion finding, and every
+    // candidate must trace back to this evidence item.
+    if let Some(recovery_summary) = &run.recovery {
+        assert_eq!(recovery_summary.metrics.deleted_count, 0);
+        assert_eq!(recovery_summary.metrics.overwritten_count, 0);
+        for (cand, frag) in recovery_summary
+            .candidates
+            .iter()
+            .zip(recovery_summary.fragments.iter())
+        {
+            assert_eq!(cand.provenance.source_evidence_id, evidence_id);
+            assert_eq!(frag.evidence_id, evidence_id);
+            assert!(frag.id_is_consistent());
+        }
+    }
+
+    // Timeline events carry real digests, not zero-filled placeholders.
+    if let Some(timeline) = &run.final_timeline {
+        for ev in &timeline.events {
+            assert_ne!(
+                ev.profile_hash,
+                forensic_core::Hash::sha256(vec![0; 32]),
+                "a placeholder digest would read as a verified hash in a report"
+            );
+        }
+    }
 }

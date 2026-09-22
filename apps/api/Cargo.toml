@@ -27,6 +27,10 @@ timeline = { path = "../../crates/timeline" }
 pipeline = { path = "../../crates/pipeline" }
 reporting = { path = "../../crates/reporting" }
 tplink = { path = "../../crates/parsers/tplink" }
+# Needed only for OEM recording-chain reconstruction on export: a Dahua recording spans
+# several 2 MiB blocks and its stream is a list of frame payload ranges, which the generic
+# `Parser` interface deliberately does not expose. See `reconstruct_oem_chain`.
+parser-dahua = { path = "../../crates/parsers/dahua" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

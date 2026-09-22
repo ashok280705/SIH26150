@@ -132,8 +132,8 @@ pub fn plan_recovery(
 
     let mut targets: Vec<ScanTarget> = Vec::new();
 
-    // 1. Probe each index-claimed range to confirm what the recorder says is there.
-    //    Bounded: a claim's head is what establishes presence.
+    // 1. Probe each range the accessible recording set claims, to confirm what the recorder
+    //    says is there. Bounded: a claim's head is what establishes presence.
     for claim in &claim_map.claims {
         let probe_len = claim.region.length.min(CLAIM_PROBE_BYTES);
         if probe_len == 0 {
@@ -149,7 +149,28 @@ pub fn plan_recovery(
         });
     }
 
-    // 2. Sweep unclaimed space. This is where non-Active candidates come from.
+    // 2. Probe each range that surviving-but-unreachable OEM metadata describes — the
+    //    available set. These are probed rather than swept for the same reason accessible
+    //    claims are: the metadata already says where the recording is, so confirming its
+    //    presence needs its head, not its whole payload. Without this step an available
+    //    recording would only be reachable through a blind sweep, which would throw away the
+    //    channel and timestamps the recorder's own structures still carry.
+    for claim in &claim_map.available_claims {
+        let probe_len = claim.region.length.min(CLAIM_PROBE_BYTES);
+        if probe_len == 0 {
+            continue;
+        }
+        let probe = Region::new(claim.region.offset, probe_len)?;
+        targets.push(ScanTarget {
+            region: probe,
+            originating_region: claim.region,
+            payload_region: claim.payload_region,
+            claim: RegionClaim::from_claim(claim),
+            discovery_method: DiscoveryMethod::AvailableMetadataProbe,
+        });
+    }
+
+    // 3. Sweep space no OEM metadata describes at all.
     let has_index = claim_map.has_authoritative_index() || index.is_some();
     for unclaimed in &claim_map.unclaimed_regions {
         let (claim, method) = match unclaimed.kind {
@@ -223,13 +244,16 @@ pub fn plan_recovery(
 
     let rationale = if claim_map.has_authoritative_index() {
         format!(
-            "Authoritative index supplied {claims} claim(s) covering {claimed} byte(s); \
-             {unclaimed_n} unclaimed region(s) totalling {unclaimed} byte(s) remain, of which \
-             {orphan_n} region(s) / {orphan} byte(s) fall inside the governed scope and are \
-             orphan-eligible. Claimed ranges are probed at up to {probe} bytes each instead of \
-             swept, so the plan reads {planned} of {total} byte(s).",
+            "Authoritative index supplied {claims} accessible claim(s) covering {claimed} byte(s) \
+             and {available_n} available claim(s) — surviving metadata the recorder no longer \
+             reaches — covering {available} byte(s); {unclaimed_n} unclaimed region(s) totalling \
+             {unclaimed} byte(s) remain, of which {orphan_n} region(s) / {orphan} byte(s) fall \
+             inside the governed scope and are orphan-eligible. Described ranges are probed at up \
+             to {probe} bytes each instead of swept, so the plan reads {planned} of {total} byte(s).",
             claims = claim_map.claims.len(),
             claimed = claim_map.claimed_bytes(),
+            available_n = claim_map.available_claims.len(),
+            available = claim_map.available_bytes(),
             unclaimed_n = claim_map.unclaimed.count(),
             unclaimed = claim_map.unclaimed_bytes(),
             orphan_n = claim_map
@@ -287,6 +311,7 @@ mod tests {
     fn entry(id: &str, region: Region) -> IndexedRecording {
         IndexedRecording {
             recording_id: id.into(),
+            partition: None,
             channel: Some(2),
             start_time_unix: Some(1_700_000_000),
             end_time_unix: None,
@@ -337,6 +362,7 @@ mod tests {
                 governs: r(1 << 20, 16 << 20),
             },
             recordings: vec![entry("didx#0", claim)],
+            unreferenced_recordings: Vec::new(),
             declared_entry_count: Some(1),
             index_region: None,
             evidence: state(),
@@ -364,6 +390,7 @@ mod tests {
         let index = RecordingIndex {
             authority: IndexAuthority::Authoritative { governs: video },
             recordings: vec![entry("didx#0", r(1 << 20, 1 << 20))],
+            unreferenced_recordings: Vec::new(),
             declared_entry_count: Some(1),
             index_region: None,
             evidence: state(),
@@ -396,6 +423,68 @@ mod tests {
     }
 
     #[test]
+    fn available_metadata_is_probed_not_swept_and_keeps_its_recorder_fields() {
+        let video = r(1 << 20, 8 << 20);
+        let accessible = r(1 << 20, 1 << 20);
+        let available_region = r(3 << 20, 2 << 20);
+        let mut available = entry("dahua:p0:blk9", available_region);
+        available.partition = Some(0);
+        available.channel = Some(4);
+        available.end_time_unix = Some(1_700_000_900);
+        available.oem_metadata.insert(
+            "availability_reason".into(),
+            "no traversal reached these blocks; not evidence of deletion".into(),
+        );
+
+        let index = RecordingIndex {
+            authority: IndexAuthority::Authoritative { governs: video },
+            recordings: vec![entry("dahua:p0:blk1", accessible)],
+            unreferenced_recordings: vec![available],
+            declared_entry_count: Some(2),
+            index_region: None,
+            evidence: state(),
+        };
+        let plan = plan_recovery(r(0, 16 << 20), None, Some(index)).unwrap();
+
+        let probes: Vec<&ScanTarget> = plan
+            .targets
+            .iter()
+            .filter(|t| t.discovery_method == DiscoveryMethod::AvailableMetadataProbe)
+            .collect();
+        assert_eq!(probes.len(), 1, "the available range is probed once");
+        assert_eq!(probes[0].region, r(3 << 20, CLAIM_PROBE_BYTES));
+        assert_eq!(probes[0].originating_region, available_region);
+        match &probes[0].claim {
+            RegionClaim::AvailableUnreferenced {
+                recording_id,
+                partition,
+                channel,
+                end_time_unix,
+                reason,
+                ..
+            } => {
+                assert_eq!(recording_id, "dahua:p0:blk9");
+                assert_eq!(*partition, Some(0));
+                assert_eq!(*channel, Some(4), "the recorder's channel survives");
+                assert_eq!(*end_time_unix, Some(1_700_000_900));
+                assert!(reason.contains("not evidence of deletion"));
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // The available range is not also swept as unknown space.
+        assert!(
+            !plan.targets.iter().any(|t| {
+                t.discovery_method == DiscoveryMethod::UnclaimedScanInIndexScope
+                    && t.region.overlaps(&available_region)
+            }),
+            "an available range must not be reported twice"
+        );
+        // And an examiner can read the split out of the plan.
+        assert!(plan.rationale.contains("available claim(s)"));
+    }
+
+    #[test]
     fn without_an_index_every_target_is_ungoverned() {
         let plan = plan_recovery(r(0, 3 << 20), None, None).unwrap();
 
@@ -421,6 +510,7 @@ mod tests {
                 reason: "2 of 3 entries parsed".into(),
             },
             recordings: vec![entry("didx#0", r(1 << 20, 1 << 20))],
+            unreferenced_recordings: Vec::new(),
             declared_entry_count: Some(3),
             index_region: None,
             evidence: state(),
@@ -448,6 +538,7 @@ mod tests {
                 entry("didx#1", r(2 << 20, 4096)),
                 entry("didx#0", r(512, 4096)),
             ],
+            unreferenced_recordings: Vec::new(),
             declared_entry_count: Some(2),
             index_region: None,
             evidence: state(),

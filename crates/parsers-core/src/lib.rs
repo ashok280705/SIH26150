@@ -11,6 +11,6 @@ pub mod storage;
 
 pub use parser::Parser;
 pub use storage::{
-    AllocationEvidence, CircularBufferEvidence, IndexAuthority, IndexedRecording, RecordingIndex,
-    StorageGeometry,
+    AllocationEvidence, CircularBufferEvidence, ContainerRecord, IndexAuthority, IndexedRecording,
+    RecordingIndex, StorageGeometry,
 };

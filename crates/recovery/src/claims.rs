@@ -41,12 +41,52 @@ pub struct ClaimedRegion {
     pub payload_region: Option<Region>,
     /// Identifier of the index entry that made this claim (e.g. "didx#3").
     pub recording_id: String,
+    /// The OEM partition the claim came from, when the storage is partitioned.
+    #[serde(default)]
+    pub partition: Option<u32>,
     /// Channel, only if the index recorded one.
     pub channel: Option<u32>,
     /// Start time as unix seconds, only if the index recorded one.
     pub start_time_unix: Option<i64>,
+    /// End time as unix seconds, only if the index recorded one.
+    #[serde(default)]
+    pub end_time_unix: Option<i64>,
     /// Allocation state of the claiming entry per the OEM structures.
     pub allocation: AllocationEvidence,
+    /// Whether the recorder currently reaches this recording.
+    #[serde(default = "accessible_default")]
+    pub accessibility: ClaimAccessibility,
+}
+
+fn accessible_default() -> ClaimAccessibility {
+    ClaimAccessibility::Accessible
+}
+
+/// Whether metadata describing a region is part of the recorder's live recording set.
+///
+/// This is the generic form of the OEM distinction between *accessible* and *available*. An
+/// OEM whose structures cannot tell the two apart reports everything as
+/// [`ClaimAccessibility::Accessible`], which is the pre-existing behaviour.
+///
+/// It is explicitly **not** an allocation state. "The recorder no longer reaches this" and
+/// "this was deleted" are different facts; the second needs
+/// [`AllocationEvidence::FreeMarked`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClaimAccessibility {
+    /// The OEM metadata references this region as a live recording.
+    Accessible,
+    /// The OEM metadata describing this region survives, but the recorder does not reach the
+    /// recording through its current structures.
+    Available {
+        /// Why the recording is no longer reachable, for the examiner.
+        reason: String,
+    },
+}
+
+impl ClaimAccessibility {
+    pub fn is_accessible(&self) -> bool {
+        matches!(self, Self::Accessible)
+    }
 }
 
 /// Why an unclaimed region is unclaimed, and therefore what may be concluded about
@@ -79,13 +119,28 @@ pub struct ClaimMap {
     /// The region an authoritative index governs, if any. `None` means no authoritative
     /// index applies, in which case every unclaimed region is `OutsideIndexScope`.
     pub authoritative_scope: Option<Region>,
-    /// Canonical set of claimed ranges (merged, sorted, disjoint).
+    /// Canonical set of ranges claimed by the **accessible** recording set (merged, sorted,
+    /// disjoint).
     pub claimed: RangeSet,
-    /// Canonical complement of `claimed` within `universe`.
+    /// Canonical set of ranges described by surviving metadata the recorder no longer
+    /// reaches — the *available* set.
+    ///
+    /// Kept separate from `claimed` so an accessible recording and an available one can never
+    /// be confused, and so `claimed_bytes()` keeps meaning "bytes the recorder still
+    /// references".
+    #[serde(default)]
+    pub available: RangeSet,
+    /// Canonical complement of `claimed ∪ available` within `universe`.
+    ///
+    /// Available regions are subtracted too: they are described by OEM metadata, so sweeping
+    /// them as unknown space would report the same bytes twice under two different findings.
     pub unclaimed: RangeSet,
-    /// Per-entry claims, preserving the index → range provenance the canonical
-    /// `RangeSet` necessarily loses when it merges adjacent ranges.
+    /// Per-entry claims from the accessible set, preserving the index → range provenance the
+    /// canonical `RangeSet` necessarily loses when it merges adjacent ranges.
     pub claims: Vec<ClaimedRegion>,
+    /// Per-entry claims from the available set.
+    #[serde(default)]
+    pub available_claims: Vec<ClaimedRegion>,
     /// Unclaimed ranges, each tagged with what may be concluded there.
     pub unclaimed_regions: Vec<UnclaimedRegion>,
     /// Claims the index declared that fell wholly outside the universe and were
@@ -94,12 +149,17 @@ pub struct ClaimMap {
 }
 
 impl ClaimMap {
-    /// Total bytes claimed by the index within the universe.
+    /// Total bytes the accessible recording set claims within the universe.
     pub fn claimed_bytes(&self) -> u64 {
         self.claimed.total_length()
     }
 
-    /// Total bytes in the universe that no index entry claims.
+    /// Total bytes described by surviving-but-unreachable metadata.
+    pub fn available_bytes(&self) -> u64 {
+        self.available.total_length()
+    }
+
+    /// Total bytes in the universe that no OEM metadata describes at all.
     pub fn unclaimed_bytes(&self) -> u64 {
         self.unclaimed.total_length()
     }
@@ -109,10 +169,22 @@ impl ClaimMap {
         self.authoritative_scope.is_some()
     }
 
-    /// The claim covering `offset`, if any. Used to attribute a discovered fragment
+    /// The accessible claim covering `offset`, if any. Used to attribute a discovered fragment
     /// back to the index entry whose bytes it sits in.
     pub fn claim_at(&self, offset: u64) -> Option<&ClaimedRegion> {
         self.claims.iter().find(|c| c.region.contains(offset))
+    }
+
+    /// The available claim covering `offset`, if any.
+    pub fn available_at(&self, offset: u64) -> Option<&ClaimedRegion> {
+        self.available_claims
+            .iter()
+            .find(|c| c.region.contains(offset))
+    }
+
+    /// Any claim covering `offset`, accessible or available.
+    pub fn any_claim_at(&self, offset: u64) -> Option<&ClaimedRegion> {
+        self.claim_at(offset).or_else(|| self.available_at(offset))
     }
 
     /// How an offset relates to the index, for the classifier.
@@ -144,8 +216,10 @@ pub fn empty_claim_map(universe: Region) -> Result<ClaimMap, ForensicError> {
         universe,
         authoritative_scope: None,
         claimed,
+        available: RangeSet::new(),
         unclaimed,
         claims: Vec::new(),
+        available_claims: Vec::new(),
         unclaimed_regions,
         out_of_universe_claims: Vec::new(),
     })
@@ -160,9 +234,15 @@ fn clip(region: Region, universe: Region) -> Option<Region> {
     region.intersection(&universe).filter(|r| !r.is_empty())
 }
 
+/// Reason recorded on an available claim when the OEM parser supplied none of its own.
+const DEFAULT_AVAILABLE_REASON: &str =
+    "the OEM metadata describing this region survives, but the recorder does not reference it in \
+     its current recording set. This is a statement about reachability, not evidence of deletion";
+
 /// Turn one index entry into its claimed regions within `universe`.
 fn claims_from_entry(
     entry: &IndexedRecording,
+    accessibility: &ClaimAccessibility,
     universe: Region,
     excluded: &mut Vec<String>,
 ) -> Vec<ClaimedRegion> {
@@ -181,9 +261,12 @@ fn claims_from_entry(
                     region: clipped,
                     payload_region,
                     recording_id: entry.recording_id.clone(),
+                    partition: entry.partition,
                     channel: entry.channel,
                     start_time_unix: entry.start_time_unix,
+                    end_time_unix: entry.end_time_unix,
                     allocation: entry.allocation,
+                    accessibility: accessibility.clone(),
                 });
             }
             None => excluded.push(format!(
@@ -193,6 +276,19 @@ fn claims_from_entry(
         }
     }
     out
+}
+
+/// The availability reason an OEM entry carries, when it carries one.
+///
+/// Parsers record it in `oem_metadata` under a conventional key so the generic layer can
+/// surface the OEM's own wording without interpreting the OEM's structures.
+fn availability_reason(entry: &IndexedRecording) -> String {
+    entry
+        .oem_metadata
+        .get("dahua_availability_reason")
+        .or_else(|| entry.oem_metadata.get("availability_reason"))
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_AVAILABLE_REASON.to_string())
 }
 
 /// Compare an OEM recording index against a physical address space.
@@ -215,12 +311,38 @@ pub fn build_claim_map(
     let mut out_of_universe_claims = Vec::new();
     let mut claims: Vec<ClaimedRegion> = Vec::new();
     for entry in &index.recordings {
-        claims.extend(claims_from_entry(entry, universe, &mut out_of_universe_claims));
+        claims.extend(claims_from_entry(
+            entry,
+            &ClaimAccessibility::Accessible,
+            universe,
+            &mut out_of_universe_claims,
+        ));
+    }
+    let mut available_claims: Vec<ClaimedRegion> = Vec::new();
+    for entry in &index.unreferenced_recordings {
+        let accessibility = ClaimAccessibility::Available {
+            reason: availability_reason(entry),
+        };
+        available_claims.extend(claims_from_entry(
+            entry,
+            &accessibility,
+            universe,
+            &mut out_of_universe_claims,
+        ));
     }
 
     // Canonical merge via the platform's single range implementation.
     let claimed = RangeSet::from_regions(claims.iter().map(|c| c.region))?;
-    let unclaimed = claimed.complement_within(universe)?;
+    let available = RangeSet::from_regions(available_claims.iter().map(|c| c.region))?;
+    // The complement is taken against everything OEM metadata describes, accessible or not,
+    // so an available recording is not also swept as unknown space and reported twice.
+    let described = RangeSet::from_regions(
+        claimed
+            .iter()
+            .copied()
+            .chain(available.iter().copied()),
+    )?;
+    let unclaimed = described.complement_within(universe)?;
 
     // An authoritative index only governs the region it says it governs, intersected
     // with what we are actually looking at. A partial or missing index governs nothing.
@@ -246,8 +368,10 @@ pub fn build_claim_map(
         universe,
         authoritative_scope,
         claimed,
+        available,
         unclaimed,
         claims,
+        available_claims,
         unclaimed_regions,
         out_of_universe_claims,
     })
@@ -323,6 +447,7 @@ mod tests {
     fn entry(id: &str, regions: Vec<Region>) -> IndexedRecording {
         IndexedRecording {
             recording_id: id.to_string(),
+            partition: None,
             channel: Some(1),
             start_time_unix: Some(1_700_000_000),
             end_time_unix: None,
@@ -335,11 +460,41 @@ mod tests {
         }
     }
 
+    /// An entry the OEM reports as available: metadata survives, recorder does not reach it.
+    fn available_entry(id: &str, regions: Vec<Region>, partition: u32) -> IndexedRecording {
+        let mut e = entry(id, regions);
+        e.partition = Some(partition);
+        e.end_time_unix = Some(1_700_000_600);
+        e.oem_metadata.insert(
+            "availability_reason".into(),
+            "no traversal from a declared first block reached these blocks; not evidence of deletion"
+                .into(),
+        );
+        e
+    }
+
     fn authoritative(entries: Vec<IndexedRecording>, governs: Region) -> RecordingIndex {
         let n = entries.len();
         RecordingIndex {
             authority: IndexAuthority::Authoritative { governs },
             recordings: entries,
+            unreferenced_recordings: Vec::new(),
+            declared_entry_count: Some(n),
+            index_region: None,
+            evidence: state(),
+        }
+    }
+
+    fn with_available(
+        accessible: Vec<IndexedRecording>,
+        available: Vec<IndexedRecording>,
+        governs: Region,
+    ) -> RecordingIndex {
+        let n = accessible.len() + available.len();
+        RecordingIndex {
+            authority: IndexAuthority::Authoritative { governs },
+            recordings: accessible,
+            unreferenced_recordings: available,
             declared_entry_count: Some(n),
             index_region: None,
             evidence: state(),
@@ -353,6 +508,7 @@ mod tests {
                 reason: "truncated".into(),
             },
             recordings: entries,
+            unreferenced_recordings: Vec::new(),
             declared_entry_count: Some(n + 1),
             index_region: None,
             evidence: state(),
@@ -587,6 +743,102 @@ mod tests {
         assert!(!map.has_authoritative_index());
         assert_eq!(map.unclaimed.ranges(), &[r(0, 1000)]);
         assert_eq!(map.kind_at(500), Some(UnclaimedKind::OutsideIndexScope));
+    }
+
+    // ── Available (surviving-but-unreachable) metadata ───────────────────────
+
+    #[test]
+    fn available_metadata_is_tracked_separately_from_the_accessible_set() {
+        let index = with_available(
+            vec![entry("live", vec![r(1000, 100)])],
+            vec![available_entry("gone", vec![r(2000, 200)], 0)],
+            r(0, 10_000),
+        );
+        let map = build_claim_map(&index, None, r(0, 10_000)).unwrap();
+
+        // `claimed` still means "bytes the recorder references".
+        assert_eq!(map.claimed.ranges(), &[r(1000, 100)]);
+        assert_eq!(map.claimed_bytes(), 100);
+        // The available set is its own thing.
+        assert_eq!(map.available.ranges(), &[r(2000, 200)]);
+        assert_eq!(map.available_bytes(), 200);
+        assert_eq!(map.available_claims.len(), 1);
+        assert_eq!(map.available_claims[0].recording_id, "gone");
+        assert_eq!(map.available_claims[0].partition, Some(0));
+        assert_eq!(map.available_claims[0].end_time_unix, Some(1_700_000_600));
+        match &map.available_claims[0].accessibility {
+            ClaimAccessibility::Available { reason } => {
+                assert!(reason.contains("not evidence of deletion"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+        // Allocation state is untouched, so nothing downstream can call it deleted.
+        assert_eq!(map.available_claims[0].allocation, AllocationEvidence::Unknown);
+    }
+
+    #[test]
+    fn available_regions_are_subtracted_from_unclaimed_so_they_are_not_reported_twice() {
+        let index = with_available(
+            vec![entry("live", vec![r(100, 100)])],
+            vec![available_entry("gone", vec![r(400, 100)], 0)],
+            r(0, 1000),
+        );
+        let map = build_claim_map(&index, None, r(0, 1000)).unwrap();
+
+        assert_eq!(
+            map.unclaimed.ranges(),
+            &[r(0, 100), r(200, 200), r(500, 500)],
+            "the available range [400,500) must not also appear as unknown space"
+        );
+        assert_eq!(
+            map.claimed_bytes() + map.available_bytes() + map.unclaimed_bytes(),
+            1000,
+            "every byte is accounted for exactly once"
+        );
+    }
+
+    #[test]
+    fn lookups_distinguish_accessible_from_available_at_an_offset() {
+        let index = with_available(
+            vec![entry("live", vec![r(1000, 100)])],
+            vec![available_entry("gone", vec![r(2000, 200)], 1)],
+            r(0, 10_000),
+        );
+        let map = build_claim_map(&index, None, r(0, 10_000)).unwrap();
+
+        assert_eq!(map.claim_at(1050).map(|c| c.recording_id.as_str()), Some("live"));
+        assert!(map.available_at(1050).is_none());
+        assert!(map.claim_at(2100).is_none(), "an available region is not a live claim");
+        assert_eq!(map.available_at(2100).map(|c| c.recording_id.as_str()), Some("gone"));
+        assert_eq!(
+            map.any_claim_at(2100).map(|c| c.recording_id.as_str()),
+            Some("gone")
+        );
+        assert!(map.any_claim_at(5000).is_none());
+    }
+
+    #[test]
+    fn an_oem_with_no_available_concept_behaves_exactly_as_before() {
+        let index = authoritative(vec![entry("a", vec![r(100, 100)])], r(0, 1000));
+        let map = build_claim_map(&index, None, r(0, 1000)).unwrap();
+        assert!(map.available.is_empty());
+        assert!(map.available_claims.is_empty());
+        assert_eq!(map.available_bytes(), 0);
+        assert_eq!(map.unclaimed.ranges(), &[r(0, 100), r(200, 800)]);
+        assert!(map.claims[0].accessibility.is_accessible());
+    }
+
+    #[test]
+    fn an_out_of_universe_available_claim_is_excluded_and_recorded() {
+        let index = with_available(
+            vec![entry("live", vec![r(100, 100)])],
+            vec![available_entry("beyond", vec![r(50_000, 100)], 0)],
+            r(0, 1000),
+        );
+        let map = build_claim_map(&index, None, r(0, 1000)).unwrap();
+        assert!(map.available.is_empty());
+        assert_eq!(map.out_of_universe_claims.len(), 1);
+        assert!(map.out_of_universe_claims[0].contains("beyond"));
     }
 
     #[test]

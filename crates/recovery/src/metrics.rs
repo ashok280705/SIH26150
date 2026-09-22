@@ -38,6 +38,17 @@ pub struct RecoveryMetrics {
     pub unclaimed_region_count: usize,
     /// Total bytes no index entry claims.
     pub unclaimed_bytes: u64,
+    /// Ranges described by surviving OEM metadata the recorder no longer reaches — the
+    /// *available* set. These are orphan findings backed by the recorder's own metadata, which
+    /// is stronger evidence than an unreferenced gap.
+    pub available_claim_count: usize,
+    pub available_bytes: u64,
+    /// Candidates produced from an available-metadata probe.
+    pub available_candidate_count: usize,
+    /// Candidates whose physical bounds came from an OEM container record rather than from a
+    /// scan window. The ratio of this to `candidate_count` is how much of a run was structural
+    /// recovery versus window classification.
+    pub container_record_candidate_count: usize,
     /// Unclaimed regions inside the authoritative index scope (orphan-eligible space).
     pub orphan_eligible_region_count: usize,
     pub orphan_eligible_bytes: u64,
@@ -99,6 +110,10 @@ impl RecoveryMetrics {
             claimed_bytes = self.claimed_bytes,
             unclaimed_region_count = self.unclaimed_region_count,
             unclaimed_bytes = self.unclaimed_bytes,
+            available_claim_count = self.available_claim_count,
+            available_bytes = self.available_bytes,
+            available_candidates = self.available_candidate_count,
+            container_record_candidates = self.container_record_candidate_count,
             orphan_eligible_region_count = self.orphan_eligible_region_count,
             orphan_eligible_bytes = self.orphan_eligible_bytes,
             scan_region_count = self.scan_region_count,

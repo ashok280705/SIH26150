@@ -13,8 +13,10 @@ evidence-reader = { path = "../../evidence-reader" }
 parsers-core = { path = "../../parsers-core" }
 hex = { workspace = true }
 chrono = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
-uuid = { workspace = true }
 forensic-tests = { path = "../../../tests" }
 tempfile = "3"
