@@ -29,7 +29,7 @@ timeline reconstruction, and forensic reporting across surveillance manufacturer
 ![SIH 2026](https://img.shields.io/badge/SIH-2026-e74c3c?style=flat-square)
 ![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white)
 
-[Architecture](#system-architecture) · [Capabilities](#core-capabilities) · [OEM Support](#oem-support-matrix) · [Workflow](#forensic-workflow) · [Setup](#installation) · [Roadmap](#development-roadmap)
+[Architecture](#system-architecture) · [Capabilities](#core-capabilities) · [OEM Support](#oem-support-matrix) · [Workflow](#forensic-workflow) · [Setup](#installation)
 
 </div>
 
@@ -288,22 +288,6 @@ Export formats: **JSON** · **CSV** · **Formatted human-readable text**
 | **AI service** | 🟡 Prototype | FastAPI stub with simulated detection responses |
 | **Validation corpus** | 🟡 In Development | Manifest schema defined; synthetic fixture generator present |
 | **Distribution** | ✅ Packaged | Windows (ZIP) and macOS (DMG) packages |
-
----
-
-## Development Roadmap
-
-| Phase | Focus | Status |
-|:---|:---|:---:|
-| **Phase 1** | Forensic Foundation — core types, evidence reader, hashing, write guards, determinism | ✅ Complete |
-| **Phase 2** | OEM Detection — detectors, profiles, confidence engine, topology | ✅ Complete |
-| **Phase 3** | Parser Framework — common interface, per-OEM parsers, profile-driven parsing | 🟡 Active |
-| **Phase 4** | Recovery Engine — L1/L2/L3 strategies, bounded scanning, candidate validation | 🟡 Active |
-| **Phase 5** | Timeline Engine — timestamp normalization, cross-camera correlation | 🟡 Active |
-| **Phase 6** | Video Reconstruction — codec classification, FFmpeg remuxing, artifact production | 🟡 Active |
-| **Phase 7** | Reporting & Analytics — forensic reports, AI analytics integration | 🟡 Active |
-| **Phase 8** | Validation & Testing — corpus expansion, regression testing, benchmarks | ⚪ Planned |
-| **Phase 9** | Production Hardening — real-evidence validation, performance, documentation | ⚪ Planned |
 
 ---
 
