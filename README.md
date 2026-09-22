@@ -363,9 +363,9 @@ python main.py
 
 ## Basic Usage
 
-With the API running, the React frontend drives the full workflow: create a case, register a disk image as read-only evidence, run OEM detection and parsing, recover and reconstruct recordings, and generate a forensic report. The backend exposes REST endpoints for case management, evidence access, OEM detection and parsing, storage topology, recovery/reconstruction, artifact verification, and platform capabilities, all consumed by the frontend.
+With the API running, the React frontend drives the full workflow: create a case, register a disk image as read-only evidence, run OEM detection and parsing, recover and reconstruct recordings, and generate a forensic report.
 
-> The platform is in active development; API endpoints and the UI reflect current implementation status and may evolve.
+> The platform is in active development; features reflect current implementation status and may evolve.
 
 ---
 
