@@ -272,25 +272,6 @@ Export formats: **JSON** · **CSV** · **Formatted human-readable text**
 
 ---
 
-## Current Development Status
-
-| Component | Status | Notes |
-|:---|:---|:---|
-| **Forensic core** | ✅ Implemented | Domain types, evidence reader, streaming SHA-256, write guards, determinism |
-| **Detection & confidence** | ✅ Implemented | Multi-vendor detection, topology profiling, attribution decision tree |
-| **OEM profiles & parser interface** | ✅ Implemented | Six OEM profiles authored; common `Parser` trait defined |
-| **OEM parsers** | 🟡 In Development | Trait implementations in progress across all six OEMs |
-| **Recovery engine & video reconstructor** | 🟡 In Development | Orchestration and codec/NAL analysis present; L1/L2/L3 expanding |
-| **FFmpeg service** | ✅ Implemented | Discovery, probing, remuxing, artifact hashing, verification |
-| **Timeline engine** | 🟡 In Development | Three orderings implemented; cross-camera correlator present |
-| **Reporting** | 🟡 In Development | Report model and JSON/CSV/formatted exporters present |
-| **API & frontend** | ✅ Implemented | REST suite and forensic workstation UI across pipeline stages |
-| **AI service** | 🟡 Prototype | FastAPI stub with simulated detection responses |
-| **Validation corpus** | 🟡 In Development | Manifest schema defined; synthetic fixture generator present |
-| **Distribution** | ✅ Packaged | Windows (ZIP) and macOS (DMG) packages |
-
----
-
 ## Validation
 
 Parser and pipeline validation uses deterministic corpus testing against known expected outcomes. Fixtures cover known-good recordings per OEM, controlled corruption/deletion, fragmented and truncated recordings, lone-signature false positives, and overlapping-signature edge cases. Two invariants hold throughout: the same case + profile + config always produces an identical result, and a synthetic fixture containing only a lone magic value must not pass OEM detection. Real evidence is never committed — all fixtures are synthetic and explicitly labeled. Accuracy, recovery-yield, and normalization-error metrics are planned as the corpus expands.
