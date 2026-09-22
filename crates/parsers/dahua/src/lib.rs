@@ -13,10 +13,17 @@
 //! orchestrate recovery, does not build the unified timeline, and never makes the final OEM
 //! attribution (Req 3, 12, 15.1).
 //!
-//! Skeleton only — the parser lands in P3-008.
+//! ## Modules
+//!
+//! * [`parser`] — the `Parser` trait implementation (filesystem, metadata, recordings,
+//!   timeline events, structural validation).
+//! * [`dhfs`] — DHFS storage geometry and DIDX recording-index readers. These produce
+//!   the OEM-neutral `StorageGeometry`/`RecordingIndex` the recovery engine consumes, so
+//!   the engine reasons about physical byte ranges and never about DHFS/DIDX layout.
 
 #![forbid(unsafe_code)]
 
+pub mod dhfs;
 pub mod parser;
 
 pub use parser::DahuaParser;

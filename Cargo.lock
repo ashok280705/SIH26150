@@ -1269,6 +1269,7 @@ version = "0.1.0"
 dependencies = [
  "evidence-reader",
  "forensic-core",
+ "serde",
 ]
 
 [[package]]
@@ -1507,12 +1508,16 @@ dependencies = [
  "evidence-reader",
  "forensic-core",
  "hex",
+ "parser-dahua",
  "parser-uniview",
  "parsers-core",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

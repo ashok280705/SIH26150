@@ -36,11 +36,68 @@ start = 0
 end = 10485760 # 10 MiB
 alignment = 512
 
+# The recording index table header. Located via the superblock's index_offset field,
+# never by scanning, so it carries no offset_constraints and contributes no detection
+# weight of its own — it is a structural verification marker used by the index reader,
+# not an attribution signal. The Dahua detector does not evaluate it, so
+# confidence_weights below are unchanged.
+[[signatures]]
+name = "didx_magic"
+pattern_hex = "44 49 44 58" # "DIDX"
+evidence_status = "provisional"
+weight = 0.01
+is_exclusive = false
+explanation = "Dahua DIDX recording index table header, located via the superblock index_offset field. Used to verify the index structure before its entries are trusted; not used for OEM attribution."
+
 [confidence_weights]
 max_possible_score = 1.25
 min_threshold = 0.65
 
+# --- Structural layout ------------------------------------------------------------
+#
+# Byte offsets of fields inside the DHFS superblock and DIDX index, all little-endian.
+# These are OEM facts and therefore live here as versioned profile DATA, never as Rust
+# source constants. Verified against the DHFS/DHAV/DIDX structures the platform's
+# Dahua corpus is built from (see tests/fixtures + generate_dahua_raw.py).
+#
+# Any offset not listed here is one the platform has no evidence for; the parser
+# reports the corresponding field as Unknown rather than guessing.
 [layout]
 superblock_size = 512
 dhav_start = 512
 
+# DHFS superblock field offsets (from offset 0).
+superblock_version_offset = 4        # u32 LE
+superblock_sector_size_offset = 8    # u32 LE
+superblock_block_size_offset = 12    # u32 LE
+superblock_total_blocks_offset = 16  # u64 LE
+superblock_dhav_start_offset = 24    # u64 LE — first byte of the video payload region
+superblock_index_offset_offset = 32  # u64 LE — first byte of the DIDX index region
+superblock_ctime_offset = 40         # u64 LE — filesystem creation time, unix seconds
+superblock_model_offset = 48         # 16 bytes ASCII
+superblock_model_len = 16
+superblock_serial_offset = 64        # 32 bytes ASCII
+superblock_serial_len = 32
+superblock_volume_label_offset = 96  # 16 bytes ASCII
+superblock_volume_label_len = 16
+
+# DIDX index layout.
+index_header_size = 16               # "DIDX" + u32 entry_count + 8 reserved
+index_entry_count_offset = 4         # u32 LE, relative to index start
+index_entry_size = 32
+index_entry_channel_offset = 0       # u8, 0-based on disk
+index_entry_frame_type_offset = 1    # u8 (0xFD = I-frame)
+index_entry_offset_offset = 4        # u64 LE — physical offset of the DHAV packet
+index_entry_length_offset = 12       # u64 LE — total DHAV packet length
+index_entry_timestamp_offset = 20    # u64 LE — unix seconds
+index_entry_crc_offset = 28          # u32 LE
+
+# DHAV container framing, needed to separate the elementary-stream payload from the
+# container header/footer inside an index-claimed region, and to verify that a DHAV tag
+# match is real framing rather than four coincidental bytes.
+dhav_header_size = 64
+dhav_footer_size = 4
+dhav_frame_type_offset = 4    # u8, relative to the DHAV tag
+dhav_channel_offset = 5       # u8, 0-based
+dhav_packet_len_offset = 12   # u32 LE, total bytes DHAV..dhav inclusive
+dhav_timestamp_offset = 16    # u64 LE, unix seconds

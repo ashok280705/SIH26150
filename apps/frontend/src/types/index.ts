@@ -181,7 +181,20 @@ export interface DeletedCandidate {
   validation: ValidationState;
 }
 
-export type DataState = 'Active' | 'Deleted' | 'Orphaned' | 'Corrupted' | 'Overwritten';
+/**
+ * Physical state of the data on the medium.
+ *
+ * `Orphaned` requires positive evidence: an authoritative recording index governs those
+ * bytes and does not reference them. `Unindexed` records an *absence* of index evidence
+ * and must never be presented as a deletion finding.
+ */
+export type DataState =
+  | 'Active'
+  | 'Deleted'
+  | 'Orphaned'
+  | 'Unindexed'
+  | 'Corrupted'
+  | 'Overwritten';
 export type RecoveryStatus = 'Recoverable' | 'PartiallyRecoverable' | 'Unrecoverable';
 export type RecoveryLevel = 'L1' | 'L2' | 'L3';
 
@@ -194,7 +207,8 @@ export type RecoveryLevel = 'L1' | 'L2' | 'L3';
  */
 export interface RecoveryCandidateUI {
   id: string;
-  channel: number;
+  /** `null` when no index entry supplied a channel (carved video has none). */
+  channel: number | null;
   time_native: string | null;
   time_normalized: string | null;
   timezone_state: string;
@@ -210,6 +224,10 @@ export interface RecoveryCandidateUI {
   nal_unit_count: number;
   has_native_artifact: boolean;
   has_derived_artifact: boolean;
+  /** How the candidate was found: an index-claimed probe, or a scan of unclaimed space. */
+  discovery_method: string;
+  /** Why this candidate received its `data_state`. Safe to display verbatim. */
+  state_reason: string;
 }
 
 /** Raw backend RecoveryRun (forensic_core::RecoveryRun) plus scan totals. */
@@ -229,6 +247,48 @@ export interface RecoveryResponse {
   };
   total_bytes: number;
   skipped_bytes: number;
+  /** Observability counters for the index-aware recovery run. */
+  metrics: RecoveryMetrics;
+  /** How the scan space was derived from OEM evidence, in plain language. */
+  plan_rationale: string;
+}
+
+/**
+ * Counters describing one index-aware recovery run: what the recorder's index claimed,
+ * what physical space that left unclaimed, and how the discovered candidates classified.
+ */
+export interface RecoveryMetrics {
+  oem_key: string;
+  profile_id: string;
+  geometry_available: boolean;
+  /** `"offset:length"` of the OEM-declared video payload region, if established. */
+  video_region: string | null;
+  index_region: string | null;
+  block_size: number | null;
+  /** True only when the index was fully parsed; required before any orphan finding. */
+  authoritative_index: boolean;
+  index_declared_entries: number | null;
+  index_entry_count: number;
+  claimed_range_count: number;
+  claimed_bytes: number;
+  unclaimed_region_count: number;
+  unclaimed_bytes: number;
+  orphan_eligible_region_count: number;
+  orphan_eligible_bytes: number;
+  scan_region_count: number;
+  scanned_bytes: number;
+  bytes_avoided_vs_full_scan: number;
+  candidate_count: number;
+  active_count: number;
+  orphaned_count: number;
+  unindexed_count: number;
+  deleted_count: number;
+  corrupted_count: number;
+  overwritten_count: number;
+  validation_failures: number;
+  skipped_range_count: number;
+  truncated: boolean;
+  cancelled: boolean;
 }
 
 export type OrderingMode = 'Normalized' | 'RecorderNative' | 'Physical';
@@ -391,8 +451,16 @@ export interface GapRecoverySlot {
   index: number;
   /** "L1" | "L2" | "L3", or null when nothing could be carved. */
   level: 'L1' | 'L2' | 'L3' | null;
-  data_state: DataState;
-  recovery_status: RecoveryStatus;
+  /**
+   * `null` when no video was found in this slot.
+   *
+   * Finding nothing is an absence of evidence, so the backend asserts no state at all —
+   * in particular not `Deleted`. This endpoint has no recording index, so it also never
+   * returns `Active` or `Orphaned`; for index-backed states use the main recovery endpoint.
+   */
+  data_state: DataState | null;
+  /** `null` when no candidate was produced for this slot. */
+  recovery_status: RecoveryStatus | null;
   start_offset_sec: number;
   end_offset_sec: number;
   offset: number;

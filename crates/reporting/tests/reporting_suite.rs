@@ -85,7 +85,7 @@ fn create_full_test_report() -> ForensicReport {
         recovery_items: vec![
             RecoveryReportItem {
                 candidate_id: "cand-001".into(),
-                channel: 1,
+                channel: Some(1),
                 recovery_level: "L1".into(),
                 data_state: "Active".into(),
                 recovery_status: "Recoverable".into(),
@@ -93,10 +93,12 @@ fn create_full_test_report() -> ForensicReport {
                 source_length: 50 * 1024 * 1024,
                 validation_state: "PASS".into(),
                 validation_reason: "Direct indexed table entry validated".into(),
+                discovery_method: "index-claimed-probe".into(),
+                state_reason: "Region is claimed by authoritative index entry didx#0 and valid video was validated there".into(),
             },
             RecoveryReportItem {
                 candidate_id: "cand-002".into(),
-                channel: 2,
+                channel: Some(2),
                 recovery_level: "L2".into(),
                 data_state: "Orphaned".into(),
                 recovery_status: "Recoverable".into(),
@@ -104,6 +106,8 @@ fn create_full_test_report() -> ForensicReport {
                 source_length: 30 * 1024 * 1024,
                 validation_state: "PASS".into(),
                 validation_reason: "Orphan payload candidate; index missing but video stream valid".into(),
+                discovery_method: "unclaimed-scan-in-index-scope".into(),
+                state_reason: "Valid video is physically present here, and the authoritative recording index governs this region without referencing it".into(),
             }
         ],
         recovery_run_bounds: Some(RecoveryRunBoundsReport {

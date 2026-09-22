@@ -116,14 +116,29 @@ pub struct RecordingReportItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecoveryReportItem {
     pub candidate_id: String,
-    pub channel: u32,
+    /// `None` when no index entry supplied a channel. Video carved from unclaimed space
+    /// has no channel, and a report must say "unknown" rather than print channel 0.
+    pub channel: Option<u32>,
     pub recovery_level: String, // 'L1', 'L2', 'L3'
-    pub data_state: String,     // 'Active', 'Deleted', 'Orphaned', 'Corrupted', 'Overwritten'
+    /// `'Active' | 'Deleted' | 'Orphaned' | 'Unindexed' | 'Corrupted' | 'Overwritten'`.
+    ///
+    /// `Orphaned` and `Unindexed` are distinct findings and must be reported as such:
+    /// `Orphaned` means an authoritative index governs those bytes without referencing
+    /// them, while `Unindexed` records that no index statement covers them at all.
+    /// Neither is a deletion finding.
+    pub data_state: String,
     pub recovery_status: String,// 'Recoverable', 'PartiallyRecoverable', 'Unrecoverable'
     pub source_offset: u64,
     pub source_length: u64,
     pub validation_state: String,
     pub validation_reason: String,
+    /// How this candidate was found: an index-claimed probe, or a scan of unclaimed space.
+    #[serde(default)]
+    pub discovery_method: String,
+    /// Why this candidate received its `data_state`, in examiner-readable prose. Present
+    /// so an `Orphaned` or `Unindexed` finding in a report is never unexplained.
+    #[serde(default)]
+    pub state_reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

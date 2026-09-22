@@ -11,19 +11,27 @@ pub struct CsvReportExporter;
 impl CsvReportExporter {
     /// Export recovered items to CSV string.
     pub fn export_recovery_csv(report: &ForensicReport) -> String {
-        let mut out = String::from("candidate_id,channel,recovery_level,data_state,recovery_status,source_offset,source_length,validation_state,validation_reason\n");
+        let mut out = String::from("candidate_id,channel,recovery_level,data_state,recovery_status,source_offset,source_length,validation_state,validation_reason,discovery_method,state_reason\n");
         for item in &report.recovery_items {
+            // An absent channel is rendered "Unknown", never 0 — a CSV cell reading "0"
+            // would be indistinguishable from a real channel 0.
+            let channel = item
+                .channel
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
             out.push_str(&format!(
-                "{},{},{},{},{},{},{},{},\"{}\"\n",
+                "{},{},{},{},{},{},{},{},\"{}\",{},\"{}\"\n",
                 item.candidate_id,
-                item.channel,
+                channel,
                 item.recovery_level,
                 item.data_state,
                 item.recovery_status,
                 item.source_offset,
                 item.source_length,
                 item.validation_state,
-                item.validation_reason.replace('\"', "\"\"")
+                item.validation_reason.replace('\"', "\"\""),
+                item.discovery_method,
+                item.state_reason.replace('\"', "\"\"")
             ));
         }
         out
@@ -107,7 +115,7 @@ mod tests {
             recovery_items: vec![
                 RecoveryReportItem {
                     candidate_id: "cand-1".into(),
-                    channel: 1,
+                    channel: Some(1),
                     recovery_level: "L2".into(),
                     data_state: "Orphaned".into(),
                     recovery_status: "Recoverable".into(),
@@ -115,6 +123,8 @@ mod tests {
                     source_length: 512,
                     validation_state: "PASS".into(),
                     validation_reason: "Valid GOP".into(),
+                    discovery_method: "unclaimed-scan-in-index-scope".into(),
+                    state_reason: "authoritative index governs this region without referencing it".into(),
                 }
             ],
             recovery_run_bounds: None,

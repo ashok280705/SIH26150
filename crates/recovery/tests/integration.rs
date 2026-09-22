@@ -168,7 +168,7 @@ fn test_engine_truncation_on_byte_limit() {
         time_limit: None,
     };
 
-    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
     
     assert!(run.truncated, "Run should be truncated when byte limit is reached");
     assert_eq!(run.validation_state.state, ValidationStateKind::Review, "Truncated run must be REVIEW");
@@ -192,7 +192,7 @@ fn test_engine_truncation_on_candidate_limit() {
         time_limit: None,
     };
 
-    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
     
     assert!(run.truncated, "Run should be truncated when candidate limit is reached");
     assert_eq!(run.validation_state.state, ValidationStateKind::Review);
@@ -217,7 +217,7 @@ fn test_engine_cancellation_yields_review() {
         time_limit: None,
     };
 
-    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
     
     assert!(run.cancelled, "Run should be cancelled");
     assert_eq!(run.validation_state.state, ValidationStateKind::Review);
@@ -240,7 +240,7 @@ fn test_engine_full_scan_pass() {
         time_limit: None,
     };
 
-    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
     
     assert!(!run.truncated, "Run should NOT be truncated");
     assert!(!run.cancelled, "Run should NOT be cancelled");
@@ -265,9 +265,157 @@ fn test_engine_parser_never_drives_level_selection() {
         time_limit: None,
     };
 
-    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
     
     // The engine drove all 3 chunks (3 MB / 1 MB chunk = 3 regions)
     assert_eq!(run.searched_regions.len(), 3, "Engine should have driven 3 scan regions");
     assert_eq!(run.candidate_count, 3, "All 3 regions should have produced candidates");
+}
+
+/// Build a whole-image recovery request.
+///
+/// These mock parsers supply no `storage_geometry`/`recording_index`, so every run here
+/// exercises the engine's no-index-evidence fallback: a full-window sweep whose
+/// candidates can only reach `DataState::Unindexed`.
+fn request<'a>(
+    reader: &'a dyn EvidenceReader,
+    profile: &'a OemProfile,
+    parser: &'a dyn Parser,
+    bounds: &'a RecoveryBounds,
+) -> recovery::RecoveryRequest<'a> {
+    recovery::RecoveryRequest {
+        evidence_id: forensic_core::EvidenceId::new(),
+        reader,
+        profile,
+        oem_key: "mock",
+        parser,
+        bounds,
+        scan_window: None,
+    }
+}
+
+#[test]
+fn test_without_index_evidence_no_candidate_is_active() {
+    // Regression guard for the original defect. `AlwaysRecognizeParser` returns
+    // `Ok(true)` from `recognize_candidate` for every window — exactly what every OEM
+    // parser used to do. That must no longer be able to produce `Active`, because it is
+    // not index evidence.
+    let engine = RecoveryEngine::new();
+    let reader = CodecReader { len: 3 * 1024 * 1024 };
+    let profile = make_mock_profile();
+    let parser = AlwaysRecognizeParser;
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: u32::MAX,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let outcome = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap();
+
+    assert!(!outcome.candidates.is_empty(), "codec bytes should be discovered");
+    for c in &outcome.candidates {
+        assert_eq!(
+            c.data_state,
+            forensic_core::DataState::Unindexed,
+            "no index evidence exists, so nothing may be Active/Orphaned/Deleted"
+        );
+        assert_eq!(c.recovery_level, forensic_core::RecoveryLevel::L3);
+    }
+    assert_eq!(outcome.metrics.active_count, 0);
+    assert_eq!(outcome.metrics.orphaned_count, 0);
+    assert_eq!(outcome.metrics.deleted_count, 0);
+    assert_eq!(outcome.metrics.unindexed_count, outcome.candidates.len());
+    assert!(!outcome.metrics.authoritative_index);
+}
+
+#[test]
+fn test_evidence_id_is_stable_across_every_candidate() {
+    let engine = RecoveryEngine::new();
+    let reader = CodecReader { len: 3 * 1024 * 1024 };
+    let profile = make_mock_profile();
+    let parser = AlwaysRecognizeParser;
+    let evidence_id = forensic_core::EvidenceId::new();
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: u32::MAX,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let outcome = engine
+        .execute_recovery(recovery::RecoveryRequest {
+            evidence_id,
+            reader: &reader,
+            profile: &profile,
+            oem_key: "mock",
+            parser: &parser,
+            bounds: &bounds,
+            scan_window: None,
+        })
+        .unwrap();
+
+    assert!(!outcome.candidates.is_empty());
+    for c in &outcome.candidates {
+        assert_eq!(
+            c.provenance.source_evidence_id, evidence_id,
+            "the engine must propagate the caller's EvidenceId, never mint one"
+        );
+        for sr in &c.provenance.source_regions {
+            assert_eq!(sr.evidence_id, evidence_id);
+        }
+    }
+    for f in &outcome.fragments {
+        assert_eq!(f.evidence_id, evidence_id);
+    }
+}
+
+#[test]
+fn test_scan_window_preserves_absolute_physical_offsets() {
+    let engine = RecoveryEngine::new();
+    let reader = CodecReader { len: 4 * 1024 * 1024 };
+    let profile = make_mock_profile();
+    let parser = AlwaysRecognizeParser;
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: u32::MAX,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let window = forensic_core::Region::new(2 * 1024 * 1024, 1024 * 1024).unwrap();
+    let outcome = engine
+        .execute_recovery(recovery::RecoveryRequest {
+            evidence_id: forensic_core::EvidenceId::new(),
+            reader: &reader,
+            profile: &profile,
+            oem_key: "mock",
+            parser: &parser,
+            bounds: &bounds,
+            scan_window: Some(window),
+        })
+        .unwrap();
+
+    assert_eq!(outcome.run.searched_regions, vec![window]);
+    assert_eq!(outcome.candidates.len(), 1);
+    assert_eq!(
+        outcome.candidates[0].source_offsets,
+        vec![window],
+        "offsets must stay absolute, never rebased to the window start"
+    );
+    assert_eq!(outcome.fragments[0].physical_region.offset, 2 * 1024 * 1024);
 }

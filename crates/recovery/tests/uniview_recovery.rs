@@ -94,7 +94,7 @@ fn test_uniview_recovery_full_scan() {
         time_limit: None,
     };
 
-    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
     assert_eq!(run.validation_state.state, ValidationStateKind::Pass);
     assert_eq!(run.searched_regions.len(), 2);
 }
@@ -117,7 +117,7 @@ fn test_uniview_recovery_truncated_yields_review() {
         time_limit: None,
     };
 
-    let (_, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
     assert!(run.truncated);
     assert_eq!(run.validation_state.state, ValidationStateKind::Review);
 }
@@ -128,4 +128,67 @@ fn test_uniview_missing_di_is_not_overwritten() {
     let assessment = recovery::classify_recovery(false, true, true, false);
     assert_eq!(assessment.data_state, forensic_core::DataState::Orphaned);
     assert_ne!(assessment.data_state, forensic_core::DataState::Overwritten);
+}
+
+/// Build a whole-image recovery request.
+///
+/// The Uniview parser supplies no storage geometry and no recording index, so these runs
+/// exercise the engine's conservative fallback path.
+fn request<'a>(
+    reader: &'a dyn EvidenceReader,
+    profile: &'a OemProfile,
+    parser: &'a dyn parsers_core::Parser,
+    bounds: &'a RecoveryBounds,
+) -> recovery::RecoveryRequest<'a> {
+    recovery::RecoveryRequest {
+        evidence_id: forensic_core::EvidenceId::new(),
+        reader,
+        profile,
+        oem_key: "uniview",
+        parser,
+        bounds,
+        scan_window: None,
+    }
+}
+
+#[test]
+fn test_uniview_has_no_index_reader_so_nothing_can_be_active() {
+    // Uniview's parser has no index reader, so the engine must not be able to conclude
+    // that any region is an active recording. Recognising a Uniview disk is not evidence
+    // about any particular video region.
+    let mut data = vec![0u8; 2 * 1024 * 1024];
+    data[0..4].copy_from_slice(&[0x31, 0x18, 0x10, 0x06]);
+    // A real H.264 Annex-B fragment so there is genuine video to discover.
+    let h264: [u8; 24] = [
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C,
+        0x80, 0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04,
+    ];
+    data[4096..4096 + h264.len()].copy_from_slice(&h264);
+
+    let reader = UniviewMockReader { data };
+    let profile = make_uniview_profile();
+    let parser = UniviewParser::default();
+    let engine = RecoveryEngine::new();
+
+    let bounds = RecoveryBounds {
+        max_scan_bytes: u64::MAX,
+        max_scan_regions: u32::MAX,
+        max_candidates: 100,
+        max_hypotheses: 100,
+        max_search_depth: None,
+        cancel: CancelToken::new(),
+        time_limit: None,
+    };
+
+    let outcome = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap();
+
+    assert!(!outcome.metrics.geometry_available);
+    assert!(!outcome.metrics.authoritative_index);
+    assert_eq!(outcome.metrics.active_count, 0);
+    assert_eq!(outcome.metrics.orphaned_count, 0);
+    for c in &outcome.candidates {
+        assert_eq!(c.data_state, forensic_core::DataState::Unindexed);
+    }
 }

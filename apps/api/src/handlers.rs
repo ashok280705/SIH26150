@@ -939,7 +939,9 @@ pub struct RecoveryRequest {
 #[derive(Debug, Serialize)]
 pub struct RecoveryCandidateDto {
     pub id: String,
-    pub channel: u32,
+    /// `None` when no index entry supplied a channel. Video carved from unclaimed space
+    /// genuinely has no channel and must not be reported as channel 0.
+    pub channel: Option<u32>,
     pub time_native: Option<String>,
     pub time_normalized: Option<String>,
     pub timezone_state: String,
@@ -956,6 +958,11 @@ pub struct RecoveryCandidateDto {
     pub nal_unit_count: usize,
     pub has_native_artifact: bool,
     pub has_derived_artifact: bool,
+    /// How this candidate was found: an index-claimed probe, or a scan of unclaimed space.
+    pub discovery_method: String,
+    /// Why this candidate received its `data_state`, phrased for an examiner. The UI can
+    /// show this verbatim so an Orphaned or Unindexed finding is never unexplained.
+    pub state_reason: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -965,13 +972,27 @@ pub struct RecoveryResponseDto {
     pub run: serde_json::Value,
     pub total_bytes: u64,
     pub skipped_bytes: u64,
+    /// Observability counters for the index-aware recovery run: geometry, index entry
+    /// count, claimed/unclaimed byte totals, and the per-state candidate breakdown.
+    pub metrics: serde_json::Value,
+    /// How the scan space was derived from OEM evidence, in plain language.
+    pub plan_rationale: String,
 }
 
 /// POST /api/evidence/:id/recovery
 ///
-/// Runs a bounded recovery scan and derives candidates from structures the parser
-/// actually located in the image. Codec is classified from real NAL evidence;
-/// DataState/RecoveryStatus come from `recovery::classify_recovery`.
+/// Runs an index-aware bounded recovery scan.
+///
+/// The OEM parser supplies storage geometry and recording-index metadata; the engine
+/// converts those into claimed physical ranges, subtracts them from the address space, and
+/// scans the remainder. Every candidate's `data_state` comes from that index evidence, not
+/// from the fact that the OEM was detected.
+///
+/// Two candidate sources are merged into the response:
+///
+/// * recordings the parser located, classified against the claim map (normally `Active`),
+/// * engine discoveries in unclaimed space (`Orphaned` / `Unindexed`), which the previous
+///   implementation discarded.
 pub async fn run_recovery(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
@@ -1012,9 +1033,21 @@ pub async fn run_recovery(
         error: format!("No parser registered for OEM: {oem_key}"),
         details: None,
     })?;
-    let (_engine_candidates, mut run) = engine
-        .execute_recovery(reader.as_ref(), profile, parser, &bounds, 0, total_bytes)
+    // The evidence id is passed in so every candidate's provenance points back at this
+    // evidence item; the engine never mints one.
+    let outcome = engine
+        .execute_recovery(recovery::RecoveryRequest {
+            evidence_id,
+            reader: reader.as_ref(),
+            profile,
+            oem_key: &oem_key,
+            parser,
+            bounds: &bounds,
+            scan_window: None,
+        })
         .map_err(map_err)?;
+    let mut run = outcome.run.clone();
+    let claim_map = &outcome.plan.claim_map;
 
     // Which artifacts already exist for this evidence (drives the artifact badges).
     let artifacts = repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
@@ -1042,15 +1075,22 @@ pub async fn run_recovery(
             forensic_core::ValidationStateKind::Pass
         );
 
-        // Recordings surfaced by the parser came from an index/container walk, so
-        // they carry an index entry. Overwrite evidence is not something this
-        // pipeline establishes, so it is reported as absent rather than assumed.
-        let assessment = recovery::classify_recovery(
-            true,
-            is_physically_present,
-            is_structurally_valid,
-            false,
-        );
+        // The parser locating a recording is a container walk, not proof of indexation.
+        // Ask the claim map whether an authoritative index entry actually claims these
+        // bytes, and classify from that. This is what previously made every parser-found
+        // recording `Active` regardless of the index.
+        let claim = recovery::RegionClaim::resolve(claim_map, region.offset);
+        let video = recovery::VideoEvidence {
+            signature_found: codec_evidence.codec != recovery::VideoCodec::Unknown
+                || !codec_evidence.nal_evidence.is_empty(),
+            physically_present: is_physically_present,
+            structurally_valid: is_structurally_valid,
+        };
+        let Some(assessment) = recovery::classify_region_state(&claim, video) else {
+            // No video evidence at the recording's declared offset. Reporting a recovered
+            // candidate here would assert a finding the bytes do not support.
+            continue;
+        };
 
         let timezone_state = match &rec.time.timezone {
             forensic_core::TimeZoneState::Known(label) => label.clone(),
@@ -1059,14 +1099,14 @@ pub async fn run_recovery(
 
         candidates.push(RecoveryCandidateDto {
             id: format!("{}-ch{}-0x{:X}", oem_key, rec.channel, region.offset),
-            channel: rec.channel,
+            channel: Some(rec.channel),
             time_native: rec.time.recorder_native.as_ref().map(|t| t.iso_8601.clone()),
             time_normalized: rec.time.normalized.as_ref().map(|t| t.iso_8601.clone()),
             timezone_state,
             duration_sec: None,
             data_state: assessment.data_state,
             recovery_status: assessment.recovery_status,
-            recovery_level: forensic_core::RecoveryLevel::L1,
+            recovery_level: assessment.recovery_level,
             source_offset: region.offset,
             source_length: region.length,
             integrity_status: codec_evidence.validation.reason.clone(),
@@ -1075,10 +1115,63 @@ pub async fn run_recovery(
             nal_unit_count: codec_evidence.nal_evidence.len(),
             has_native_artifact,
             has_derived_artifact,
+            discovery_method: "parser-located recording, classified against the recording index"
+                .to_string(),
+            state_reason: assessment.reason,
         });
     }
 
-    // Report the candidate accounting that was actually derived, not the stub's zeros.
+    // Engine discoveries in unclaimed space. These are the orphaned/unindexed findings the
+    // previous implementation computed and then threw away. Candidates that overlap a
+    // recording the parser already reported are skipped so the list has no duplicates.
+    for (cand, frag) in outcome.candidates.iter().zip(outcome.fragments.iter()) {
+        let region = match cand.source_offsets.first() {
+            Some(r) => *r,
+            None => continue,
+        };
+        let already_listed = candidates.iter().any(|c| {
+            let existing = forensic_core::Region {
+                offset: c.source_offset,
+                length: c.source_length,
+            };
+            existing.overlaps(&region)
+        });
+        if already_listed {
+            continue;
+        }
+
+        candidates.push(RecoveryCandidateDto {
+            id: format!(
+                "{}-{}-0x{:X}",
+                oem_key,
+                frag.discovery_method.label(),
+                region.offset
+            ),
+            // Only index evidence supplies a channel; carved video has none.
+            channel: frag.camera_id.value().copied(),
+            time_native: None,
+            time_normalized: None,
+            timezone_state: "Unknown".to_string(),
+            duration_sec: None,
+            data_state: cand.data_state,
+            recovery_status: cand.recovery_status,
+            recovery_level: cand.recovery_level,
+            source_offset: region.offset,
+            source_length: region.length,
+            integrity_status: frag.validation.reason.clone(),
+            codec: frag.codec.clone(),
+            validation: cand.validation.structure.clone(),
+            nal_unit_count: 0,
+            has_native_artifact: false,
+            has_derived_artifact: false,
+            discovery_method: frag.discovery_method.label().to_string(),
+            state_reason: cand.provenance.validation_state.reason.clone(),
+        });
+    }
+
+    candidates.sort_by_key(|c| c.source_offset);
+
+    // Report the candidate accounting that was actually derived.
     run.candidate_count = candidates.len() as u32;
     run.accepted = candidates
         .iter()
@@ -1099,6 +1192,8 @@ pub async fn run_recovery(
         run: serde_json::to_value(&run).unwrap_or_default(),
         total_bytes,
         skipped_bytes,
+        metrics: serde_json::to_value(&outcome.metrics).unwrap_or_default(),
+        plan_rationale: outcome.plan.rationale.clone(),
     };
 
     Ok(Json(serde_json::to_value(response).unwrap()))
@@ -1125,8 +1220,11 @@ pub struct GapSlotDto {
     pub index: usize,
     /// "L1" | "L2" | "L3", or null when nothing could be carved from this slot.
     pub level: Option<String>,
-    pub data_state: forensic_core::DataState,
-    pub recovery_status: forensic_core::RecoveryStatus,
+    /// `null` when no video was found in this slot. Finding nothing is an absence of
+    /// evidence, so no `DataState` is asserted — in particular not `Deleted`.
+    pub data_state: Option<forensic_core::DataState>,
+    /// `null` when no candidate was produced for this slot.
+    pub recovery_status: Option<forensic_core::RecoveryStatus>,
     /// Seconds from the gap open at which this slot begins / ends.
     pub start_offset_sec: i64,
     pub end_offset_sec: i64,
@@ -1181,16 +1279,28 @@ fn first_annexb_start(b: &[u8]) -> Option<usize> {
 
 /// POST /api/evidence/:id/recovery/gap
 ///
-/// Runs a staged L1 -> L2 -> L3 recovery over ONE detected gap's byte region — the
-/// physical space between the two recordings that straddle the gap, where deleted
-/// footage would reside. The gap is probed as `nominal`-length sub-slots; each is
-/// classified at escalating strictness:
-///   * clean, decodable stream (valid parameter sets) -> L1 / Active / Recoverable
-///   * NAL data without a complete parameter set       -> L2 / Orphaned / Partial
-///   * bare Annex-B start codes, no NAL structure       -> L3 / Corrupted / Partial
-///   * neither                                          -> not recovered
-/// The response reports which time sub-ranges were recovered at which level and which
-/// remain missing, so partial recovery (e.g. 20s of a 30s gap) is explicit.
+/// Probes ONE detected gap's byte region — the physical space between the two recordings
+/// that straddle the gap. The gap is examined as `nominal`-length sub-slots.
+///
+/// # This endpoint has no index evidence
+///
+/// It is handed a byte window by the caller and classifies what is physically there. It
+/// does not consult a recording index, so it cannot establish that a slot is an active
+/// recording or that it is orphaned. Classification is therefore capped at the
+/// conservative states:
+///
+///   * validated, decodable stream        -> L3 / `Unindexed` / Recoverable
+///   * codec signature, validation failed -> L3 / `Corrupted` / PartiallyRecoverable
+///   * bare Annex-B start codes only      -> L3 / `Corrupted` / PartiallyRecoverable
+///   * no codec evidence at all           -> not a recovered candidate, `data_state` null
+///
+/// Earlier revisions reported the first case as `Active` (a claim no index backs) and the
+/// last as `Deleted` (a deletion finding from the mere absence of a signature). Both were
+/// unsupported conclusions. For index-backed `Active`/`Orphaned` classification, use
+/// `POST /api/evidence/:id/recovery`, which runs the index-aware engine.
+///
+/// The response reports which time sub-ranges hold recoverable video and which remain
+/// empty, so a partial result (e.g. 20s of a 30s gap) stays explicit.
 pub async fn recover_gap(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
@@ -1229,33 +1339,51 @@ pub async fn recover_gap(
             .map(|rel| off + rel as u64)
             .unwrap_or(off);
 
+        // No index evidence is available here, so the strongest supportable conclusion is
+        // "valid video exists but is not linked to any index entry" — Unindexed. Active
+        // and Orphaned are deliberately unreachable from this endpoint.
         let (level, data_state, status, reason) = if is_pass {
             (
-                Some("L1".to_string()),
-                forensic_core::DataState::Active,
-                forensic_core::RecoveryStatus::Recoverable,
-                format!("L1 indexed recovery: clean {:?} stream with valid parameter sets", ev.codec),
+                Some("L3".to_string()),
+                Some(forensic_core::DataState::Unindexed),
+                Some(forensic_core::RecoveryStatus::Recoverable),
+                format!(
+                    "Clean {:?} stream with valid parameter sets. No recording index covers this \
+                     window, so it is recorded as unindexed - present and valid, but not linked \
+                     to an index entry. This is not evidence of deletion.",
+                    ev.codec
+                ),
             )
         } else if score > 0 {
             (
-                Some("L2".to_string()),
-                forensic_core::DataState::Orphaned,
-                forensic_core::RecoveryStatus::PartiallyRecoverable,
-                format!("L2 orphan carve: {:?} NAL data without a complete parameter set (score {score})", ev.codec),
+                Some("L3".to_string()),
+                Some(forensic_core::DataState::Corrupted),
+                Some(forensic_core::RecoveryStatus::PartiallyRecoverable),
+                format!(
+                    "{:?} NAL data present (score {score}) but structural validation did not \
+                     pass, so no recording-level conclusion is drawn.",
+                    ev.codec
+                ),
             )
         } else if has_start {
             (
                 Some("L3".to_string()),
-                forensic_core::DataState::Corrupted,
-                forensic_core::RecoveryStatus::PartiallyRecoverable,
-                "L3 raw carve: Annex-B start code(s) found but no decodable NAL structure".to_string(),
+                Some(forensic_core::DataState::Corrupted),
+                Some(forensic_core::RecoveryStatus::PartiallyRecoverable),
+                "Annex-B start code(s) found but no decodable NAL structure; a signature match \
+                 alone is not valid video."
+                    .to_string(),
             )
         } else {
             (
                 None,
-                forensic_core::DataState::Deleted,
-                forensic_core::RecoveryStatus::Unrecoverable,
-                "Not recovered: no codec signature or start code in this window".to_string(),
+                // Nothing was found. That is an absence of evidence, not a deletion
+                // finding, so no DataState is asserted at all.
+                None,
+                None,
+                "No codec signature or start code in this window. Nothing was recovered here; \
+                 this says nothing about whether footage once existed at this offset."
+                    .to_string(),
             )
         };
 
@@ -1383,7 +1511,7 @@ pub async fn run_full_pipeline(
     let config = ConfidenceConfig::provisional_default();
     let options = PipelineOptions::default();
 
-    let run: PipelineRun = run_pipeline(reader.as_ref(), &state.profile_registry, &config, &options)
+    let run: PipelineRun = run_pipeline(evidence_id, reader.as_ref(), &state.profile_registry, &config, &options)
         .map_err(map_err)?;
 
     // Persist parser runs + recordings when the flow actually parsed something, so the
@@ -1459,7 +1587,7 @@ pub async fn get_report(
 
     // Run the pipeline to obtain real attribution, parsing, recovery, and timeline.
     let config = ConfidenceConfig::provisional_default();
-    let run = run_pipeline(reader.as_ref(), &state.profile_registry, &config, &PipelineOptions::default())
+    let run = run_pipeline(evidence_id, reader.as_ref(), &state.profile_registry, &config, &PipelineOptions::default())
         .map_err(map_err)?;
 
     // Real SHA-256 of the evidence image (bounded, chunked read).
@@ -1585,9 +1713,12 @@ pub async fn get_report(
                 .enumerate()
                 .map(|(i, c)| {
                     let region = c.source_offsets.first().cloned().unwrap_or(forensic_core::Region { offset: 0, length: 0 });
+                    // Channel comes from the fragment, which only has one when an index
+                    // entry supplied it. Carved video reports `None`, not channel 0.
+                    let frag = r.fragments.get(i);
                     RecoveryReportItem {
                         candidate_id: format!("cand-{}", i + 1),
-                        channel: 0,
+                        channel: frag.and_then(|f| f.camera_id.value().copied()),
                         recovery_level: format!("{:?}", c.recovery_level),
                         data_state: format!("{:?}", c.data_state),
                         recovery_status: format!("{:?}", c.recovery_status),
@@ -1595,6 +1726,10 @@ pub async fn get_report(
                         source_length: region.length,
                         validation_state: format!("{:?}", c.validation.structure.state),
                         validation_reason: c.validation.structure.reason.clone(),
+                        discovery_method: frag
+                            .map(|f| f.discovery_method.label().to_string())
+                            .unwrap_or_default(),
+                        state_reason: c.provenance.validation_state.reason.clone(),
                     }
                 })
                 .collect();

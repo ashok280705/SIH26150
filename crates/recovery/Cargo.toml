@@ -17,7 +17,11 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 uuid = { workspace = true }
 hex = { workspace = true }
+tracing = { workspace = true }
 tokio = { workspace = true, features = ["process", "io-util", "sync", "rt"] }
 
 [dev-dependencies]
 parser-uniview = { path = "../parsers/uniview" }
+parser-dahua = { path = "../parsers/dahua" }
+tempfile = "3"
+tracing-subscriber = { workspace = true }
