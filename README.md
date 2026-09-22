@@ -26,7 +26,6 @@ timeline reconstruction, and forensic reporting across surveillance manufacturer
 ![Digital Forensics](https://img.shields.io/badge/Digital-Forensics-2c3e50?style=flat-square)
 ![DVR/NVR](https://img.shields.io/badge/DVR%2FNVR-Analysis-8e44ad?style=flat-square)
 ![Active Development](https://img.shields.io/badge/Status-Active_Development-e67e22?style=flat-square)
-![SIH 2026](https://img.shields.io/badge/SIH-2026-e74c3c?style=flat-square)
 ![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white)
 
 [Architecture](#system-architecture) · [Capabilities](#core-capabilities) · [OEM Support](#oem-support-matrix) · [Workflow](#forensic-workflow) · [Setup](#installation)
