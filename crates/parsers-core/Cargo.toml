@@ -9,3 +9,4 @@ publish.workspace = true
 [dependencies]
 forensic-core = { path = "../forensic-core" }
 evidence-reader = { path = "../evidence-reader" }
+serde = { workspace = true }

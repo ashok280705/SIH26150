@@ -362,13 +362,20 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
                             {nativeTimeAdd(selected, slot.start_offset_sec)} → {nativeTimeAdd(selected, slot.end_offset_sec)}
                           </td>
                           <td><span className={`badge ${meta.badge}`}>{meta.label}</span></td>
-                          <td>{slot.data_state}</td>
+                          {/* A slot where nothing was found carries no data state. Showing
+                              "Not established" keeps an absence of evidence from reading as
+                              a finding. */}
+                          <td>{slot.data_state ?? <span className="text-muted">Not established</span>}</td>
                           <td>
-                            <span className={
-                              slot.recovery_status === 'Recoverable' ? 'badge badge-pass'
-                              : slot.recovery_status === 'PartiallyRecoverable' ? 'badge badge-review'
-                              : 'badge badge-fail'
-                            }>{slot.recovery_status}</span>
+                            {slot.recovery_status == null ? (
+                              <span className="text-muted">—</span>
+                            ) : (
+                              <span className={
+                                slot.recovery_status === 'Recoverable' ? 'badge badge-pass'
+                                : slot.recovery_status === 'PartiallyRecoverable' ? 'badge badge-review'
+                                : 'badge badge-fail'
+                              }>{slot.recovery_status}</span>
+                            )}
                           </td>
                           <td>{slot.codec}</td>
                           <td className="text-muted" style={{ fontSize: '11px', maxWidth: '260px' }}>{slot.reason}</td>

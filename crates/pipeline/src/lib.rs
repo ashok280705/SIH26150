@@ -178,7 +178,16 @@ pub struct AttributionSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecoverySummary {
     pub candidates: Vec<RecoveryCandidate>,
+    /// Fragment record per candidate, index-aligned with `candidates`.
+    ///
+    /// Carries each candidate's physical location, discovery method, and the recorder
+    /// metadata that was — or explicitly was not — established. Reporting reads channel
+    /// and timestamp from here rather than substituting zero.
+    pub fragments: Vec<recovery::DiscoveredFragment>,
     pub run: RecoveryRun,
+    /// Observability counters: geometry, index entry count, claimed/unclaimed byte
+    /// totals, and the per-state candidate breakdown.
+    pub metrics: recovery::RecoveryMetrics,
     pub decision: RecoveryDecision,
 }
 
@@ -320,57 +329,93 @@ fn recording_regions(result: &ParsingResult) -> Vec<Region> {
 
 /// Turn recovered candidates into timeline events so the final timeline reflects them.
 ///
-/// Carved candidates carry no recorder clock, so the events they produce keep the
-/// `TimeEvidence` from the candidate's provenance region with an Unknown timezone — the
-/// final timeline never invents a time for recovered data.
-fn candidates_to_events(candidates: &[RecoveryCandidate]) -> Vec<TimelineEvent> {
+/// # Only candidates with real recorder metadata are placed on the timeline
+///
+/// `TimelineEvent` requires a concrete channel and a concrete raw timestamp; the type has
+/// no representation for "channel unknown" or "time unknown". Previously every recovered
+/// candidate was inserted as channel 0 at timestamp 0, which puts fabricated metadata on
+/// the examiner's timeline.
+///
+/// So a candidate is only converted when its fragment carries a channel **and** a
+/// timestamp that came from index evidence. Candidates carved out of unclaimed space — the
+/// orphaned and unindexed findings — are deliberately withheld from the timeline and
+/// reported through `PipelineRun::recovery` instead, where their unknowns stay unknown.
+/// Placing them on the timeline is a task for the later temporal-reconstruction phase,
+/// once the timeline model can express an unknown camera and clock.
+///
+/// Returns the events plus the number of candidates withheld for lack of metadata.
+fn candidates_to_events(
+    candidates: &[RecoveryCandidate],
+    fragments: &[recovery::DiscoveredFragment],
+) -> (Vec<TimelineEvent>, usize) {
     use forensic_core::identifiers::ProfileId;
     use forensic_core::{Hash, Provenance, RawTimestamp, TimeEvidence, TimeZoneState};
 
-    candidates
-        .iter()
-        .map(|c| {
-            let region = c
-                .source_offsets
-                .first()
-                .cloned()
-                .unwrap_or(Region { offset: 0, length: 0 });
-            let prov = Provenance::new(
-                forensic_core::EvidenceId::new(),
-                Hash::sha256(vec![0; 32]),
-                vec![],
-                "recovery-engine",
-                "1.0.0",
-                Hash::sha256(vec![0; 32]),
-                c.validation.structure.clone(),
-            );
-            let time = TimeEvidence {
-                raw: RawTimestamp {
-                    value: 0,
-                    format: "none".into(),
-                    source: prov,
-                },
-                recorder_native: None,
-                normalized: None,
-                reference: None,
-                timezone: TimeZoneState::Unknown,
-                correction: None,
-            };
-            TimelineEvent::new(
-                0,
-                time,
-                format!(
-                    "Recovered {:?} candidate ({:?}/{:?}) at 0x{:X}",
-                    c.recovery_level, c.data_state, c.recovery_status, region.offset
-                ),
-                vec![region],
-                "recovery-engine".to_string(),
-                "1.0.0".to_string(),
-                ProfileId("recovery".into()),
-                Hash::sha256(vec![0; 32]),
-            )
-        })
-        .collect()
+    let mut events = Vec::new();
+    let mut withheld = 0usize;
+
+    for (c, f) in candidates.iter().zip(fragments.iter()) {
+        let region = c
+            .source_offsets
+            .first()
+            .cloned()
+            .unwrap_or(Region { offset: 0, length: 0 });
+
+        let (Some(channel), Some(ts)) = (f.camera_id.value(), f.timestamp_unix.value()) else {
+            withheld += 1;
+            continue;
+        };
+        let Ok(raw_value) = u64::try_from(*ts) else {
+            withheld += 1;
+            continue;
+        };
+
+        // Provenance carries the candidate's real evidence id and source region, not a
+        // freshly minted one.
+        let prov = Provenance::new(
+            f.evidence_id,
+            Hash::sha256(vec![0; 32]),
+            vec![forensic_core::SourceRegion::new(f.evidence_id, region)
+                .with_description("recovered candidate region")],
+            "recovery-engine",
+            env!("CARGO_PKG_VERSION"),
+            Hash::sha256(vec![0; 32]),
+            c.validation.structure.clone(),
+        );
+        let time = TimeEvidence {
+            raw: RawTimestamp {
+                value: raw_value,
+                format: "UNIX_LE".into(),
+                source: prov,
+            },
+            recorder_native: None,
+            normalized: None,
+            reference: None,
+            // The recorder's zone is not established by recovery, so it stays Unknown.
+            timezone: TimeZoneState::Unknown,
+            correction: None,
+        };
+        events.push(TimelineEvent::new(
+            *channel,
+            time,
+            format!(
+                "Recovered {:?} candidate ({:?}/{:?}) at 0x{:X}, {} via {}",
+                c.recovery_level,
+                c.data_state,
+                c.recovery_status,
+                region.offset,
+                f.codec,
+                f.discovery_method.label()
+            ),
+            vec![region],
+            "recovery-engine".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            ProfileId(f.profile_id.clone()),
+            Hash::sha256(vec![0; 32]),
+        ));
+    }
+
+    (events, withheld)
 }
 
 /// Run the full pipeline over one piece of evidence.
@@ -378,7 +423,12 @@ fn candidates_to_events(candidates: &[RecoveryCandidate]) -> Vec<TimelineEvent> 
 /// Returns a `PipelineRun` capturing every stage and gate. Errors only on
 /// unrecoverable I/O; forensic "negative" outcomes (unresolved, not parsed, not
 /// recovered) are represented in the run, not as errors.
+/// `evidence_id` identifies the evidence item being processed and is propagated into
+/// every recovery candidate's provenance. It is a required parameter rather than something
+/// the pipeline mints, so a recovered candidate is always traceable back to the registered
+/// evidence item it came from.
 pub fn run_pipeline(
+    evidence_id: forensic_core::EvidenceId,
     reader: &dyn EvidenceReader,
     registry: &ProfileRegistry,
     config: &ConfidenceConfig,
@@ -661,8 +711,26 @@ pub fn run_pipeline(
 
         if let Some(parser) = parser {
             let engine = recovery::RecoveryEngine::new();
-            let (candidates, rec_run) =
-                engine.execute_recovery(reader, profile, parser, &bounds, 0, reader.len())?;
+            // Index-aware recovery: the parser's storage geometry and recording index (if
+            // it has them) decide which physical ranges are claimed, and the complement
+            // becomes the search space. A parser without an index reader falls back to a
+            // whole-image sweep whose candidates can only be reported as unindexed.
+            let outcome = engine.execute_recovery(recovery::RecoveryRequest {
+                evidence_id,
+                reader,
+                profile,
+                oem_key: &key,
+                parser,
+                bounds: &bounds,
+                scan_window: None,
+            })?;
+            let recovery::RecoveryOutcome {
+                candidates,
+                fragments,
+                run: rec_run,
+                metrics,
+                ..
+            } = outcome;
 
             let accepted = candidates
                 .iter()
@@ -682,23 +750,50 @@ pub fn run_pipeline(
                 RecoveryDecision::CompletelyRecovered
             };
 
+            // State breakdown, so the gate reason distinguishes confirming active
+            // recordings from discovering video the index no longer references.
+            let breakdown = format!(
+                "{} active, {} orphaned, {} unindexed, {} corrupted",
+                metrics.active_count,
+                metrics.orphaned_count,
+                metrics.unindexed_count,
+                metrics.corrupted_count
+            );
+            let index_note = if metrics.authoritative_index {
+                format!(
+                    "authoritative index claimed {} byte(s) in {} range(s); {} byte(s) unclaimed",
+                    metrics.claimed_bytes, metrics.claimed_range_count, metrics.unclaimed_bytes
+                )
+            } else {
+                "no authoritative recording index was established, so no orphan conclusion is available".to_string()
+            };
+
             run.gates.push(GateRecord::Recovery {
                 decision,
                 reason: match decision {
                     RecoveryDecision::CompletelyRecovered => format!(
-                        "{accepted} candidate(s) recovered, scan complete: gaps addressed"
+                        "{accepted} candidate(s) recovered ({breakdown}), scan complete: gaps addressed. {index_note}"
                     ),
                     RecoveryDecision::PartiallyRecovered => format!(
-                        "{accepted} candidate(s) recovered but scan was truncated or partial: gaps only partly addressed"
+                        "{accepted} candidate(s) recovered ({breakdown}) but scan was truncated or partial: gaps only partly addressed. {index_note}"
                     ),
                     RecoveryDecision::NotRecovered => {
-                        "No recoverable candidates found in the gap regions".to_string()
+                        format!("No recoverable candidates found in the gap regions. {index_note}")
                     }
                 },
             });
 
-            // Fold recovered candidates into the final timeline (Unknown timezone).
-            final_events.extend(candidates_to_events(&candidates));
+            // Fold recovered candidates into the final timeline. Candidates with no
+            // recorder metadata are withheld rather than placed at channel 0 / time 0.
+            let (recovered_events, withheld) = candidates_to_events(&candidates, &fragments);
+            if withheld > 0 {
+                run.analyst_reasons.push(format!(
+                    "{withheld} recovered candidate(s) carry no recorder channel or timestamp and \
+                     were not placed on the timeline; they are reported under recovery with their \
+                     exact physical offsets and unknown metadata preserved"
+                ));
+            }
+            final_events.extend(recovered_events);
 
             match decision {
                 RecoveryDecision::NotRecovered => {
@@ -740,7 +835,9 @@ pub fn run_pipeline(
 
             run.recovery = Some(RecoverySummary {
                 candidates,
+                fragments,
                 run: rec_run,
+                metrics,
                 decision,
             });
         } else {

@@ -6,10 +6,249 @@
 //! - Missing index != overwritten (Req 13.11)
 //! - Only confirmed physical overwrite evidence → Overwritten state (Req 13.3)
 
-use forensic_core::{DataState, RecoveryAssessment, RecoveryStatus};
+use forensic_core::{DataState, RecoveryAssessment, RecoveryLevel, RecoveryStatus};
+use parsers_core::storage::AllocationEvidence;
+use serde::{Deserialize, Serialize};
+
+use crate::claims::{ClaimMap, ClaimedRegion, UnclaimedKind};
+
+/// What the OEM's index evidence says about one specific physical region.
+///
+/// This type is the whole point of the phase: it is produced *only* from index/geometry
+/// evidence, and it is the sole input to state classification. Recognising the OEM,
+/// finding a container signature, or successfully classifying a codec can never
+/// construct an [`RegionClaim::Indexed`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RegionClaim {
+    /// An authoritative index entry claims these bytes.
+    Indexed {
+        /// Identifier of the claiming index entry, for provenance.
+        recording_id: String,
+        /// Channel, only if the index recorded one.
+        channel: Option<u32>,
+        /// Start time as unix seconds, only if the index recorded one.
+        start_time_unix: Option<i64>,
+        /// Allocation state the OEM structures record for that entry.
+        allocation: AllocationEvidence,
+    },
+    /// An authoritative index governs these bytes and does **not** claim them. This is
+    /// positive evidence of non-reference, and the only basis for an orphan finding.
+    UnclaimedWithinIndexScope {
+        /// How many entries the authoritative index contained, for the explanation.
+        index_entry_count: usize,
+    },
+    /// These bytes lie outside the scope of any authoritative index (or the index was
+    /// only partially readable). The index makes no statement here.
+    OutsideIndexScope {
+        /// Why no authoritative statement covers this region.
+        reason: String,
+    },
+    /// No index evidence exists for this evidence item at all — e.g. an OEM path with
+    /// no index reader, or a volume whose index structures were not located.
+    NoIndexEvidence {
+        /// Why no index evidence is available.
+        reason: String,
+    },
+}
+
+impl RegionClaim {
+    /// Resolve the claim for a physical offset from a [`ClaimMap`].
+    ///
+    /// The lookup is the *only* way production code obtains a claim, which keeps
+    /// "is this indexed?" answerable exclusively from index evidence.
+    pub fn resolve(map: &ClaimMap, offset: u64) -> RegionClaim {
+        if let Some(claim) = map.claim_at(offset) {
+            return RegionClaim::from_claim(claim);
+        }
+        match map.kind_at(offset) {
+            Some(UnclaimedKind::WithinAuthoritativeIndexScope) => {
+                RegionClaim::UnclaimedWithinIndexScope {
+                    index_entry_count: map.claims.len(),
+                }
+            }
+            Some(UnclaimedKind::OutsideIndexScope) => {
+                if map.has_authoritative_index() {
+                    RegionClaim::OutsideIndexScope {
+                        reason: format!(
+                            "offset 0x{offset:X} lies outside the region the authoritative index governs ({})",
+                            map.authoritative_scope
+                                .map(|r| r.to_string())
+                                .unwrap_or_else(|| "none".into())
+                        ),
+                    }
+                } else {
+                    RegionClaim::NoIndexEvidence {
+                        reason: "no authoritative recording index was established for this evidence"
+                            .to_string(),
+                    }
+                }
+            }
+            // Outside the map's universe entirely: we have no statement either way.
+            None => RegionClaim::NoIndexEvidence {
+                reason: format!(
+                    "offset 0x{offset:X} lies outside the analysed address space {}",
+                    map.universe
+                ),
+            },
+        }
+    }
+
+    /// Build an `Indexed` claim from a resolved [`ClaimedRegion`].
+    pub fn from_claim(claim: &ClaimedRegion) -> RegionClaim {
+        RegionClaim::Indexed {
+            recording_id: claim.recording_id.clone(),
+            channel: claim.channel,
+            start_time_unix: claim.start_time_unix,
+            allocation: claim.allocation,
+        }
+    }
+
+    /// Short label for logs and provenance.
+    pub fn label(&self) -> &'static str {
+        match self {
+            RegionClaim::Indexed { .. } => "indexed",
+            RegionClaim::UnclaimedWithinIndexScope { .. } => "unclaimed-in-index-scope",
+            RegionClaim::OutsideIndexScope { .. } => "outside-index-scope",
+            RegionClaim::NoIndexEvidence { .. } => "no-index-evidence",
+        }
+    }
+}
+
+/// What was established about video data actually present in a region.
+///
+/// `signature_found` alone is never enough: [`VideoEvidence::structurally_valid`] must
+/// come from a validation result, and if validation did not run it is `false` here while
+/// the candidate's own validation report records `Unknown` — never `Pass`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoEvidence {
+    /// A codec signature / NAL evidence was observed in the region's bytes.
+    pub signature_found: bool,
+    /// Bytes were actually read from the region.
+    pub physically_present: bool,
+    /// A validation check ran **and passed**. Not "a signature matched".
+    pub structurally_valid: bool,
+}
+
+/// The classification outcome for one region, with the reasoning that produced it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateAssessment {
+    pub data_state: DataState,
+    pub recovery_status: RecoveryStatus,
+    /// The recovery level this discovery path corresponds to.
+    pub recovery_level: RecoveryLevel,
+    /// Why this state was assigned, phrased so it can be shown to an examiner verbatim.
+    pub reason: String,
+}
+
+/// Classify a region from index evidence plus video evidence.
+///
+/// Returns `None` when the region holds no video at all — a region with no codec
+/// evidence is not a recovered video candidate and must not be reported as one.
+///
+/// # Rules
+///
+/// | index evidence                 | video          | state       |
+/// |--------------------------------|----------------|-------------|
+/// | indexed, allocated/unknown     | valid          | `Active`    |
+/// | indexed, free-marked           | valid          | `Deleted`   |
+/// | unclaimed within index scope   | valid          | `Orphaned`  |
+/// | outside index scope            | valid          | `Unindexed` |
+/// | no index evidence              | valid          | `Unindexed` |
+/// | any                            | signature only | `Corrupted` |
+///
+/// Two rules are load-bearing and deliberately absent:
+///
+/// * There is no "not in index ⇒ deleted" path. Unreferenced data reaches `Orphaned`
+///   only with an authoritative index behind it, and otherwise stays `Unindexed`.
+/// * Recognising the OEM cannot produce `Active`. `Active` requires an `Indexed` claim,
+///   which only [`RecordingIndex`](parsers_core::storage::RecordingIndex) evidence builds.
+pub fn classify_region_state(
+    claim: &RegionClaim,
+    video: VideoEvidence,
+) -> Option<StateAssessment> {
+    if !video.physically_present || !video.signature_found {
+        return None;
+    }
+
+    // Structurally invalid data is reported as Corrupted regardless of index evidence.
+    // Promoting it to Active or Orphaned would assert a conclusion about a recording we
+    // have not established is a recording. Corrupted is not Unrecoverable.
+    if !video.structurally_valid {
+        return Some(StateAssessment {
+            data_state: DataState::Corrupted,
+            recovery_status: RecoveryStatus::PartiallyRecoverable,
+            recovery_level: match claim {
+                RegionClaim::Indexed { .. } => RecoveryLevel::L1,
+                RegionClaim::UnclaimedWithinIndexScope { .. } => RecoveryLevel::L2,
+                _ => RecoveryLevel::L3,
+            },
+            reason: format!(
+                "Codec signature present but structural validation did not pass, so no recording-level conclusion is drawn ({} region)",
+                claim.label()
+            ),
+        });
+    }
+
+    let assessment = match claim {
+        RegionClaim::Indexed {
+            recording_id,
+            allocation: AllocationEvidence::FreeMarked,
+            ..
+        } => StateAssessment {
+            data_state: DataState::Deleted,
+            recovery_status: RecoveryStatus::Recoverable,
+            recovery_level: RecoveryLevel::L1,
+            reason: format!(
+                "Index entry {recording_id} claims this region but the OEM structures mark the entry free; valid video is still physically present"
+            ),
+        },
+        RegionClaim::Indexed {
+            recording_id,
+            allocation,
+            ..
+        } => StateAssessment {
+            data_state: DataState::Active,
+            recovery_status: RecoveryStatus::Recoverable,
+            recovery_level: RecoveryLevel::L1,
+            reason: format!(
+                "Region is claimed by authoritative index entry {recording_id} (allocation: {allocation:?}) and valid video was validated there"
+            ),
+        },
+        RegionClaim::UnclaimedWithinIndexScope { index_entry_count } => StateAssessment {
+            data_state: DataState::Orphaned,
+            recovery_status: RecoveryStatus::Recoverable,
+            recovery_level: RecoveryLevel::L2,
+            reason: format!(
+                "Valid video is physically present here, and the authoritative recording index ({index_entry_count} entr{plural}) governs this region without referencing it - the recording is no longer indexed",
+                plural = if *index_entry_count == 1 { "y" } else { "ies" }
+            ),
+        },
+        RegionClaim::OutsideIndexScope { reason } => StateAssessment {
+            data_state: DataState::Unindexed,
+            recovery_status: RecoveryStatus::Recoverable,
+            recovery_level: RecoveryLevel::L3,
+            reason: format!(
+                "Valid video discovered, but no authoritative index statement covers these bytes ({reason}); recorded as unindexed, which is not evidence of deletion"
+            ),
+        },
+        RegionClaim::NoIndexEvidence { reason } => StateAssessment {
+            data_state: DataState::Unindexed,
+            recovery_status: RecoveryStatus::Recoverable,
+            recovery_level: RecoveryLevel::L3,
+            reason: format!(
+                "Valid video discovered without index linkage ({reason}); recorded as unindexed, which is not evidence of deletion"
+            ),
+        },
+    };
+    Some(assessment)
+}
 
 /// Classifies a candidate's data state and recovery status based on evidence.
 /// This function enforces all the independence constraints from the requirements.
+///
+/// Retained for callers that only have the four coarse booleans (the API's
+/// parser-recording path). Index-aware recovery uses [`classify_region_state`], which
+/// takes actual index evidence instead of a `has_index_entry` flag.
 pub fn classify_recovery(
     has_index_entry: bool,
     is_physically_present: bool,
@@ -50,6 +289,169 @@ pub fn classify_recovery(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const VALID: VideoEvidence = VideoEvidence {
+        signature_found: true,
+        physically_present: true,
+        structurally_valid: true,
+    };
+    const SIGNATURE_ONLY: VideoEvidence = VideoEvidence {
+        signature_found: true,
+        physically_present: true,
+        structurally_valid: false,
+    };
+    const NO_VIDEO: VideoEvidence = VideoEvidence {
+        signature_found: false,
+        physically_present: true,
+        structurally_valid: false,
+    };
+
+    fn indexed(allocation: AllocationEvidence) -> RegionClaim {
+        RegionClaim::Indexed {
+            recording_id: "didx#2".into(),
+            channel: Some(1),
+            start_time_unix: Some(1_700_000_000),
+            allocation,
+        }
+    }
+
+    // ── Candidate classification ────────────────────────────────────────────
+
+    #[test]
+    fn indexed_plus_valid_video_is_active() {
+        let a = classify_region_state(&indexed(AllocationEvidence::Allocated), VALID).unwrap();
+        assert_eq!(a.data_state, DataState::Active);
+        assert_eq!(a.recovery_status, RecoveryStatus::Recoverable);
+        assert_eq!(a.recovery_level, RecoveryLevel::L1);
+        assert!(a.reason.contains("didx#2"), "reason must cite the index entry");
+    }
+
+    #[test]
+    fn unclaimed_within_authoritative_index_scope_plus_valid_video_is_orphaned() {
+        let claim = RegionClaim::UnclaimedWithinIndexScope {
+            index_entry_count: 6,
+        };
+        let a = classify_region_state(&claim, VALID).unwrap();
+        assert_eq!(a.data_state, DataState::Orphaned);
+        assert_eq!(a.recovery_level, RecoveryLevel::L2);
+        assert!(
+            a.reason.contains("no longer indexed"),
+            "the orphan finding must be explained: {}",
+            a.reason
+        );
+    }
+
+    #[test]
+    fn valid_video_without_index_evidence_is_unindexed_not_deleted() {
+        let claim = RegionClaim::NoIndexEvidence {
+            reason: "OEM path has no index reader".into(),
+        };
+        let a = classify_region_state(&claim, VALID).unwrap();
+        assert_eq!(a.data_state, DataState::Unindexed);
+        assert_ne!(a.data_state, DataState::Deleted, "unindexed != deleted");
+        assert_ne!(a.data_state, DataState::Orphaned, "unindexed != orphaned");
+        assert_ne!(a.data_state, DataState::Active);
+        assert_eq!(a.recovery_level, RecoveryLevel::L3);
+    }
+
+    #[test]
+    fn valid_video_outside_the_index_scope_is_unindexed_not_orphaned() {
+        // An authoritative index exists, but it does not govern these bytes, so its
+        // silence here is not evidence of anything.
+        let claim = RegionClaim::OutsideIndexScope {
+            reason: "past the end of the declared video region".into(),
+        };
+        let a = classify_region_state(&claim, VALID).unwrap();
+        assert_eq!(a.data_state, DataState::Unindexed);
+        assert_ne!(a.data_state, DataState::Orphaned);
+        assert!(a.reason.contains("not evidence of deletion"));
+    }
+
+    #[test]
+    fn index_entry_marked_free_is_deleted_not_orphaned() {
+        let a = classify_region_state(&indexed(AllocationEvidence::FreeMarked), VALID).unwrap();
+        assert_eq!(a.data_state, DataState::Deleted);
+        // Deleted-but-present data is still recoverable; the two dimensions stay independent.
+        assert_eq!(a.recovery_status, RecoveryStatus::Recoverable);
+    }
+
+    #[test]
+    fn signature_without_passing_validation_is_corrupted_never_active() {
+        for claim in [
+            indexed(AllocationEvidence::Allocated),
+            RegionClaim::UnclaimedWithinIndexScope { index_entry_count: 3 },
+            RegionClaim::NoIndexEvidence { reason: "none".into() },
+        ] {
+            let a = classify_region_state(&claim, SIGNATURE_ONLY).unwrap();
+            assert_eq!(
+                a.data_state,
+                DataState::Corrupted,
+                "a signature match is not a valid video for claim {}",
+                claim.label()
+            );
+            assert_eq!(a.recovery_status, RecoveryStatus::PartiallyRecoverable);
+        }
+    }
+
+    #[test]
+    fn no_codec_evidence_is_not_a_recovered_candidate() {
+        assert!(classify_region_state(&indexed(AllocationEvidence::Allocated), NO_VIDEO).is_none());
+        assert!(classify_region_state(
+            &RegionClaim::UnclaimedWithinIndexScope { index_entry_count: 1 },
+            NO_VIDEO
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn absent_bytes_are_not_a_recovered_candidate() {
+        let absent = VideoEvidence {
+            signature_found: true,
+            physically_present: false,
+            structurally_valid: true,
+        };
+        assert!(classify_region_state(&indexed(AllocationEvidence::Unknown), absent).is_none());
+    }
+
+    #[test]
+    fn overwritten_is_never_inferred_from_missing_index_linkage() {
+        for claim in [
+            RegionClaim::UnclaimedWithinIndexScope { index_entry_count: 2 },
+            RegionClaim::OutsideIndexScope { reason: "x".into() },
+            RegionClaim::NoIndexEvidence { reason: "x".into() },
+        ] {
+            for video in [VALID, SIGNATURE_ONLY] {
+                if let Some(a) = classify_region_state(&claim, video) {
+                    assert_ne!(
+                        a.data_state,
+                        DataState::Overwritten,
+                        "Overwritten requires positive overwrite evidence"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn claim_resolution_comes_only_from_index_evidence() {
+        use crate::claims::empty_claim_map;
+        use forensic_core::Region;
+
+        // A claim map with no index evidence can never resolve to Indexed, no matter the
+        // offset — so nothing downstream of it can reach Active.
+        let map = empty_claim_map(Region::new(0, 4096).unwrap()).unwrap();
+        for offset in [0u64, 1, 2048, 4095] {
+            let claim = RegionClaim::resolve(&map, offset);
+            assert!(
+                matches!(claim, RegionClaim::NoIndexEvidence { .. }),
+                "unexpected claim at {offset}: {claim:?}"
+            );
+            let a = classify_region_state(&claim, VALID).unwrap();
+            assert_eq!(a.data_state, DataState::Unindexed);
+        }
+    }
+
+    // ── Legacy coarse classifier ────────────────────────────────────────────
 
     #[test]
     fn test_corrupted_is_not_automatically_unrecoverable() {

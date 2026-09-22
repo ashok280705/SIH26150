@@ -44,12 +44,26 @@ impl FormattedReportExporter {
         doc.push_str("\n");
 
         doc.push_str("## 4. Recovered Video & Candidate Summary\n");
-        doc.push_str("| Candidate ID | Channel | Level | DataState | RecoveryStatus | Source Offset | Validation |\n");
-        doc.push_str("|---|---|---|---|---|---|---|\n");
+        doc.push_str("| Candidate ID | Channel | Level | DataState | RecoveryStatus | Source Offset | Validation | Why this state |\n");
+        doc.push_str("|---|---|---|---|---|---|---|---|\n");
         for item in &report.recovery_items {
+            // A candidate with no index-supplied channel is reported as "CH Unknown".
+            // Printing "CH 0" would assert a channel the evidence never established.
+            let channel = item
+                .channel
+                .map(|c| format!("CH {c}"))
+                .unwrap_or_else(|| "CH Unknown".to_string());
             doc.push_str(&format!(
-                "| {} | CH {} | {} | {} | {} | `0x{:x}` | {} ({}) |\n",
-                item.candidate_id, item.channel, item.recovery_level, item.data_state, item.recovery_status, item.source_offset, item.validation_state, item.validation_reason
+                "| {} | {} | {} | {} | {} | `0x{:x}` | {} ({}) | {} |\n",
+                item.candidate_id,
+                channel,
+                item.recovery_level,
+                item.data_state,
+                item.recovery_status,
+                item.source_offset,
+                item.validation_state,
+                item.validation_reason,
+                if item.state_reason.is_empty() { "—" } else { &item.state_reason }
             ));
         }
         doc.push_str("\n");

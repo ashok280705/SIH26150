@@ -12,8 +12,21 @@ pub enum DataState {
     Active,
     /// Data is marked as deleted by the filesystem/index but remains structurally intact.
     Deleted,
-    /// Data exists on disk but is not referenced by any filesystem/index structure.
+    /// Data exists on disk but is **positively established** to be unreferenced by the
+    /// authoritative index structure that governs that physical region.
+    ///
+    /// Requires two independent facts: an authoritative OEM index was read, *and* the
+    /// region it governs does not claim these bytes. "The parser did not find an index"
+    /// is NOT sufficient — that is [`DataState::Unindexed`].
     Orphaned,
+    /// Valid data was discovered but there is insufficient index/metadata evidence to
+    /// associate it with an active recording or to support a stronger orphan/deleted
+    /// conclusion.
+    ///
+    /// This is the conservative fallback. It records an **absence of evidence**, not
+    /// evidence of deletion, and must never be reported or reasoned about as
+    /// `Deleted`/`Orphaned`.
+    Unindexed,
     /// Data structure or payload is mathematically/structurally invalid (e.g. invalid CRC or frame).
     Corrupted,
     /// Data has been partially or fully overwritten by new data.

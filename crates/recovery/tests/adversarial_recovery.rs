@@ -103,7 +103,7 @@ fn test_overflow_offsets_rejected_safely() {
         length: 20, // offset + length overflows u64
     };
 
-    let result = recovery::levels::recover_l1_indexed(&reader, &profile, &parser, &overflow_region);
+    let result = scan(&reader, &profile, &parser, overflow_region);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), ForensicError::ArithmeticOverflow { .. }));
 }
@@ -119,7 +119,7 @@ fn test_out_of_bounds_offsets_rejected_safely() {
         length: 500,
     };
 
-    let result = recovery::levels::recover_l1_indexed(&reader, &profile, &parser, &oob_region);
+    let result = scan(&reader, &profile, &parser, oob_region);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), ForensicError::OutOfBounds { .. }));
 }
@@ -182,7 +182,55 @@ fn test_device_read_failure_handled_gracefully() {
     };
 
     // Device failures during scan loop should be recorded as rejections without crashing the engine
-    let (candidates, run) = engine.execute_recovery(&reader, &profile, &parser, &bounds, 0, reader.len()).unwrap();
+    let outcome = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap();
+    let (candidates, run) = (outcome.candidates, outcome.run);
     assert!(candidates.is_empty());
     assert_eq!(run.searched_regions.len(), 1);
+}
+
+/// Build a whole-image recovery request.
+fn request<'a>(
+    reader: &'a dyn EvidenceReader,
+    profile: &'a OemProfile,
+    parser: &'a dyn parsers_core::Parser,
+    bounds: &'a RecoveryBounds,
+) -> recovery::RecoveryRequest<'a> {
+    recovery::RecoveryRequest {
+        evidence_id: forensic_core::EvidenceId::new(),
+        reader,
+        profile,
+        oem_key: "test",
+        parser,
+        bounds,
+        scan_window: None,
+    }
+}
+
+/// Scan one hostile region directly, bypassing the planner, to check that bad offsets are
+/// rejected at the read boundary rather than panicking.
+fn scan(
+    reader: &dyn EvidenceReader,
+    profile: &OemProfile,
+    parser: &dyn parsers_core::Parser,
+    region: Region,
+) -> Result<Option<recovery::ScanFinding>, ForensicError> {
+    let ctx = recovery::ScanContext {
+        evidence_id: forensic_core::EvidenceId::new(),
+        oem_key: "test".into(),
+        profile_id: profile.profile_id.clone(),
+        profile_version: profile.profile_version.clone(),
+        profile_hash: profile.profile_hash.clone(),
+        parser_id: parser.id().into(),
+        parser_version: parser.version().into(),
+    };
+    let target = recovery::ScanTarget {
+        region,
+        originating_region: region,
+        payload_region: None,
+        claim: recovery::RegionClaim::NoIndexEvidence {
+            reason: "adversarial test".into(),
+        },
+        discovery_method: recovery::DiscoveryMethod::WholeImageScanWithoutIndex,
+    };
+    recovery::scan_target(reader, profile, parser, &ctx, &target)
 }

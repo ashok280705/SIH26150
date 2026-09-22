@@ -141,26 +141,16 @@ impl Parser for DahuaParser {
         reader: &dyn EvidenceReader,
         profile: &OemProfile,
     ) -> Result<Vec<ParserRun>, ForensicError> {
-        // The superblock records the index_offset; read the DIDX table there.
-        let index_offset = read_u64_le(reader, 32).unwrap_or(0x0010_0000);
-        let mut entry_count = 0u32;
-
-        if index_offset > 0 && index_offset + 8 <= reader.len() {
-            if let Ok(hdr) = reader.read_exact_at(index_offset, 8) {
-                if &hdr[0..4] == b"DIDX" {
-                    entry_count = u32::from_le_bytes(hdr[4..8].try_into().unwrap());
-                }
-            }
-        }
-
-        let validation_state = if entry_count > 0 {
-            ValidationState::pass(
-                format!("DHFS recording index (DIDX) parsed: {entry_count} entries"),
+        // Delegate to the real index reader so this stage reports the same facts the
+        // recovery engine will consume — including how authoritative the index is.
+        // Reading only the header's entry count (as this stage used to) cannot
+        // distinguish a complete index from a partially readable one.
+        let validation_state = match crate::dhfs::read_recording_index(reader, profile)? {
+            Some(index) => index.evidence.clone(),
+            None => ValidationState::not_run(
                 "parse_metadata",
-                "didx_index",
-            ).unwrap()
-        } else {
-            ValidationState::not_run("parse_metadata", "No DIDX recording index located")
+                "No DHFS superblock; no recording index to read",
+            ),
         };
 
         Ok(vec![self.run(profile, "parse_metadata", validation_state)])
@@ -283,12 +273,35 @@ impl Parser for DahuaParser {
         Ok(vec![self.run(profile, "validate_structure", validation_state)])
     }
 
+    /// Format recognition only: do the bytes in this window carry Dahua DHAV container
+    /// framing?
+    ///
+    /// Previously this returned `Ok(true)` unconditionally, which made the recovery
+    /// engine's L1 gate always open and rendered the orphan/unindexed paths unreachable.
+    /// It now inspects the window. It still says nothing about whether the region is an
+    /// indexed recording — that question is answered by [`Parser::recording_index`].
     fn recognize_candidate(
         &self,
-        _reader: &dyn EvidenceReader,
-        _profile: &OemProfile,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
     ) -> Result<bool, ForensicError> {
-        Ok(true)
+        crate::dhfs::window_looks_like_dhav(reader, profile)
+    }
+
+    fn storage_geometry(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+    ) -> Result<Option<parsers_core::storage::StorageGeometry>, ForensicError> {
+        crate::dhfs::read_storage_geometry(reader, profile)
+    }
+
+    fn recording_index(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+    ) -> Result<Option<parsers_core::storage::RecordingIndex>, ForensicError> {
+        crate::dhfs::read_recording_index(reader, profile)
     }
 }
 
@@ -296,7 +309,6 @@ impl Parser for DahuaParser {
 struct DhavPacket {
     channel: u32,
     offset: u64,
-    packet_len: u32,
     frame_type: u8,
     timestamp: u64,
     codec: String,
@@ -311,17 +323,6 @@ struct DhavPacket {
 const DHAV_HEADER_SIZE: u64 = 64;
 /// Size of the lowercase `dhav` footer that closes a packet.
 const DHAV_FOOTER_SIZE: u64 = 4;
-
-/// Read a little-endian u64 at `offset` from the reader, if in bounds.
-fn read_u64_le(reader: &dyn EvidenceReader, offset: u64) -> Option<u64> {
-    if offset + 8 > reader.len() {
-        return None;
-    }
-    reader
-        .read_exact_at(offset, 8)
-        .ok()
-        .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
-}
 
 /// Trim a fixed-width ASCII field to a clean string.
 fn ascii_field(buf: &[u8], start: usize, len: usize) -> String {
@@ -389,7 +390,6 @@ fn scan_dhav_packets(reader: &dyn EvidenceReader) -> Vec<DhavPacket> {
             packets.push(DhavPacket {
                 channel,
                 offset,
-                packet_len,
                 frame_type,
                 timestamp,
                 codec,
