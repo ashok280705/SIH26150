@@ -1,0 +1,9 @@
+# dev
+cargo run -p forensic-api
+
+# or optimized
+cargo run --release -p forensic-api
+
+cd apps/frontend
+npm install        # first run only
+npm run dev

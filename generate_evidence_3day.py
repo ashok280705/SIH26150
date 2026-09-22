@@ -34,11 +34,16 @@ So a 50s gap recovers as 20s@L1 + 10s@L2 + 10s@L3, with 10s not recovered.
 Requires ffmpeg/ffprobe on PATH.
 """
 import argparse
+import glob
 import os
+import random
+import re
 import shutil
 import struct
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone, timedelta
 
 SECTOR_SIZE = 512
@@ -51,17 +56,30 @@ OUTPUT_PATH = "dvr_3day_sample.raw"
 ANSWER_KEY_PATH = ".fixture_build/ANSWER_KEY_dvr_3day.md"
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# 10 scheduled 10s slots per channel per day: 5 present, a 5-slot gap in the middle.
-PRESENT_SLOTS = [0, 1, 2, 8, 9]
-MISSING_SLOTS = [3, 4, 5, 6, 7]
-# Fixed byte size for each orphaned gap slot, so a proportional time->byte mapping
-# over the gap region lands cleanly on each slot.
+# Where dropped-in real source clips are looked for, and the video extensions we accept.
+FOOTAGE_DIR = "footage"
+VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".m4v", ".webm", ".avi", ".ts")
+# A desktop browser UA — the Pexels /download endpoint 302-redirects to the CDN mp4
+# for a real request; it is not behind the JS challenge that guards the HTML pages.
+PEXELS_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/125.0 Safari/537.36")
+
+# A daily recording is SLOTS_PER_DAY consecutive segments at `seg` cadence, so the
+# camera shows continuous footage for the whole day (e.g. 12 x 10s = 120s). Some interior
+# segments are randomly "lost": their real bytes are written (unindexed) into the physical
+# gap between the surrounding present segments, so a recovery scan can carve them back and
+# the complete footage is restored.
+SLOTS_PER_DAY = 12
+# Fixed byte size for each lost (orphan) segment slot, a multiple of 512 so the recovery
+# engine's proportional time->byte sub-slot mapping over a gap lands cleanly on each slot.
 SLOT_BYTES = 160 * 1024
-# Leading zero pad inside each orphan slot; keeps a slot's real content clear of the
-# small boundary bleed from the proportional sub-slot mapping (max a few dozen bytes).
+# Leading zero pad inside each orphan slot; keeps a slot's real content clear of the small
+# boundary bleed from the proportional sub-slot mapping (a few hundred bytes at most).
 LEAD_PAD = 1024
-# What each missing slot contains, driving the recovery level it resolves to.
-CASCADE = {3: "clean", 4: "clean", 5: "slice", 6: "empty", 7: "fragment"}
+# Lost runs are made at least this many segments long so the missing span exceeds the
+# pipeline's default in-recording gap threshold (30s at a 10s cadence => >=3 segments).
+MIN_LOST_RUN = 3
+MAX_LOST_RUN = 4
 
 
 def die(msg: str) -> None:
@@ -108,19 +126,99 @@ def fmt_ist(unix_ts: int) -> str:
     return datetime.fromtimestamp(unix_ts, IST).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def encode_clip(codec: str, seconds: int, size: str, fps: int, crf: int, out_path: str) -> bytes:
+def download_pexels_video(video_id: str, out_path: str) -> str:
+    """Fetch a Pexels stock video by id via the public /download endpoint.
+
+    That endpoint 302-redirects to the CDN mp4 and — unlike the HTML search pages —
+    is not behind the Cloudflare JS challenge, so a plain HTTP client can follow it.
+    The numeric id is the trailing number in a Pexels video URL, e.g.
+    https://www.pexels.com/video/<slug>-<ID>/ .
+    """
+    url = f"https://www.pexels.com/download/video/{video_id}/"
+    req = urllib.request.Request(url, headers={"User-Agent": PEXELS_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:  # follows redirects
+            ctype = resp.headers.get("Content-Type", "")
+            if "video" not in ctype:
+                die(f"Pexels id {video_id} did not resolve to a video (Content-Type "
+                    f"'{ctype}'). Use the id from a /video/ page, not a photo.")
+            data = resp.read()
+    except urllib.error.URLError as e:
+        die(f"could not download Pexels video {video_id}: {e}")
+    if not data:
+        die(f"Pexels video {video_id} download was empty")
+    with open(out_path, "wb") as f:
+        f.write(data)
+    print(f"    downloaded {len(data)/1048576:.1f} MiB from Pexels id {video_id}")
+    return out_path
+
+
+def resolve_source(ch_index: int, explicit_path, pexels_id, footage_dir: str, used: set) -> str | None:
+    """Resolve the real source video for a channel, or None to fall back to testsrc2.
+
+    Precedence: explicit --footage-chN path > --pexels-chN download > first unused
+    video file dropped in `footage_dir`.
+    """
+    if explicit_path:
+        if not os.path.exists(explicit_path):
+            die(f"--footage-ch{ch_index + 1} file not found: {explicit_path}")
+        return explicit_path
+    if pexels_id:
+        # Accept a bare id or a full pexels.com/video/... URL (use the trailing number).
+        digits = re.findall(r"\d+", str(pexels_id))
+        if not digits:
+            die(f"--pexels-ch{ch_index + 1} '{pexels_id}' has no numeric video id")
+        vid = digits[-1]
+        out = os.path.join(BUILD_DIR, f"src_ch{ch_index + 1}.mp4")
+        print(f"  CH0{ch_index + 1}: downloading Pexels video {vid} ...")
+        return download_pexels_video(vid, out)
+    if os.path.isdir(footage_dir):
+        files = sorted(
+            p for p in glob.glob(os.path.join(footage_dir, "*"))
+            if p.lower().endswith(VIDEO_EXTS)
+        )
+        # Prefer a channel-specific name, else the first file not already claimed.
+        preferred = [p for p in files if f"ch{ch_index + 1}" in os.path.basename(p).lower()]
+        for cand in preferred + files:
+            if cand not in used:
+                used.add(cand)
+                return cand
+        if files:  # only one file for two channels — reuse it (a different window is sliced)
+            return files[0]
+    return None
+
+
+def encode_clip(codec: str, seconds: int, size: str, fps: int, crf: int, out_path: str,
+                *, source: str | None = None, start: int = 0) -> bytes:
+    """Encode one 10s elementary-stream clip that fits a gap slot and carries no 'DHAV'.
+
+    With `source`, a real video is sliced (`start`..`start+seconds`), scaled to `size`,
+    and re-encoded to the channel's codec — this is the "real footage" path. Without a
+    source, a synthetic testsrc2 pattern is used (the offline fallback). In both cases
+    the retry loop raises CRF until the payload fits `SLOT_BYTES` and contains no stray
+    packet tag, so the physical layout and recovery model are unchanged.
+    """
     ffmpeg = require("ffmpeg")
     encoder = "libx264" if codec == "h264" else "libx265"
     muxer = "h264" if codec == "h264" else "hevc"
+    width, height = size.split("x")
     forbidden = b"DHAV"
-    for attempt in range(4):
-        this_crf = crf + attempt
+    for attempt in range(8):
+        this_crf = crf + attempt * 3
+        if source:
+            # Loop the input so a short clip still yields a full `seconds` window, then
+            # take a frame-accurate output-side slice and normalize to the DVR geometry.
+            input_args = ["-stream_loop", "-1", "-i", source]
+            vf = f"scale={width}:{height},fps={fps}"
+        else:
+            input_args = ["-f", "lavfi", "-i", f"testsrc2=size={size}:rate={fps}:duration={seconds}"]
+            vf = f"fps={fps}"
         cmd = [
             ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", f"testsrc2=size={size}:rate={fps}:duration={seconds}",
-            "-t", str(seconds), "-an",
+            *input_args,
+            "-ss", str(start), "-t", str(seconds), "-an",
             "-c:v", encoder, "-preset", "veryfast", "-crf", str(this_crf),
-            "-g", str(fps), "-pix_fmt", "yuv420p", "-f", muxer, out_path,
+            "-g", str(fps), "-vf", vf, "-pix_fmt", "yuv420p", "-f", muxer, out_path,
         ]
         subprocess.run(cmd, check=True)
         data = open(out_path, "rb").read()
@@ -128,7 +226,8 @@ def encode_clip(codec: str, seconds: int, size: str, fps: int, crf: int, out_pat
             die(f"encoded clip is empty: {out_path}")
         if forbidden not in data and len(data) + LEAD_PAD <= SLOT_BYTES:
             return data
-    die(f"could not encode a {codec} clip that fits a slot and avoids the packet tag")
+    die(f"could not encode a {codec} clip that fits a slot and avoids the packet tag "
+        f"(source={'real' if source else 'testsrc2'}); try a lower --fps or --size")
     return b""
 
 
@@ -150,22 +249,80 @@ def probe(path: str) -> tuple[int, int]:
     return (w, h)
 
 
-def orphan_content(kind: str, payload: bytes) -> bytes:
-    """Build one SLOT_BYTES orphan slot whose bytes resolve to a specific level."""
+def probe_duration(path: str) -> float:
+    """Duration of a media file in seconds (0.0 if it cannot be determined)."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe or not path or not os.path.exists(path):
+        return 0.0
+    out = subprocess.run(
+        [ffprobe, "-hide_banner", "-v", "error",
+         "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
+def clean_orphan(payload: bytes) -> bytes:
+    """Wrap a real decodable clip as one fixed-size lost-segment slot.
+
+    The payload is a valid elementary stream (SPS/PPS + IDR + slices), placed after a
+    short zero lead. A recovery scan over this slot classifies it as a clean L1 stream and
+    carves it back — this is the "lost footage" the recovery engine restores.
+    """
+    if len(payload) + LEAD_PAD > SLOT_BYTES:
+        die(f"segment payload {len(payload)}B does not fit a {SLOT_BYTES}B slot")
     b = bytearray(SLOT_BYTES)  # zero-filled
-    if kind == "clean":
-        b[LEAD_PAD:LEAD_PAD + len(payload)] = payload            # valid stream -> L1
-    elif kind == "slice":
-        frag = b"\x00\x00\x01\x65" + b"\xBB" * 256               # one IDR slice, no SPS/PPS -> L2
-        b[LEAD_PAD:LEAD_PAD + len(frag)] = frag
-    elif kind == "fragment":
-        frag = b"\x00\x00\x01\x01" + b"\xAA" * 256               # bare start code, non-scoring -> L3
-        b[LEAD_PAD:LEAD_PAD + len(frag)] = frag
-    elif kind == "empty":
-        pass                                                     # all zeros -> not recovered
-    else:
-        die(f"unknown orphan kind: {kind}")
+    b[LEAD_PAD:LEAD_PAD + len(payload)] = payload
     return bytes(b)
+
+
+def choose_lost_slots(n_slots: int, rng: random.Random) -> tuple[list[int], list[list[int]]]:
+    """Randomly pick interior segments to lose, grouped into runs of >= MIN_LOST_RUN.
+
+    Runs never touch the first/last slot (so each gap is bounded by present segments) and
+    are separated by at least one present segment (so they read as distinct gaps).
+
+    Crucial invariant: present segments must stay the MAJORITY so the timeline's measured
+    cadence (median spacing between present segments) equals the true `clip` cadence and
+    the losses register as in-recording gaps. With G runs the present set splits into G+1
+    contiguous groups, giving (present - G - 1) cadence-length deltas vs G gap deltas; we
+    need cadence deltas to dominate, i.e. present > 2*G + 1. Two runs therefore use the
+    minimum length so `present >= 6 > 5`; a single run may be a little longer.
+
+    Returns (sorted lost slots, list of runs).
+    """
+    num_runs = rng.choice([1, 1, 2])  # usually one gap per day, sometimes two
+    lost: set = set()
+    runs: list[list[int]] = []
+    attempts = 0
+    while len(runs) < num_runs and attempts < 80:
+        attempts += 1
+        rlen = MIN_LOST_RUN if num_runs == 2 else rng.randint(MIN_LOST_RUN, min(5, n_slots - 3))
+        if n_slots - 1 - rlen < 1:
+            break
+        start = rng.randint(1, n_slots - 1 - rlen)
+        run = set(range(start, start + rlen))
+        if 0 in run or (n_slots - 1) in run:
+            continue
+        buffer = set()
+        for x in run:
+            buffer.update({x - 1, x, x + 1})  # keep >=1 present segment around each run
+        if buffer & lost:
+            continue
+        lost |= run
+        runs.append(sorted(run))
+    # Safety: never let losses reach the majority (would corrupt the measured cadence).
+    while len(lost) > n_slots - (2 * len(runs) + 2) and runs:
+        drop = runs[-1]
+        if len(drop) <= MIN_LOST_RUN:
+            break
+        lost.discard(drop[-1])
+        runs[-1] = drop[:-1]
+    runs.sort()
+    return sorted(lost), runs
 
 
 def pack_packet(buf: bytearray, offset: int, *, channel0: int, frame_seq: int,
@@ -210,6 +367,23 @@ def main() -> None:
     ap.add_argument("--image-size", default="14MiB")
     ap.add_argument("--output", default=OUTPUT_PATH)
     ap.add_argument("--answer-key", default=ANSWER_KEY_PATH)
+    # ── Real-footage sources (instead of the synthetic testsrc2 pattern) ──────
+    ap.add_argument("--footage-dir", default=FOOTAGE_DIR,
+                    help="folder scanned for real source clips (default: ./footage). "
+                         "Drop cctv_ch1.mp4 / cctv_ch2.mp4 (or any videos) here.")
+    ap.add_argument("--footage-ch1", help="path to a real source video for CH01 (H.264)")
+    ap.add_argument("--footage-ch2", help="path to a real source video for CH02 (H.265)")
+    ap.add_argument("--pexels-ch1", help="Pexels video id to download + use for CH01 "
+                                         "(trailing number of a pexels.com/video/... URL)")
+    ap.add_argument("--pexels-ch2", help="Pexels video id to download + use for CH02")
+    ap.add_argument("--clip-start-ch1", type=int, default=0,
+                    help="seconds into the CH01 source to start the first segment")
+    ap.add_argument("--clip-start-ch2", type=int, default=0,
+                    help="seconds into the CH02 source to start the first segment")
+    ap.add_argument("--slots-per-day", type=int, default=SLOTS_PER_DAY,
+                    help="segments per daily recording (each --clip-seconds long)")
+    ap.add_argument("--seed", type=int, default=20260918,
+                    help="RNG seed for which segments are randomly lost (reproducible)")
     args = ap.parse_args()
 
     days = max(1, args.days)
@@ -223,45 +397,95 @@ def main() -> None:
         Channel(1, "h265", "hevc", b"H.265/HEVC", b"CH02_PARKING"),
     ]
 
-    print("Encoding base clips (one per codec)...")
-    for ch in channels:
-        out = os.path.join(BUILD_DIR, f"base_{ch.codec}_{clip}s.{ch.ext}")
-        ch.payload = encode_clip(ch.codec, clip, args.size, args.fps, args.crf, out)
-        ch.width, ch.height = probe(out)
-        ch.width = ch.width or int(args.size.split("x")[0])
-        ch.height = ch.height or int(args.size.split("x")[1])
-        print(f"  {ch.name.decode()}: {ch.codec} {ch.width}x{ch.height} {len(ch.payload):,} B/clip")
+    # Resolve a real source video per channel (explicit path > Pexels id > footage dir),
+    # falling back to the synthetic pattern when nothing is supplied.
+    print("Resolving per-channel footage...")
+    used_sources: set = set()
+    explicit = [args.footage_ch1, args.footage_ch2]
+    pexels = [args.pexels_ch1, args.pexels_ch2]
+    starts = [max(0, args.clip_start_ch1), max(0, args.clip_start_ch2)]
+    sources = [resolve_source(i, explicit[i], pexels[i], args.footage_dir, used_sources)
+               for i in range(len(channels))]
+    # If both channels landed on the SAME single dropped-in file, slice a later window
+    # for CH02 so the two cameras don't show identical footage.
+    if sources[0] and sources[0] == sources[1] and starts[1] == 0:
+        starts[1] = clip
+    downloaded = [os.path.join(BUILD_DIR, f"src_ch{i + 1}.mp4") for i in range(len(channels))]
 
-    # ── Pass 1: plan the physical layout, interleaving each day's gap footage ──
-    # Layout per (channel, day): [present slots 0,1,2][orphan gap slots 3..7][present 8,9]
-    # The orphan slots occupy the physical space between the recordings that straddle
-    # the gap, exactly where the recovery scan looks.
-    active = []   # {offset, channel0, timestamp, payload, label, name, w, h}
-    orphans = []  # {offset, content, channel0, timestamp, slot, kind}
+    n_slots = max(4, args.slots_per_day)
+    rng = random.Random(args.seed)
+
+    # Encode one decodable segment per (channel, slot). Consecutive slots slice successive
+    # windows of the real footage, so playing a day's segments in order shows continuous
+    # footage. Segments are cached per (channel, slot) and reused across the 3 days.
+    print(f"Encoding {n_slots} segment(s)/day per channel (each {clip}s)...")
+    seg_payloads: list[list[bytes]] = []
+    for i, ch in enumerate(channels):
+        src = sources[i]
+        # Cycle the slice start within the clip so each segment is real footage and the
+        # output-side seek stays small/fast; when there's no source this shifts testsrc2.
+        dur = probe_duration(src) if src else 0.0
+        span = max(1, int(dur) - clip) if dur > clip else 1
+        out = os.path.join(BUILD_DIR, f"base_{ch.codec}.{ch.ext}")
+        payloads: list[bytes] = []
+        for slot in range(n_slots):
+            start = (starts[i] + slot * clip) % span if src else (starts[i] + slot * clip)
+            payloads.append(encode_clip(ch.codec, clip, args.size, args.fps, args.crf, out,
+                                        source=src, start=start))
+            if slot == 0:
+                ch.width, ch.height = probe(out)
+                ch.width = ch.width or int(args.size.split("x")[0])
+                ch.height = ch.height or int(args.size.split("x")[1])
+        seg_payloads.append(payloads)
+        origin = f"REAL: {os.path.basename(src)}" if src else "synthetic testsrc2"
+        avg = sum(len(p) for p in payloads) // len(payloads)
+        print(f"  {ch.name.decode()}: {ch.codec} {ch.width}x{ch.height} "
+              f"{n_slots} seg, ~{avg:,} B/seg  [{origin}]")
+
+    # Reclaim disk: payloads are in memory, so drop any downloaded source mp4s.
+    for d in downloaded:
+        if os.path.exists(d):
+            try:
+                os.remove(d)
+            except OSError:
+                pass
+
+    if not any(sources):
+        print("  NOTE: no real footage supplied — used the synthetic testsrc2 pattern.")
+        print("        Provide real footage via --footage-ch1/--footage-ch2, "
+              "--pexels-ch1/--pexels-ch2, or by dropping clips in ./footage/.")
+
+    # ── Pass 1: plan the physical layout ──────────────────────────────────────
+    # Per (channel, day): SLOTS_PER_DAY segments at `clip`s cadence form one daily
+    # recording. Present segments are indexed DHAV packets; randomly lost segments become
+    # fixed-size orphan slots written into the physical gap between the surrounding present
+    # packets, exactly where the recovery scan looks.
+    active = []   # indexed present segments -> DHAV packets + DIDX entries
+    orphans = []  # lost segments -> unindexed bytes in the gap (recoverable)
+    schedule = {} # (channel0, day) -> (lost_slots, runs)
     seq = 0
     cursor = SECTOR_SIZE
 
-    def plan_active(ch, ts):
-        nonlocal cursor, seq
-        cursor = align_up(cursor)
-        seq += 1
-        payload = ch.payload
-        active.append(dict(offset=cursor, channel0=ch.index0, timestamp=ts, payload=payload,
-                           label=ch.label, name=ch.name, w=ch.width, h=ch.height, seq=seq))
-        cursor += DHAV_HEADER_SIZE + len(payload) + len(DHAV_FOOTER)
-
-    for ch in channels:
+    for i, ch in enumerate(channels):
         for d in range(days):
             day0 = base + d * day_secs
-            for s in [0, 1, 2]:
-                plan_active(ch, day0 + s * clip)
-            for s in MISSING_SLOTS:
-                content = orphan_content(CASCADE[s], ch.payload)
-                orphans.append(dict(offset=cursor, content=content, channel0=ch.index0,
-                                    timestamp=day0 + s * clip, slot=s, kind=CASCADE[s]))
-                cursor += SLOT_BYTES
-            for s in [8, 9]:
-                plan_active(ch, day0 + s * clip)  # placed right after orphans (no align)
+            lost, runs = choose_lost_slots(n_slots, rng)
+            schedule[(ch.index0, d)] = (lost, runs)
+            for slot in range(n_slots):
+                ts = day0 + slot * clip
+                payload = seg_payloads[i][slot]
+                if slot in lost:
+                    orphans.append(dict(offset=cursor, content=clean_orphan(payload),
+                                        channel0=ch.index0, timestamp=ts, slot=slot, day=d,
+                                        payload_len=len(payload)))
+                    cursor += SLOT_BYTES
+                else:
+                    cursor = align_up(cursor)
+                    seq += 1
+                    active.append(dict(offset=cursor, channel0=ch.index0, timestamp=ts,
+                                       payload=payload, label=ch.label, name=ch.name,
+                                       w=ch.width, h=ch.height, seq=seq, slot=slot, day=d))
+                    cursor += DHAV_HEADER_SIZE + len(payload) + len(DHAV_FOOTER)
             cursor = align_up(cursor)
 
     index_offset = align_up(cursor)
@@ -269,7 +493,8 @@ def main() -> None:
     min_size = align_up(index_offset + index_size) + SECTOR_SIZE
     disk_size = align_up(max(align_up(min_size, 1024 * 1024), parse_size(args.image_size)), 1024 * 1024)
     if disk_size > MAX_IMAGE_SIZE:
-        die(f"image would be {disk_size/1048576:.1f} MiB (> {MAX_IMAGE_SIZE//1048576} MiB window).")
+        die(f"image would be {disk_size/1048576:.1f} MiB (> {MAX_IMAGE_SIZE//1048576} MiB "
+            f"window). Reduce --slots-per-day (now {n_slots}) or --size.")
 
     # ── Pass 2: write ──────────────────────────────────────────────────────────
     buf = bytearray(disk_size)
@@ -322,20 +547,25 @@ def main() -> None:
     if problems:
         die("self-check failed: " + "; ".join(problems))
 
-    n_ch, n_gaps = len(channels), len(channels) * days
+    n_ch = len(channels)
+    n_gaps = sum(len(runs) for (_lost, runs) in schedule.values())
     print(f"\nWrote {args.output} ({len(buf):,} bytes / {len(buf)/1048576:.2f} MiB)")
-    print(f"  active (indexed) 10s recordings : {len(active)} ({len(active)//n_ch}/channel, {len(PRESENT_SLOTS)}/day/channel)")
-    print(f"  gaps                            : {n_gaps} (one {clip*len(MISSING_SLOTS)}s gap/channel/day)")
-    print(f"  orphaned gap slots (recoverable): {len(orphans)} ({len(MISSING_SLOTS)}/gap: 2 clean, 1 slice, 1 empty, 1 fragment)")
-    print(f"  channels                        : {n_ch}")
+    print(f"  daily recordings (sessions)      : {n_ch * days} ({days}/channel, one per day)")
+    print(f"  segments/day/channel             : {n_slots} ({clip}s each => {n_slots*clip}s of footage/day)")
+    print(f"  present (indexed) segments       : {len(active)}")
+    print(f"  randomly lost segments (in gaps) : {len(orphans)} across {n_gaps} gap(s) — recoverable")
+    print(f"  channels                         : {n_ch}")
     print(f"\nGround-truth answer key: {args.answer_key} (open only after testing detection)")
 
-    write_answer_key(args, channels, active, orphans, disk_size, index_offset, days, clip)
+    write_answer_key(args, channels, active, orphans, schedule, disk_size, index_offset,
+                     days, clip, n_slots)
 
 
-def write_answer_key(args, channels, active, orphans, disk_size, index_offset, days, clip):
+def write_answer_key(args, channels, active, orphans, schedule, disk_size, index_offset,
+                     days, clip, n_slots):
     n_ch = len(channels)
-    gap_secs = clip * len(MISSING_SLOTS)
+    day_secs_total = n_slots * clip
+    n_gaps = sum(len(runs) for (_lost, runs) in schedule.values())
     L = []
     L.append("# ANSWER KEY — dvr_3day_sample.raw")
     L.append("")
@@ -346,38 +576,45 @@ def write_answer_key(args, channels, active, orphans, disk_size, index_offset, d
     L.append(f"- Image {disk_size:,} B ({disk_size/1048576:.0f} MiB), DIDX @ 0x{index_offset:08X} ({len(active)} entries).")
     L.append("")
     L.append("## Recording model")
-    L.append(f"- Each recording is a **{clip}s** clip; cadence {clip}s (contiguous).")
-    L.append(f"- {n_ch} channels, {days} days, {len(PRESENT_SLOTS)} present recordings/channel/day.")
-    L.append(f"- One **{gap_secs}s gap**/channel/day ({len(MISSING_SLOTS)} missing {clip}s slots), footage")
-    L.append("  interleaved into the physical space between the straddling recordings.")
+    L.append(f"- {n_ch} channels (CH01 H.264, CH02 H.265), {days} days.")
+    L.append(f"- **One daily recording (session) per channel per day** = **{n_ch*days} sessions total**.")
+    L.append(f"- Each daily recording is {n_slots} contiguous **{clip}s** segments = **{day_secs_total}s** of")
+    L.append("  continuous footage, sliced from the real uploaded clip. Playing a day's present")
+    L.append("  segments in order shows the whole footage.")
+    L.append("- Some interior segments are **randomly lost** (RNG seed "
+             f"{args.seed}) in runs of {MIN_LOST_RUN}-{MAX_LOST_RUN} segments; each lost segment's real")
+    L.append("  bytes are written UNINDEXED into the physical gap between the surrounding present")
+    L.append("  segments, so a recovery scan carves them back (clean L1) and the footage is completed.")
     L.append("")
     L.append("## Expected counts")
-    L.append(f"- ACTIVE recordings (clip list): **{len(active)}** ({len(active)//n_ch}/channel).")
-    L.append(f"- Sessions: **{n_ch*days}**; GAPS: **{n_ch*days}** (each {gap_secs}s).")
+    L.append(f"- Present (indexed) segments : **{len(active)}**.")
+    L.append(f"- Lost (recoverable) segments: **{len(orphans)}** across **{n_gaps}** in-recording gap(s).")
+    L.append(f"- Sessions: **{n_ch*days}** ({days}/channel).")
+    L.append("- Every lost segment is a clean, independently decodable stream => recovers at **L1**.")
     L.append("")
-    L.append("## Staged gap recovery (per gap, time order)")
-    L.append("| slot time | content | level | outcome |")
-    L.append("|-----------|---------|-------|---------|")
-    L.append("| +0–10s  | clean stream          | L1 | Active, Recoverable |")
-    L.append("| +10–20s | clean stream          | L1 | Active, Recoverable |")
-    L.append("| +20–30s | NAL slice, no SPS/PPS  | L2 | Orphaned, Partial |")
-    L.append("| +30–40s | zeros                  | —  | NOT recovered |")
-    L.append("| +40–50s | start code + noise     | L3 | Corrupted, Partial |")
-    L.append(f"- Net per {gap_secs}s gap: 20s@L1 + 10s@L2 + 10s@L3 recovered, 10s not recovered.")
+    L.append("## Per-day loss schedule (which segments were dropped)")
+    L.append("| channel | day | present segments | lost segments (runs) |")
+    L.append("|---------|-----|------------------|----------------------|")
+    for (ch0, d) in sorted(schedule.keys()):
+        lost, runs = schedule[(ch0, d)]
+        present = [s for s in range(n_slots) if s not in lost]
+        runs_str = "; ".join("-".join(str(x) for x in r) for r in runs) or "none"
+        L.append(f"| CH{ch0+1:02d} | {d+1} | {present} | {runs_str} |")
     L.append("")
-    L.append("## ACTIVE recordings")
-    L.append("| # | channel | codec | recorder-native (IST) | offset | payload B |")
-    L.append("|---|---------|-------|-----------------------|--------|-----------|")
+    L.append("## Present (indexed) segments")
+    L.append("| # | channel | day | slot | codec | recorder-native (IST) | offset | payload B |")
+    L.append("|---|---------|-----|------|-------|-----------------------|--------|-----------|")
     for i, a in enumerate(active, 1):
-        L.append(f"| {i} | CH{a['channel0']+1:02d} | {channels[a['channel0']].codec} | "
-                 f"{fmt_ist(a['timestamp'])} | 0x{a['offset']:08X} | {len(a['payload']):,} |")
+        L.append(f"| {i} | CH{a['channel0']+1:02d} | {a['day']+1} | {a['slot']} | "
+                 f"{channels[a['channel0']].codec} | {fmt_ist(a['timestamp'])} | "
+                 f"0x{a['offset']:08X} | {len(a['payload']):,} |")
     L.append("")
-    L.append("## Orphaned gap slots (recoverable footage)")
-    L.append("| # | channel | slot | kind | recorder-native (IST) | offset |")
-    L.append("|---|---------|------|------|-----------------------|--------|")
+    L.append("## Lost segments (recoverable footage in gaps)")
+    L.append("| # | channel | day | slot | recorder-native (IST) | offset | payload B | expected |")
+    L.append("|---|---------|-----|------|-----------------------|--------|-----------|----------|")
     for i, o in enumerate(orphans, 1):
-        L.append(f"| {i} | CH{o['channel0']+1:02d} | {o['slot']} | {o['kind']} | "
-                 f"{fmt_ist(o['timestamp'])} | 0x{o['offset']:08X} |")
+        L.append(f"| {i} | CH{o['channel0']+1:02d} | {o['day']+1} | {o['slot']} | "
+                 f"{fmt_ist(o['timestamp'])} | 0x{o['offset']:08X} | {o['payload_len']:,} | L1 clean |")
     L.append("")
     os.makedirs(os.path.dirname(args.answer_key), exist_ok=True)
     with open(args.answer_key, "w") as f:

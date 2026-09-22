@@ -133,6 +133,11 @@ mod tests {
             derived_artifacts: vec![],
             chain_of_custody: vec![],
             limitations: ForensicReport::standard_limitations(),
+            detection_depth: None,
+            parsing_depth: None,
+            preliminary_timeline: None,
+            recovery_depth: None,
+            final_timeline_summary: None,
         }
     }
 

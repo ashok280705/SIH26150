@@ -1554,6 +1554,113 @@ pub async fn run_full_pipeline(
     Ok(Json(serde_json::to_value(run).unwrap()))
 }
 
+/// Computed result of probing one gap's byte region with the staged L1→L2→L3 cascade.
+struct GapRecoveryComputed {
+    slots: Vec<reporting::model::RecoverySlotReport>,
+    recovered_seconds: i64,
+    unrecovered_seconds: i64,
+    decision: String,
+}
+
+/// Probe a gap's byte region as `nominal`-length sub-slots and classify each through the
+/// staged recovery cascade (L1 indexed → L2 orphan carve → L3 raw carve). Shared by the
+/// report builder; mirrors the classification used by `recover_gap`.
+fn recover_gap_region(
+    reader: &dyn evidence_reader::EvidenceReader,
+    scan_start: u64,
+    scan_end: u64,
+    nominal_seconds: i64,
+    gap_seconds: i64,
+) -> GapRecoveryComputed {
+    let len = reader.len();
+    let scan_start = scan_start.min(len);
+    let scan_end = scan_end.min(len).max(scan_start);
+    let nominal = nominal_seconds.max(1);
+    let total_seconds = gap_seconds.max(nominal);
+    let num_slots = ((total_seconds as f64 / nominal as f64).round() as i64).max(1) as usize;
+    let region_len = scan_end - scan_start;
+    let slot_bytes = region_len / num_slots as u64;
+
+    let mut slots = Vec::with_capacity(num_slots);
+    let mut recovered_slots = 0usize;
+    for k in 0..num_slots {
+        let off = scan_start + (k as u64) * slot_bytes;
+        let this_len = if k + 1 == num_slots {
+            scan_end.saturating_sub(off)
+        } else {
+            slot_bytes
+        };
+        let read_len = this_len.min(4 * 1024 * 1024) as usize;
+        let bytes = reader.read_exact_at(off, read_len).unwrap_or_default();
+
+        let ev = recovery::VideoReconstructor::classify_codec(&bytes);
+        let score = ev.h264_score + ev.h265_score + ev.mjpeg_score;
+        let is_pass = matches!(ev.validation.state, forensic_core::ValidationStateKind::Pass);
+        let has_start = has_annexb_start(&bytes);
+        let data_offset = first_annexb_start(&bytes)
+            .map(|rel| off + rel as u64)
+            .unwrap_or(off);
+
+        let (level, reason) = if is_pass {
+            (
+                Some("L1".to_string()),
+                format!("L1 indexed: clean {:?} stream with valid parameter sets", ev.codec),
+            )
+        } else if score > 0 {
+            (
+                Some("L2".to_string()),
+                format!("L2 orphan carve: {:?} NAL data without a complete parameter set (score {score})", ev.codec),
+            )
+        } else if has_start {
+            (
+                Some("L3".to_string()),
+                "L3 raw carve: Annex-B start code(s) found but no decodable NAL structure".to_string(),
+            )
+        } else {
+            (
+                None,
+                "Not recovered: no codec signature or start code in this window".to_string(),
+            )
+        };
+
+        let recovered = level.is_some();
+        if recovered {
+            recovered_slots += 1;
+        }
+        slots.push(reporting::model::RecoverySlotReport {
+            index: k,
+            level,
+            recovered,
+            start_offset_sec: (k as i64) * nominal,
+            end_offset_sec: ((k as i64) + 1) * nominal,
+            offset: data_offset,
+            length: this_len,
+            codec: format!("{:?}", ev.codec),
+            nal_unit_count: ev.nal_evidence.len(),
+            reason,
+        });
+    }
+
+    let recovered_seconds = recovered_slots as i64 * nominal;
+    let total = num_slots as i64 * nominal;
+    let unrecovered_seconds = (total - recovered_seconds).max(0);
+    let decision = if recovered_slots == 0 {
+        "not_recovered"
+    } else if recovered_slots == num_slots {
+        "completely_recovered"
+    } else {
+        "partially_recovered"
+    }
+    .to_string();
+
+    GapRecoveryComputed {
+        slots,
+        recovered_seconds,
+        unrecovered_seconds,
+        decision,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ReportQuery {
     /// `json` (default), `csv`, or `markdown`.
@@ -1808,6 +1915,244 @@ pub async fn get_report(
         .and_then(|a| caps_map.get(&a.oem_key).cloned())
         .unwrap_or_else(forensic_core::CapabilityStages::not_implemented);
 
+    // ========================================================================
+    // Deep, stage-by-stage narrative sections (Detection → Parsing →
+    // Preliminary Timeline → Recovery → Final Timeline).
+    // ========================================================================
+
+    // ---- Detection depth: WHERE the OEM was found and how strongly ---------
+    // The compact `run.attribution` summary drops evidence-item offsets, so re-derive
+    // the classified result here to report exactly where each signature sat.
+    let detection_depth = {
+        let outputs = DetectionOrchestrator::new()
+            .run(reader.as_ref(), &state.profile_registry)
+            .ok();
+        let classified = outputs
+            .as_ref()
+            .and_then(|o| ConfidenceEngine::classify_all(o, &state.profile_registry, &config).ok());
+        classified.and_then(|c| c.into_iter().next()).map(|top| {
+            let d = &top.detector_output;
+            let matched_indicators: Vec<MatchedIndicatorReport> = d
+                .evidence
+                .iter()
+                .map(|e| MatchedIndicatorReport {
+                    kind: e.kind.clone(),
+                    offset: e.offset,
+                    length: e.length,
+                    matched: matches!(e.rule_match_status, forensic_core::RuleMatchStatus::Match),
+                    evidence_status: format!("{:?}", e.evidence_status),
+                    exclusive: e.is_exclusive,
+                    weight: e.score_contribution,
+                    explanation: e.explanation.clone(),
+                })
+                .collect();
+            let bytes_examined = d.evidence.iter().map(|e| e.length).sum();
+            let highest_offset_examined = d
+                .evidence
+                .iter()
+                .map(|e| e.offset.saturating_add(e.length))
+                .max()
+                .unwrap_or(0);
+            DetectionDepthReport {
+                image_size_bytes: reader.len(),
+                method: "Structural signature probing at fixed layout offsets (MBR/superblock/packet tags) plus storage-topology partitioning. Detection reads bounded structural regions, not a full linear scan of the image.".to_string(),
+                storage_family: d.storage_family.clone(),
+                detector_status: format!("{:?}", d.status),
+                confidence: top.confidence,
+                margin: top.margin,
+                evidence_quality: top.evidence_quality,
+                runner_up: top.second_candidate.clone(),
+                matched_indicators,
+                candidate_regions: d
+                    .candidate_regions
+                    .iter()
+                    .map(|r| RegionReport { offset: r.offset, length: r.length })
+                    .collect(),
+                bytes_examined,
+                highest_offset_examined,
+            }
+        })
+    };
+
+    // ---- Parsing depth: WHERE frames were found and HOW they were confirmed -
+    let parsing_depth = run.parsing.as_ref().map(|p| {
+        let stages: Vec<ValidationRecord> = p
+            .parser_runs
+            .iter()
+            .map(|prun| ValidationRecord {
+                operation: prun.operation_name.clone(),
+                subject: prun.validation_state.subject.clone(),
+                state: format!("{:?}", prun.validation_state.state),
+                reason: prun.validation_state.reason.clone(),
+            })
+            .collect();
+        let parser_id = p
+            .recordings
+            .first()
+            .map(|r| r.parser_id.clone())
+            .or_else(|| run.oem_key_used.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        // Confirm each recording from its actual stream bytes (bounded sample). Capped so
+        // an image with very many recordings never turns report generation into a scan.
+        let mut frames = Vec::new();
+        for rec in p.recordings.iter().take(150) {
+            let region = rec
+                .source_offsets
+                .first()
+                .cloned()
+                .unwrap_or(forensic_core::Region { offset: 0, length: 0 });
+            let sample_len = region.length.min(256 * 1024) as usize;
+            let bytes = reader.read_exact_at(region.offset, sample_len).unwrap_or_default();
+            let ev = recovery::VideoReconstructor::classify_codec(&bytes);
+            let confirmed = matches!(ev.validation.state, forensic_core::ValidationStateKind::Pass);
+            frames.push(ParsedFrameReport {
+                channel: rec.channel,
+                recorder_native_time: rec
+                    .time
+                    .recorder_native
+                    .as_ref()
+                    .map(|t| t.iso_8601.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                normalized_time: rec
+                    .time
+                    .normalized
+                    .as_ref()
+                    .map(|t| t.iso_8601.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                source_offset: region.offset,
+                source_length: region.length,
+                region_count: rec.source_offsets.len(),
+                codec: format!("{:?}", ev.codec),
+                nal_unit_count: ev.nal_evidence.len(),
+                confirmed,
+                confirmation: ev.validation.reason.clone(),
+                integrity_flags: rec.integrity.iter().map(|f| format!("{f:?}")).collect(),
+            });
+        }
+        ParsingDepthReport {
+            parser_id,
+            stages,
+            total_recordings: p.recordings.len(),
+            frames,
+        }
+    });
+
+    // ---- Preliminary timeline: which footage exists and where the gaps are --
+    let preliminary_timeline = run.recordings_timeline.as_ref().map(|rt| {
+        let cov = run.gap_analysis.as_ref().map(|g| &g.coverage);
+        let sessions: Vec<SessionReport> = rt
+            .sessions
+            .iter()
+            .map(|s| SessionReport {
+                channel: s.channel,
+                start: s.start_native.clone().unwrap_or_else(|| s.start_normalized.clone()),
+                end: s.end_native.clone().unwrap_or_else(|| s.end_normalized.clone()),
+                timezone: s.timezone.clone(),
+                span_seconds: s.span_seconds,
+                covered_seconds: s.covered_seconds,
+                missing_seconds: s.missing_seconds,
+                coverage_ratio: s.coverage_ratio,
+                segment_count: s.segment_count,
+                gaps: s
+                    .gaps
+                    .iter()
+                    .map(|g| SessionGapReport {
+                        starts_after: g
+                            .starts_after_native
+                            .clone()
+                            .unwrap_or_else(|| g.starts_after_normalized.clone()),
+                        ends_before: g
+                            .ends_before_native
+                            .clone()
+                            .unwrap_or_else(|| g.ends_before_normalized.clone()),
+                        missing_seconds: g.missing_seconds,
+                        previous_offset: g.previous_offset,
+                        next_offset: g.next_offset,
+                    })
+                    .collect(),
+            })
+            .collect();
+        PreliminaryTimelineReport {
+            channel_count: rt.channel_count,
+            total_segments: rt.total_segments,
+            total_recordings: rt.total_recordings,
+            total_missing_seconds: rt.total_missing_seconds,
+            coverage_ratio: cov.map(|c| c.coverage_ratio).unwrap_or(0.0),
+            accounted_bytes: cov.map(|c| c.accounted_bytes).unwrap_or(0),
+            unaccounted_bytes: cov.map(|c| c.unaccounted_bytes).unwrap_or(0),
+            total_bytes: cov.map(|c| c.total_bytes).unwrap_or_else(|| reader.len()),
+            sessions,
+        }
+    });
+
+    // ---- Recovery depth: staged cascade over each detected gap -------------
+    let recovery_depth = run.recordings_timeline.as_ref().and_then(|rt| {
+        let mut per_gap: Vec<GapRecoveryReport> = Vec::new();
+        let mut searched_bytes = 0u64;
+        let mut total_recovered_seconds = 0i64;
+        let mut total_unrecovered_seconds = 0i64;
+        for s in &rt.sessions {
+            for g in &s.gaps {
+                if per_gap.len() >= 40 {
+                    break;
+                }
+                let scan_start = g.previous_offset.saturating_add(g.previous_length);
+                let scan_end = g.next_offset;
+                if scan_end <= scan_start {
+                    continue;
+                }
+                let computed = recover_gap_region(
+                    reader.as_ref(),
+                    scan_start,
+                    scan_end,
+                    s.nominal_segment_seconds,
+                    g.missing_seconds,
+                );
+                searched_bytes = searched_bytes.saturating_add(scan_end - scan_start);
+                total_recovered_seconds += computed.recovered_seconds;
+                total_unrecovered_seconds += computed.unrecovered_seconds;
+                per_gap.push(GapRecoveryReport {
+                    channel: s.channel,
+                    scan_start,
+                    scan_end,
+                    attempts: computed.slots.len(),
+                    total_seconds: computed.recovered_seconds + computed.unrecovered_seconds,
+                    recovered_seconds: computed.recovered_seconds,
+                    unrecovered_seconds: computed.unrecovered_seconds,
+                    decision: computed.decision,
+                    slots: computed.slots,
+                });
+            }
+        }
+        if per_gap.is_empty() {
+            return None;
+        }
+        Some(RecoveryDepthReport {
+            algorithm: "Staged cascade — each missing sub-slot is probed L1 (indexed clean stream) → L2 (orphaned NAL carve) → L3 (raw Annex-B carve); a sub-slot with no start code is left unrecovered.".to_string(),
+            searched_bytes,
+            total_bytes: reader.len(),
+            gaps_processed: per_gap.len(),
+            total_recovered_seconds,
+            total_unrecovered_seconds,
+            per_gap,
+        })
+    });
+
+    // ---- Final timeline summary --------------------------------------------
+    let final_timeline_summary = {
+        let recorded_events = run.preliminary_timeline.as_ref().map(|t| t.events.len()).unwrap_or(0);
+        let total_events = run
+            .final_timeline
+            .as_ref()
+            .map(|t| t.events.len())
+            .unwrap_or(recorded_events);
+        Some(FinalTimelineReport {
+            total_events,
+            recorded_events,
+            recovered_events: total_events.saturating_sub(recorded_events),
+        })
+    };
+
     // ---- Assemble & hash ----------------------------------------------------
     let report = ForensicReport {
         report_id: format!("REP-{}", uuid::Uuid::new_v4()),
@@ -1827,6 +2172,11 @@ pub async fn get_report(
         derived_artifacts,
         chain_of_custody,
         limitations: ForensicReport::standard_limitations(),
+        detection_depth,
+        parsing_depth,
+        preliminary_timeline,
+        recovery_depth,
+        final_timeline_summary,
     };
 
     let format = query.format.as_deref().unwrap_or("json").to_lowercase();

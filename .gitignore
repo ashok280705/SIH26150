@@ -37,6 +37,10 @@ dist/
 /vendor/ollama/lib/
 /vendor/ollama/models/
 
+# Real source footage used to build the sample DVR image (may be large / licensed).
+# Only the generator script is committed; the clips themselves are fetched per-machine.
+/footage/
+
 # Python (services/ai)
 __pycache__/
 *.py[cod]

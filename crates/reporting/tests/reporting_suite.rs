@@ -148,6 +148,11 @@ fn create_full_test_report() -> ForensicReport {
         ],
         chain_of_custody: vec![],
         limitations: ForensicReport::standard_limitations(),
+        detection_depth: None,
+        parsing_depth: None,
+        preliminary_timeline: None,
+        recovery_depth: None,
+        final_timeline_summary: None,
     }
 }
 
@@ -192,9 +197,13 @@ fn test_full_report_markdown_formatted_document() {
     let md = FormattedReportExporter::render_markdown_report(&report);
 
     assert!(md.contains("# DIGITAL FORENSIC EXAMINATION REPORT"));
-    assert!(md.contains("## 1. Case & Examiner Information"));
-    assert!(md.contains("## 3. OEM Detection & Attribution"));
-    assert!(md.contains("## 4. Recovered Video & Candidate Summary"));
-    assert!(md.contains("## 5. Artifact Registry & Lineage"));
-    assert!(md.contains("## 6. Stated Forensic Limitations"));
+    assert!(md.contains("## 1. Case & Examiner"));
+    assert!(md.contains("## 2. Selected Evidence & Integrity"));
+    assert!(md.contains("## 3. Detection — Where the Format Was Found"));
+    assert!(md.contains("## 4. Parsing — Where Frames Were Found and How They Were Confirmed"));
+    assert!(md.contains("## 5. Preliminary Timeline — Coverage and Gaps"));
+    assert!(md.contains("## 6. Recovery Engine — Staged Carving of Missing Footage"));
+    assert!(md.contains("## 7. Final Timeline"));
+    assert!(md.contains("## 8. Artifact Registry & Lineage"));
+    assert!(md.contains("## 9. Stated Forensic Limitations"));
 }
