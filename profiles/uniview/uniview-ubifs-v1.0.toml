@@ -1,43 +1,158 @@
 profile_id = "uniview-ubifs-v1.0"
-profile_version = "1.0.0"
+profile_version = "2.0.0"
 schema_version = "1.0"
 oem = "uniview"
-storage_family = "UNIVIEW_UBIFS"
+# The Uniview recorder filesystem is a proprietary SUPER / UI / DI / DATA layout, not UBIFS.
+# The profile id keeps its historical name so existing references stay valid; the storage
+# family states what the structures actually are.
+storage_family = "UNIVIEW_FS"
 
 [applicability]
 models = ["UNV-NVR", "UNV-XVR", "NVR301"]
 firmwares = []
 storage_variants = ["single_disk"]
-reference = "Uniview UBIFS Storage Layout Analysis 2024"
+reference = "Reverse-engineered Uniview recorder disk layout (vendor disktool analysis): SUPER block with generation magic, UI / UI-CTL, UI-DATA (new generation), 256 MiB units each holding a DI index and 16 KiB DATA blocks addressed by the 14-bit SPtoI block index. Structure facts only; DATA codec/container/framing is not established."
+
+# =================================================================================
+# Signatures
+# =================================================================================
+#
+# The SUPER magic is the primary vendor and generation signature: a little-endian u32 at
+# SUPER +0x00. Exactly one of the two can match. Nothing else — EcPortId, timestamps, UI,
+# DI or DATA — is required to identify the filesystem (CONFIRMED).
 
 [[signatures]]
-name = "uniview_super_magic"
-pattern_hex = "55 4E 49 56" # "UNIV"
+name = "uniview_super_magic_old"
+pattern_hex = "67 13 00 00" # u32 LE 0x1367
 evidence_status = "validated"
 weight = 0.85
 is_exclusive = true
-explanation = "Uniview filesystem superblock magic identifier"
+explanation = "Uniview SUPER magic 0x1367 (u32 LE at offset 0): OLD generation layout."
 
 [[signatures.offset_constraints]]
 type = "exact"
 offset = 0
 
 [[signatures]]
-name = "ec_port_id"
-pattern_hex = "45 43 31 30 30 31" # "EC1001"
-evidence_status = "model_specific"
-weight = 0.35
-is_exclusive = false # Corroborating evidence only (Req 25.4)
-explanation = "Uniview camera channel port descriptor identifier"
+name = "uniview_super_magic_new"
+pattern_hex = "87 15 00 00" # u32 LE 0x1587
+evidence_status = "validated"
+weight = 0.85
+is_exclusive = true
+explanation = "Uniview SUPER magic 0x1587 (u32 LE at offset 0): NEW generation layout."
 
 [[signatures.offset_constraints]]
-type = "header_window"
-max_offset = 65536
+type = "exact"
+offset = 0
+
+# =================================================================================
+# Validation rules
+# =================================================================================
+
+[[validation_rules]]
+name = "super_magic_generation"
+description = "SUPER +0x00 is 0x1367 (OLD) or 0x1587 (NEW) as u32 LE, and the full 0x4000-byte SUPER block is in the image."
+evidence_status = "validated"
+weight = 0.85
+
+[[validation_rules]]
+name = "di_count_within_capacity"
+description = "A DI header's declared entry count does not exceed (0x40000 - 0x10) / 0x10 = 16383."
+evidence_status = "validated"
+weight = 0.20
+
+[[validation_rules]]
+name = "sptoi_selects_data"
+description = "A DI entry's 14-bit SPtoI selects a block at or beyond the DI region (SPtoI >= 0x40000 / 0x4000) whose 16 KiB lies inside the image."
+evidence_status = "validated"
+weight = 0.20
+
+[[validation_rules]]
+name = "adjacent_sptoi_span"
+description = "A DATA extent is inferred as SPtoI_next - SPtoI_current blocks when the next entry is valid and greater; otherwise only the selected block is claimed. Storage-span inference, not a recording boundary."
+evidence_status = "provisional"
+weight = 0.10
 
 [confidence_weights]
 max_possible_score = 1.20
 min_threshold = 0.65
 
+# =================================================================================
+# Structural layout
+# =================================================================================
+#
+# All multi-byte fields are little-endian. Offsets inside a structure are relative to that
+# structure's start. Confidence per value: C = CONFIRMED, S = STRONG INFERENCE,
+# T = TENTATIVE. Any offset not listed is one the platform has no evidence for.
 [layout]
-superblock_size = 512
-ec1001_start = 512
+
+# ── SUPER ────────────────────────────────────────────────────────────────────────
+uniview_super_offset = 0                        # C
+uniview_super_size = 16384                      # C 0x4000
+uniview_super_magic_offset = 0                  # C u32 LE
+uniview_super_last_write_time_offset = 20       # C 0x14, 5-byte packed timestamp
+uniview_super_start_storage_time_offset = 28    # C 0x1C, 5-byte packed timestamp
+uniview_super_ec_port_id_offset = 44            # C 0x2C, opaque
+uniview_super_ec_port_id_size = 64              # C 0x40
+
+# ── Packed timestamp ─────────────────────────────────────────────────────────────
+# year = b0 | ((b1 & 0x0F) << 8); month = b1 >> 4; day = b2 & 0x1F;
+# hour = ((b3 & 0x03) << 3) | (b2 >> 5); minute = b3 >> 2; second = b4 & 0x3F   (C)
+uniview_timestamp_size = 5
+# Plausibility window. Outside it a real calendar value is reported as implausible, never
+# dropped or clamped.
+uniview_timestamp_plausible_min_year = 2000
+uniview_timestamp_plausible_max_year = 2100
+
+# ── UI (OLD) / UI-CTL (NEW) ──────────────────────────────────────────────────────
+uniview_ui_offset = 16384                       # C 0x4000
+uniview_ui_size = 65536                         # C 0x10000
+uniview_ui_entry_size = 8                       # C
+uniview_old_ui_current_unit_offset = 0          # C current writing unit index
+uniview_old_ui_field_04_offset = 4              # C location; u16 meaning UNKNOWN
+uniview_old_ui_rewrited_offset = 6              # C rewrited flag
+uniview_old_ui_entries_offset = 8               # T entry table base, not established
+uniview_new_uictl_current_unit_offset = 0       # C current unit index
+uniview_new_uictl_count_offset = 4              # C count/scaling field (raw)
+uniview_new_uictl_rewrited_offset = 12          # C 0x0C rewrited flag
+uniview_new_uictl_entries_offset = 16           # C 0x10 time-index entries
+
+# ── UI-DATA (NEW) ────────────────────────────────────────────────────────────────
+uniview_ui_data_base = 81920                    # C 0x14000
+uniview_ui_data_unit_size = 65536               # C 0x10000
+uniview_ui_data_entries_per_unit = 8192         # C 0x2000 8-byte entries
+# Performance bound on UI-DATA units summarised per read. The geometry allows
+# (0x10014000 - 0x14000) / 0x10000 = 4096; the bound is deliberately not smaller.
+uniview_ui_data_scan_max_units = 4096
+
+# ── Units ────────────────────────────────────────────────────────────────────────
+uniview_old_unit_base = 81920                   # C 0x00014000
+uniview_new_unit_base = 268517376               # C 0x10014000
+uniview_unit_stride = 268435456                 # C 0x10000000
+uniview_unit_size = 268435456                   # C 0x10000000 (256 MiB)
+# Loop guard on unit enumeration (65536 units = 16 TiB). Not a semantic limit; a report
+# states when it stopped enumeration.
+uniview_max_units = 65536
+
+# ── DI ───────────────────────────────────────────────────────────────────────────
+uniview_di_offset_in_unit = 0                   # C
+uniview_di_size = 262144                        # C 0x40000 (256 KiB)
+uniview_di_write_bytes_offset = 0               # C per-unit write-data byte count
+uniview_di_entry_count_offset = 4               # C DI entry count
+uniview_di_header_unknown_offset = 8            # C location; meaning UNKNOWN
+uniview_di_header_unknown_size = 8
+uniview_di_entries_offset = 16                  # C 0x10
+uniview_di_entry_size = 16                      # C 0x10
+
+# ── DATA ─────────────────────────────────────────────────────────────────────────
+uniview_data_block_size = 16384                 # C 0x4000
+# SPtoI = (b7 << 6) | (b6 >> 2): a 14-bit DATA block index.   (C)
+# data_offset = unit_base + SPtoI * uniview_data_block_size      (C)
+uniview_sptoi_bits = 14
+
+# ── Bounds ───────────────────────────────────────────────────────────────────────
+# Upper bound on bytes one extraction call returns. Larger requests are refused, never
+# truncated.
+uniview_max_extract_bytes = 1073741824          # 1 GiB
+uniview_max_anomalies_per_unit = 64
+uniview_recovery_max_items = 1000000

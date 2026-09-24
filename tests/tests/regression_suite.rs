@@ -3,7 +3,7 @@
 //! Validates the 8 architectural corrections and forensic invariants:
 //! 1. Codec start-code disambiguation (H.265 vs H.264 multi-signal classification)
 //! 2. Two-dimensional fragmentation (logical sequence continuity vs physical storage layout)
-//! 3. Uniview deleted superblock structural validation
+//! 3. Uniview SUPER generation-magic structural validation
 //! 4. Deterministic canonical tie-breaking for simultaneous timeline events
 //! 5. Timestamp parsing with unknown timezone preservation
 //! 6. Bounded reader isolation and absolute offset translation
@@ -125,55 +125,40 @@ fn test_regression_circular_buffer_wrap() {
 }
 
 // -----------------------------------------------------------------------------
-// 3. Uniview Deleted Marker Structural Validation Tests
+// 3. Uniview SUPER Generation-Magic Structural Validation Tests
 // -----------------------------------------------------------------------------
 
 #[test]
-fn test_regression_uniview_deleted_superblock_marker() {
+fn test_regression_uniview_super_requires_a_generation_magic() {
+    // The Uniview SUPER is identified solely by the u32 LE magic at +0x00: 0x1367 (OLD) or
+    // 0x1587 (NEW). An earlier revision treated an ASCII "UNIV" tag, and a 0xE5 + "NIV" pattern
+    // as a "deleted superblock marker", as Uniview evidence. Neither is the Uniview signature and
+    // no Uniview deletion structure is known, so neither may produce a Uniview finding.
     let parser = UniviewParser::default();
-    let mut data = vec![0u8; 1024];
-    // Deleted marker: 0xE5 followed by "NIV" and valid cluster size
-    data[0] = 0xE5;
-    data[1] = b'N';
-    data[2] = b'I';
-    data[3] = b'V';
-    data[4] = 0x01; // Non-zero cluster hint
+    let profile = OemProfile::from_file(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../profiles/uniview/uniview-ubifs-v1.0.toml"
+    )))
+    .unwrap();
 
-    let reader = MockEvidence { data };
-    let profile_toml = r#"
-        profile_id = "uniview-ubifs-v1.0"
-        profile_version = "1.0.0"
-        schema_version = "1.0"
-        oem = "uniview"
-        storage_family = "UNIVIEW_UBIFS"
+    let mut deleted_marker = vec![0u8; 0x8000];
+    deleted_marker[..5].copy_from_slice(&[0xE5, b'N', b'I', b'V', 0x01]);
+    let mut ascii_tag = vec![0u8; 0x8000];
+    ascii_tag[..4].copy_from_slice(b"UNIV");
+    for data in [deleted_marker, ascii_tag] {
+        let runs = parser.parse_filesystem(&MockEvidence { data }, &profile).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].validation_state.state, ValidationStateKind::Unknown);
+        assert!(!runs[0].validation_state.reason.to_lowercase().contains("deleted"));
+    }
 
-        [applicability]
-        models = ["UNV-NVR"]
-        firmwares = []
-        storage_variants = ["single_disk"]
-        reference = "Uniview"
-
-        [layout]
-        superblock_size = 512
-
-        [[signatures]]
-        name = "uniview_super_magic"
-        pattern_hex = "55 4E 49 56"
-        evidence_status = "validated"
-        weight = 0.85
-        is_exclusive = true
-        explanation = "Superblock"
-
-        [confidence_weights]
-        max_possible_score = 1.0
-        min_threshold = 0.6
-    "#;
-    let profile = OemProfile::from_toml_str(profile_toml).unwrap();
-
-    let runs = parser.parse_filesystem(&reader, &profile).unwrap();
-    assert_eq!(runs.len(), 1);
+    // A genuine NEW-generation magic heading a SUPER block the image cannot hold is reported
+    // for review, never accepted as a complete structure.
+    let mut truncated = vec![0u8; 1024];
+    truncated[..4].copy_from_slice(&0x1587u32.to_le_bytes());
+    let runs = parser.parse_filesystem(&MockEvidence { data: truncated }, &profile).unwrap();
     assert_eq!(runs[0].validation_state.state, ValidationStateKind::Review);
-    assert!(runs[0].validation_state.reason.contains("Deleted marker candidate"));
+    assert!(runs[0].validation_state.reason.contains("NEW"));
 }
 
 // -----------------------------------------------------------------------------
