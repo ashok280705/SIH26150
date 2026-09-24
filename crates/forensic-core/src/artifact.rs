@@ -69,6 +69,9 @@ pub struct DerivedArtifact {
 ///
 /// Both variants coexist for the same source region — producing a derived artifact NEVER
 /// replaces or invalidates the native artifact (Req 5.9).
+// Boxing `DerivedArtifact` would change the public shape every crate matches and constructs on;
+// artifacts are few and short-lived, so the size difference has no practical cost.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Artifact {

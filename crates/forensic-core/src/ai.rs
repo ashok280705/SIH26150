@@ -44,6 +44,8 @@ pub struct BoundingBox {
 }
 
 impl AiFinding {
+    // A plain data constructor: each argument is one required field of the finding.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         evidence_id: EvidenceId,
         recording_id: String,

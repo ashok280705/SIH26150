@@ -59,14 +59,8 @@ impl Region {
         if self.is_empty() || other.is_empty() {
             return false;
         }
-        let self_end = match self.end() {
-            Some(e) => e,
-            None => u64::MAX,
-        };
-        let other_end = match other.end() {
-            Some(e) => e,
-            None => u64::MAX,
-        };
+        let self_end = self.end().unwrap_or(u64::MAX);
+        let other_end = other.end().unwrap_or(u64::MAX);
         self.offset < other_end && other.offset < self_end
     }
 

@@ -148,7 +148,7 @@ mod tests {
         let errors: Vec<Box<dyn std::error::Error>> = vec![
             Box::new(ForensicError::io(
                 "test",
-                std::io::Error::new(std::io::ErrorKind::Other, "x"),
+                std::io::Error::other("x"),
             )),
             Box::new(ForensicError::out_of_bounds("test", 0, 0, 0)),
             Box::new(ForensicError::UnsupportedFormat {
