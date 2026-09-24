@@ -22,7 +22,7 @@
 //! | `Referenced`   | an authoritative B-tree entry points into this block | accessible recordings |
 //! | `Unreferenced` | inside the video-block domain, no authoritative entry points at it | orphan **candidate** |
 //! | `Malformed`    | the block's own footer index is damaged | carving, no index claim |
-//! | `OutOfScope`   | outside the declared video-block domain, or not in the acquisition | nothing |
+//! | `OutOfScope`   | outside the declared video-block domain, or not in the acquisition | carving of whatever bytes *were* captured; no index claim |
 //!
 //! ## Unreferenced is not deleted
 //!
@@ -52,7 +52,7 @@ use parsers_core::storage::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::block::{self, BlockGeometry, BlockIndex, ClipRecord};
+use crate::block::{self, BlockGeometry, BlockIndex, BlockIndexRecognition, ClipRecord};
 use crate::boot::{self, BootRecognition, HikBoot};
 use crate::hikbtree::{self, AuthoritySelection, BTreeEntry, HikBTree, TreeAgreement, TreeRole};
 use crate::layout::{flag_from, key, u64_from, vs};
@@ -136,11 +136,12 @@ impl ClassifiedBlock {
 
     /// Whether this block's video data should be offered to the structural carver.
     ///
-    /// True when the block is in the domain but its index yielded nothing usable: the bytes
-    /// may still hold recoverable video that no metadata describes.
+    /// True when the block's index yielded nothing usable but some of its video data is in
+    /// the evidence: those bytes may still hold recoverable video that no metadata describes.
+    /// That includes an `OutOfScope` block cut off by the end of the acquisition — its footer
+    /// was never captured, but the video bytes before the cut were.
     pub fn is_carving_candidate(&self) -> bool {
-        !matches!(self.classification, BlockClassification::OutOfScope { .. })
-            && self.index.clips.is_empty()
+        self.index.clips.is_empty() && self.geometry.video_data_region().is_some()
     }
 }
 
@@ -201,6 +202,13 @@ impl HikvisionVolume {
         self.blocks
             .iter()
             .filter(|b| matches!(b.classification, BlockClassification::Malformed { .. }))
+    }
+
+    /// Blocks in the domain that the acquisition does not wholly contain.
+    pub fn out_of_scope_blocks(&self) -> impl Iterator<Item = &ClassifiedBlock> {
+        self.blocks
+            .iter()
+            .filter(|b| matches!(b.classification, BlockClassification::OutOfScope { .. }))
     }
 
     /// Every validated clip across every block, with its block's accessibility.
@@ -447,10 +455,25 @@ fn enumerate_blocks(
                 data_offsets: data_offsets.clone(),
             },
             None => {
+                // A block cut off by the end of the image. Its footer was never acquired, so
+                // nothing is known to be wrong with it — the acquisition simply does not reach
+                // its index. Calling that `Malformed` would assert damage the evidence does not
+                // show.
+                if let BlockIndexRecognition::FooterOutOfBounds { reason } = &index.recognition {
+                    BlockClassification::OutOfScope {
+                        reason: format!(
+                            "no authoritative index entry references block {block_number}, and \
+                             the block lies inside the declared video-block domain but is not \
+                             wholly present in the acquisition: {reason}. The block's own index \
+                             was not captured, so no statement is made about its contents from \
+                             metadata; whatever video bytes were captured remain a structural \
+                             carving target"
+                        ),
+                    }
                 // A block with no usable footer cannot describe itself. That is a different
                 // finding from "the index does not reference it", so it gets its own
                 // classification and its own remedy (carving, not a metadata claim).
-                if index.clips.is_empty() && !index.recognition.is_verified() {
+                } else if index.clips.is_empty() && !index.recognition.is_verified() {
                     BlockClassification::Malformed {
                         reason: format!(
                             "no authoritative index entry references block {block_number}, and the \
@@ -562,12 +585,16 @@ fn volume_evidence(
         .iter()
         .filter(|b| matches!(b.classification, BlockClassification::Malformed { .. }))
         .count();
+    let out_of_scope = blocks
+        .iter()
+        .filter(|b| matches!(b.classification, BlockClassification::OutOfScope { .. }))
+        .count();
     let clips: usize = blocks.iter().map(|b| b.clips().len()).sum();
 
     let base = format!(
         "Hikvision volume: {}; primary tree {} ({}), backup tree {} ({}); {}. {} block(s) examined \
-         ({referenced} referenced, {unreferenced} unreferenced, {malformed} malformed) yielding \
-         {clips} clip(s)",
+         ({referenced} referenced, {unreferenced} unreferenced, {malformed} malformed, \
+         {out_of_scope} out-of-scope) yielding {clips} clip(s)",
         boot.evidence.reason,
         primary.recognition.label(),
         primary.integrity.label(),
@@ -578,6 +605,12 @@ fn volume_evidence(
     );
 
     let mut notes: Vec<String> = Vec::new();
+    if out_of_scope > 0 {
+        notes.push(format!(
+            "{out_of_scope} block(s) extend past the end of the acquisition, so their footer \
+             indexes were not captured"
+        ));
+    }
     if blocks_absent > 0 {
         notes.push(format!(
             "{blocks_absent} declared block(s) are not present in this acquisition, so the index \
@@ -768,6 +801,10 @@ pub fn storage_geometry(
     oem_fields.insert(
         "hikvision_blocks_malformed".into(),
         volume.malformed_blocks().count().to_string(),
+    );
+    oem_fields.insert(
+        "hikvision_blocks_out_of_scope".into(),
+        volume.out_of_scope_blocks().count().to_string(),
     );
     oem_fields.insert(
         "hikvision_blocks_absent_from_image".into(),
@@ -1215,6 +1252,13 @@ fn decide_authority(volume: &HikvisionVolume, entry_gaps: &[String]) -> IndexAut
             volume.blocks_absent_from_image
         ));
     }
+    let partially_captured = volume.out_of_scope_blocks().count();
+    if partially_captured > 0 {
+        downgrades.push(format!(
+            "{partially_captured} block(s) extend past the end of the acquisition, so part of the \
+             domain the index governs was not captured"
+        ));
+    }
     if volume.block_guard_reached {
         downgrades.push(
             "the block-enumeration guard stopped before every declared block was examined".into(),
@@ -1279,13 +1323,15 @@ fn index_evidence(
 
     let base = format!(
         "Hikvision recording index is {authority_label}: {} accessible and {} available \
-         recording(s) from {} block(s) ({} referenced, {} unreferenced, {} malformed)",
+         recording(s) from {} block(s) ({} referenced, {} unreferenced, {} malformed, {} \
+         out-of-scope)",
         recordings.len(),
         unreferenced.len(),
         volume.blocks.len(),
         volume.referenced_blocks().count(),
         volume.unreferenced_blocks().count(),
         volume.malformed_blocks().count(),
+        volume.out_of_scope_blocks().count(),
     );
 
     let mut notes: Vec<String> = Vec::new();

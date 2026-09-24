@@ -40,8 +40,8 @@ use evidence_reader::EvidenceReader;
 use forensic_core::identifiers::ProfileId;
 use forensic_core::{
     ForensicError, Hash, IntegrityFlag, NormalizedTime, OemProfile, ParserRun, Provenance,
-    RawTimestamp, RecorderNativeTime, Recording, Region, SourceRegion, TimeEvidence, TimeZoneState,
-    TimelineEvent, ValidationState, ValidationStateKind,
+    RawTimestamp, Recording, Region, SourceRegion, TimeEvidence, TimeZoneState, TimelineEvent,
+    ValidationState, ValidationStateKind,
 };
 use parsers_core::storage::{ContainerRecord, RecordingIndex, StorageGeometry};
 use parsers_core::Parser;
@@ -140,9 +140,7 @@ impl HikvisionParser {
             // Hikvision writes unix seconds, not recorder wall-clock digits, so there is no
             // separate native rendering to report. Repeating the UTC reading here would imply
             // the recorder stored a local time it did not.
-            recorder_native: ts.iso_8601_utc.as_ref().map(|iso| RecorderNativeTime {
-                iso_8601: iso.clone(),
-            }),
+            recorder_native: None,
             normalized: ts.iso_8601_utc.as_ref().map(|iso| NormalizedTime {
                 iso_8601: iso.clone(),
                 method: NORMALIZATION_METHOD.to_string(),
@@ -330,9 +328,13 @@ impl Parser for HikvisionParser {
         // HIKBTREE statement is.
         let state = match self.recording_index(reader, profile)? {
             Some(index) => index.evidence.clone(),
-            None => ValidationState::not_run(
-                "parse_metadata",
+            // `vs(Unknown, ..)` rather than `ValidationState::not_run`, which files its second
+            // argument as the subject and would drop this explanation from the reason.
+            None => vs(
+                ValidationStateKind::Unknown,
                 "no Hikvision volume structures; no recording metadata to read",
+                "parse_metadata",
+                "hikvision_volume",
             ),
         };
         Ok(vec![self.run(profile, "parse_metadata", state)])
@@ -383,12 +385,14 @@ impl Parser for HikvisionParser {
                     "hikvision_recordings",
                 )
             } else {
-                ValidationState::not_run(
-                    "parse_recordings",
+                vs(
+                    ValidationStateKind::Unknown,
                     format!(
                         "no Hikvision volume structures were established ({})",
                         vol.boot.recognition.label()
                     ),
+                    "parse_recordings",
+                    "hikvision_recordings",
                 )
             };
 
@@ -416,11 +420,23 @@ impl Parser for HikvisionParser {
                 continue;
             };
             let time = self.time_evidence(profile, &clip.start_time);
+            // `TimelineEvent` requires a channel number. When none was derived, 0 — the
+            // platform's "unknown channel" value — is used and the description says so, so the
+            // event is never read as camera 0's.
+            let channel_note = if clip.channel.normalized.is_none() {
+                format!(
+                    "; no channel number could be derived ({}), so channel 0 here means unknown",
+                    clip.channel.note
+                )
+            } else {
+                String::new()
+            };
             events.push(TimelineEvent::new(
                 clip.channel.normalized.unwrap_or(0),
                 time,
                 format!(
-                    "Hikvision clip {} on channel {} ({}, block {}, {} byte(s)) from {} to {}",
+                    "Hikvision clip {} on channel {} ({}, block {}, {} byte(s)) from {} to \
+                     {}{channel_note}",
                     clip.clip_id(),
                     clip.channel.label(),
                     if block.classification.is_accessible() {
@@ -470,12 +486,14 @@ impl Parser for HikvisionParser {
                 "hikvision_clip_events",
             )
         } else {
-            ValidationState::not_run(
-                "extract_timeline_events",
+            vs(
+                ValidationStateKind::Unknown,
                 format!(
                     "no Hikvision clips were established ({})",
                     vol.boot.recognition.label()
                 ),
+                "extract_timeline_events",
+                "hikvision_timeline",
             )
         };
 
@@ -724,6 +742,11 @@ mod tests {
         assert!(
             !normalized.iso_8601.contains("+05:30"),
             "no regional offset may be applied during parsing"
+        );
+        assert!(
+            te.recorder_native.is_none(),
+            "Hikvision stores unix seconds, not wall-clock digits; repeating the UTC reading as a \
+             recorder-native time would claim a local time the recorder never stored"
         );
     }
 

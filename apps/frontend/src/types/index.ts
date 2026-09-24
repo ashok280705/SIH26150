@@ -74,7 +74,8 @@ export interface HexChunkResponse {
   total_source_len: number;
 }
 
-export type CapabilityStage = 'NOT_IMPLEMENTED' | 'PARTIAL' | 'IMPLEMENTED';
+/** Wire format of `forensic_core::capability::CapabilityStage` (`serde(rename_all = "snake_case")`). */
+export type CapabilityStage = 'not_implemented' | 'partial' | 'implemented';
 
 export interface CapabilityStages {
   detection: CapabilityStage;
@@ -228,6 +229,21 @@ export interface RecoveryCandidateUI {
   discovery_method: string;
   /** Why this candidate received its `data_state`. Safe to display verbatim. */
   state_reason: string;
+  /** The recovery engine's stable fragment id; post it back so the artifact traces to it. */
+  fragment_id?: string | null;
+  /** Every physical range of the candidate's recording, in recording order. */
+  source_regions?: { offset: number; length: number }[];
+  /** The OEM recording this candidate belongs to, when metadata established one. */
+  parent_recording?: string | null;
+  /**
+   * Post back as `recording_chain_id` for a frame-accurate export. `null` when only the
+   * raw `source_regions` (container bytes) can be exported.
+   */
+  recording_chain_id?: string | null;
+  /** Whether the bounds are an OEM container record's or a scan window's. */
+  framing?: string | null;
+  /** OEM-specific facts read from the structures, verbatim. */
+  oem_metadata?: Record<string, string>;
 }
 
 /** Raw backend RecoveryRun (forensic_core::RecoveryRun) plus scan totals. */

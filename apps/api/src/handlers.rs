@@ -596,12 +596,15 @@ fn reconstruct_oem_chain(
             });
         }
         let description = format!(
-            "{}; {}",
+            "{}; {}; {}",
             reconstruction.description(),
+            reconstruction.normalization.summary(),
             reconstruction.evidence.reason
         );
         return Ok(Some((
-            reconstruction.payload_regions.clone(),
+            // The normalized ranges: payload with any leading partial NAL dropped and late
+            // parameter sets placed first. Every range is still an evidence range.
+            reconstruction.export_regions().to_vec(),
             // A recording whose clips disagree about the channel, or establish none, must not be
             // exported as channel 0 silently — the description and the parser evidence carry the
             // disagreement, and channel 0 is the platform's "unknown channel" value.
@@ -613,6 +616,24 @@ fn reconstruct_oem_chain(
     // Every other OEM has no reconstruction path yet. Returning `None` lets the caller fall
     // through to an explicit range list rather than silently exporting some other OEM's bytes.
     Ok(None)
+}
+
+/// The recording id a candidate can post back as `recording_chain_id`, when
+/// [`reconstruct_oem_chain`] has a path for it.
+///
+/// Only ids in the form the OEM's reconstruction resolves are offered, so the UI is never
+/// handed an id that would fail at export time (a flat-model Dahua `didx#n` entry, for
+/// example, is exported from its ranges instead).
+fn reconstructable_chain_id(oem_key: &str, parent_recording: Option<&str>) -> Option<String> {
+    let id = parent_recording?;
+    let prefix = if oem_key.eq_ignore_ascii_case("dahua") {
+        "dahua:"
+    } else if oem_key.eq_ignore_ascii_case("hikvision") {
+        "hikclip:"
+    } else {
+        return None;
+    };
+    id.starts_with(prefix).then(|| id.to_string())
 }
 
 /// POST /api/evidence/:id/recordings/:rec_id/reconstruct
@@ -657,10 +678,30 @@ pub async fn reconstruct_recording(
                 // unrelated bytes under the caller's recording id.
                 let oem_key =
                     resolve_oem_key(&state, reader.as_ref(), payload.oem_key.clone()).await?;
-                reconstruct_oem_chain(&state, reader.as_ref(), &oem_key, chain_id)?
+                match reconstruct_oem_chain(&state, reader.as_ref(), &oem_key, chain_id)? {
+                    Some(found) => Some(found),
+                    // The caller named a specific recording. Falling through to "the first
+                    // recording the parser finds" would export different bytes under the
+                    // caller's id, which is worse than failing.
+                    None => {
+                        return Err(ApiError {
+                            error: format!(
+                                "recording '{chain_id}' could not be reconstructed by the \
+                                 {oem_key} parser"
+                            ),
+                            details: Some(
+                                "the id did not resolve against this evidence (or the OEM has no \
+                                 reconstruction path); no other recording was exported in its \
+                                 place. Re-run recovery and post back an id it reports"
+                                    .into(),
+                            ),
+                        });
+                    }
+                }
             }
             _ => None,
         };
+    let from_reconstruction = chain_regions.is_some();
 
     let (source_regions, rec_channel) = if let Some((regions, channel, note)) = chain_regions {
         region_source = format!("OEM chain reconstruction of {note}");
@@ -780,7 +821,14 @@ pub async fn reconstruct_recording(
         _ => format!("{}.h264", es_art_id.0),
     };
 
-    let base_artifact_dir = std::path::PathBuf::from(format!("artifacts/cases/{}/recordings/{}", case_id.0, rec_id_raw));
+    // The recording id is an OEM id such as `hikclip:b1:s0:0x...` or `dahua:p0:blk1`. It is
+    // kept verbatim in the response and provenance, but as a directory name only a safe
+    // spelling is used: ':' is illegal on Windows and '/' or '..' would escape the case tree.
+    let rec_dir_name: String = rec_id_raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let base_artifact_dir = std::path::PathBuf::from(format!("artifacts/cases/{}/recordings/{}", case_id.0, rec_dir_name));
     let es_dir = base_artifact_dir.join("elementary");
     let remux_dir = base_artifact_dir.join("remux");
 
@@ -797,7 +845,10 @@ pub async fn reconstruct_recording(
     }).map_err(map_err)?;
 
     let es_sha256 = recovery::ffmpeg::hash_file_sha256(&es_path).map_err(map_err)?;
-    let es_hash = forensic_core::Hash::sha256(hex::decode(&es_sha256).unwrap_or_default());
+    let es_hash = forensic_core::Hash::sha256(hex::decode(&es_sha256).map_err(|e| ApiError {
+        error: format!("the elementary stream digest '{es_sha256}' is not valid hex: {e}"),
+        details: Some("an artifact is never recorded with an empty hash".into()),
+    })?);
 
     let source_regions_prov: Vec<forensic_core::SourceRegion> = source_regions
         .iter()
@@ -814,9 +865,17 @@ pub async fn reconstruct_recording(
     // The provenance reason names every fact an examiner needs to re-derive this export: where
     // the ranges came from, how many there were, the engine's own fragment id when the caller
     // supplied one, and the OEM reconstruction detail when a chain was walked.
+    // Only a parser reconstruction strips container framing and plans Annex-B order. Any
+    // other source exports the bytes of the named ranges as they are on disk — for Hikvision
+    // that is MPEG-PS, for Dahua DHAV — and the record must not call them an elementary stream.
+    let stream_form = if from_reconstruction {
+        "Annex-B elementary stream"
+    } else {
+        "raw evidence bytes (container framing, if any, not removed)"
+    };
     let mut es_reason = format!(
-        "Extracted exact {:?} Annex-B elementary stream ({} byte(s)) from {} ordered physical \
-         range(s) in this evidence item; source: {region_source}",
+        "Extracted exact {:?} {stream_form} ({} byte(s)) from {} ordered physical range(s) in \
+         this evidence item; source: {region_source}",
         codec,
         raw_payload.len(),
         source_regions.len()
@@ -886,7 +945,15 @@ pub async fn reconstruct_recording(
 
         match state.ffmpeg_service.remux_elementary_stream_file(&es_path, &mp4_path, remux_opts, None).await {
             Ok(remux_res) => {
-                let mp4_hash = forensic_core::Hash::sha256(hex::decode(&remux_res.output_sha256).unwrap_or_default());
+                let mp4_hash = forensic_core::Hash::sha256(
+                    hex::decode(&remux_res.output_sha256).map_err(|e| ApiError {
+                        error: format!(
+                            "the remux digest '{}' is not valid hex: {e}",
+                            remux_res.output_sha256
+                        ),
+                        details: Some("an artifact is never recorded with an empty hash".into()),
+                    })?,
+                );
                 let mut remux_prov = forensic_core::Provenance::new(
                     evidence_id,
                     es_hash.clone(),
@@ -1146,13 +1213,31 @@ async fn resolve_oem_key(
     let results = ConfidenceEngine::classify_all(&detector_outputs, &state.profile_registry, &config_default())
         .map_err(map_err)?;
 
-    results
-        .first()
-        .map(|r| r.detector_output.oem_key.clone())
-        .ok_or_else(|| ApiError {
-            error: "No OEM candidate could be attributed to this evidence".to_string(),
-            details: Some("Detection produced no candidates; recovery and timeline require an attributed profile.".into()),
-        })
+    // Only an attribution the confidence engine actually made counts. The first result is
+    // always present when any detector ran, even when every score is zero — taking it
+    // regardless would silently pick whichever OEM sorts first and run its parser against
+    // unrelated evidence.
+    let top = results.first().ok_or_else(|| ApiError {
+        error: "No OEM candidate could be attributed to this evidence".to_string(),
+        details: Some("Detection produced no candidates; recovery and timeline require an attributed profile.".into()),
+    })?;
+    match top.attribution_status {
+        confidence::AttributionStatus::Confirmed
+        | confidence::AttributionStatus::CompatibleCandidate => {
+            Ok(top.detector_output.oem_key.clone())
+        }
+        ref other => Err(ApiError {
+            error: format!(
+                "OEM attribution is {other} for this evidence (top candidate '{}', confidence {:.2}); \
+                 no OEM parser was selected",
+                top.detector_output.oem_key, top.confidence
+            ),
+            details: Some(format!(
+                "{} Supply an explicit oem_key to run a specific parser against this evidence.",
+                top.explanation
+            )),
+        }),
+    }
 }
 
 fn config_default() -> ConfidenceConfig {
@@ -1213,6 +1298,11 @@ pub struct RecoveryCandidateDto {
     pub framing: Option<String>,
     /// The OEM recording/chain this candidate belongs to, when metadata established one.
     pub parent_recording: Option<String>,
+    /// The id to post back as `recording_chain_id` for a frame-accurate export, when the OEM
+    /// parser can reconstruct this recording (a Dahua `dahua:…` chain id or a Hikvision
+    /// `hikclip:…` clip id). `None` when the only export available is the raw
+    /// `source_regions` — which carry container framing, not an elementary stream.
+    pub recording_chain_id: Option<String>,
     /// Confidence and the observations it was composed from, so the number is explainable.
     pub confidence: Option<f64>,
     pub confidence_basis: Option<String>,
@@ -1410,6 +1500,7 @@ pub async fn run_recovery(
             discovery_method: "parser-located recording, classified against the recording index"
                 .to_string(),
             framing: None,
+            recording_chain_id: reconstructable_chain_id(&oem_key, parent_recording.as_deref()),
             parent_recording,
             confidence: None,
             confidence_basis: None,
@@ -1495,6 +1586,10 @@ pub async fn run_recovery(
             has_derived_artifact: false,
             discovery_method: frag.discovery_method.label().to_string(),
             framing: Some(frag.framing.label().to_string()),
+            recording_chain_id: reconstructable_chain_id(
+                &oem_key,
+                frag.parent_recording.value().map(|s| s.as_str()),
+            ),
             parent_recording: frag.parent_recording.value().cloned(),
             confidence: frag.confidence.value().copied(),
             confidence_basis: match &frag.confidence {
@@ -1595,17 +1690,27 @@ pub struct GapRecoveryResponse {
     pub slots: Vec<GapSlotDto>,
 }
 
+/// Whether `w` (4 bytes) is an Annex-B start code followed by a plausible NAL header.
+///
+/// The byte after `00 00 01` must have its `forbidden_zero_bit` clear. Without that check
+/// every MPEG-PS/PES system start code (`00 00 01 BA`, `00 00 01 E0`, ...) — which is what
+/// Hikvision clip framing and padding are made of — would count as elementary-stream
+/// evidence.
+fn is_nal_start(w: &[u8]) -> bool {
+    w.len() >= 4 && w[0] == 0x00 && w[1] == 0x00 && w[2] == 0x01 && w[3] & 0x80 == 0
+}
+
 /// True if the window contains an Annex-B start code (`00 00 01`), which also covers
-/// the 4-byte `00 00 00 01` form.
+/// the 4-byte `00 00 00 01` form, followed by a plausible NAL header.
 fn has_annexb_start(b: &[u8]) -> bool {
-    b.windows(3).any(|w| w == [0x00, 0x00, 0x01])
+    b.windows(4).any(is_nal_start)
 }
 
 /// Offset within `b` of the first Annex-B start code. Prefers the 4-byte form's leading
 /// zero (`00 00 00 01`) when present so the inspector shows the full start code. Returns
 /// `None` when the window has no start code (e.g. a slot of pure zero padding).
 fn first_annexb_start(b: &[u8]) -> Option<usize> {
-    b.windows(3).position(|w| w == [0x00, 0x00, 0x01]).map(|i| {
+    b.windows(4).position(is_nal_start).map(|i| {
         if i > 0 && b[i - 1] == 0x00 {
             i - 1
         } else {
@@ -1659,9 +1764,89 @@ pub async fn recover_gap(
     let mut slots = Vec::with_capacity(num_slots);
     let mut recovered_slots = 0usize;
 
+    // When the caller attributes the gap to Hikvision, carve it with the Hikvision structural
+    // carver first. Hikvision video sits inside MPEG-PS framing, so a slot is judged by the
+    // container candidates that actually overlap it — at their real extents — rather than by
+    // whether an arbitrary slice of it happens to contain a start code.
+    let hikvision_carve = if req
+        .oem_key
+        .as_deref()
+        .is_some_and(|k| k.eq_ignore_ascii_case("hikvision"))
+        && scan_end > scan_start
+    {
+        let profile = state
+            .profile_registry
+            .find_applicable("hikvision", None, None, None)
+            .ok_or_else(|| ApiError {
+                error: "no Hikvision profile is registered".to_string(),
+                details: Some("gap carving needs the Hikvision profile's structure layout".into()),
+            })?;
+        let region =
+            forensic_core::Region::new(scan_start, scan_end - scan_start).map_err(map_err)?;
+        Some(parser_hikvision::carve::carve_region(reader.as_ref(), profile, region).map_err(map_err)?)
+    } else {
+        None
+    };
+
     for k in 0..num_slots {
         let off = scan_start + (k as u64) * slot_bytes;
         let this_len = if k + 1 == num_slots { scan_end.saturating_sub(off) } else { slot_bytes };
+
+        if let Some(carve) = &hikvision_carve {
+            let slot = forensic_core::Region { offset: off, length: this_len };
+            let overlapping: Vec<&parser_hikvision::CarvedCandidate> = carve
+                .candidates
+                .iter()
+                .filter(|c| c.region.overlaps(&slot))
+                .collect();
+            if !overlapping.is_empty() {
+                let best = overlapping
+                    .iter()
+                    .find(|c| c.recoverable)
+                    .copied()
+                    .unwrap_or(overlapping[0]);
+                let recoverable = best.recoverable;
+                let (data_state, status) = if recoverable {
+                    // No index evidence here either: present and structurally valid, but not
+                    // linked to an index entry. Never Active, never Deleted.
+                    (forensic_core::DataState::Unindexed, forensic_core::RecoveryStatus::Recoverable)
+                } else {
+                    (
+                        forensic_core::DataState::Corrupted,
+                        forensic_core::RecoveryStatus::PartiallyRecoverable,
+                    )
+                };
+                recovered_slots += 1;
+                slots.push(GapSlotDto {
+                    index: k,
+                    level: Some("L3".to_string()),
+                    data_state: Some(data_state),
+                    recovery_status: Some(status),
+                    start_offset_sec: (k as i64) * nominal,
+                    end_offset_sec: ((k as i64) + 1) * nominal,
+                    offset: off,
+                    data_offset: best.region.offset.max(off),
+                    length: this_len,
+                    codec: best.codec.codec.label().to_string(),
+                    nal_unit_count: best.codec.h264_nals.values().sum::<usize>()
+                        + best.codec.h265_nals.values().sum::<usize>(),
+                    validation_state: format!("{:?}", best.evidence.state),
+                    reason: format!(
+                        "Hikvision MPEG-PS candidate {} overlaps this slot ({} of {} corroborating \
+                         conditions met, {} payload byte(s)); {}. Located by structural carving \
+                         with no index evidence, so it is not linked to a recording entry. This is \
+                         not evidence of deletion.",
+                        best.candidate_id(),
+                        best.satisfied_count,
+                        best.conditions.len(),
+                        best.payload_bytes(),
+                        best.evidence.reason
+                    ),
+                });
+                continue;
+            }
+        }
+
         let read_len = this_len.min(4 * 1024 * 1024) as usize;
         let bytes = reader.read_exact_at(off, read_len).unwrap_or_default();
 
@@ -1758,7 +1943,9 @@ pub async fn recover_gap(
 
     let resp = GapRecoveryResponse {
         channel: req.channel,
-        oem_key: req.oem_key.unwrap_or_else(|| "auto".to_string()),
+        // No detection runs on this endpoint, so an absent key is reported as exactly that
+        // rather than as "auto", which read as though an attribution had been made.
+        oem_key: req.oem_key.unwrap_or_else(|| "unattributed".to_string()),
         scan_start,
         scan_end,
         nominal_seconds: nominal,

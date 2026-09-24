@@ -134,11 +134,16 @@ export const CameraTile: React.FC<CameraTileProps> = ({
     setNote(null);
     (async () => {
       try {
+        // A segment with no known extent is not exported: guessing a length would put
+        // arbitrary bytes on screen as this clip.
+        if (!(seg.length > 0)) {
+          throw new Error('segment has no recorded physical extent; nothing was exported');
+        }
         const res: any = await reconstructRecording(evidenceId, seg.key, {
           offset_start: seg.offset,
-          length: seg.length > 0 ? seg.length : 131072,
+          length: seg.length,
           channel: seg.channel,
-          oem_key: oemName,
+          oem_key: oemName || undefined,
         });
         if (cancelled.current) return;
         const url = res?.remux?.video_url;

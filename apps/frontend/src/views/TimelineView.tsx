@@ -323,6 +323,9 @@ export const TimelineView: React.FC<Props> = ({
                 scan_end: scanEnd,
                 gap_seconds: g.missing_seconds,
                 nominal_seconds: s.nominal_segment_seconds || 10,
+                // The OEM the pipeline actually used, so the gap is carved with that OEM's
+                // own structures (Hikvision MPEG-PS) rather than generically.
+                oem_key: (!r.used_unified_fallback && r.oem_key_used) || undefined,
               });
               map.set(gapKey(s, g), res);
             } catch {

@@ -75,7 +75,9 @@ function extractHexFacts(): string | null {
   let sc4 = 0;
   const nalNames: string[] = [];
   for (let i = 0; i + 2 < bytes.length; i++) {
-    if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1) {
+    // A NAL header has its forbidden bit clear; 00 00 01 BA/BB/E0... are MPEG system start
+    // codes (container framing) and are reported separately below.
+    if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1 && ((bytes[i + 3] ?? 0) & 0x80) === 0) {
       const fourByte = i > 0 && bytes[i - 1] === 0;
       if (fourByte) sc4++; else sc3++;
       const h = bytes[i + 3];
@@ -92,6 +94,17 @@ function extractHexFacts(): string | null {
   if (/x265|hevc/i.test(joined)) sigs.push('x265/HEVC markers → H.265 video');
   if (/videolan/i.test(joined)) sigs.push('VideoLAN/x264 metadata');
   if (/DHAV|DHFS/.test(joined)) sigs.push('Dahua DHAV/DHFS container markers');
+  if (/HIKVISION@HANGZHOU/.test(joined)) sigs.push('the Hikvision boot identifier HIKVISION@HANGZHOU (boot structure +16)');
+  if (/HIKBTREE/.test(joined)) sigs.push('a Hikvision HIKBTREE index page header');
+  if (/OFNI/.test(joined)) sigs.push('a Hikvision OFNI information part inside an MPEG-PS clip');
+  {
+    // 00 00 01 BA is an MPEG-PS pack header, not a NAL start code: Hikvision clips are framed this way.
+    let packs = 0;
+    for (let i = 0; i + 3 < bytes.length; i++) {
+      if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1 && bytes[i + 3] === 0xba) packs++;
+    }
+    if (packs > 0) sigs.push(`${packs}× MPEG-PS pack header (00 00 01 BA) — container framing (as in Hikvision clips), not a NAL unit`);
+  }
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) sigs.push('JPEG SOI marker (FF D8 FF) → MJPEG frame');
 
   const lines: string[] = [];

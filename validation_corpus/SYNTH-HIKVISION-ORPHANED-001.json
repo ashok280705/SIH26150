@@ -7,18 +7,15 @@
   },
   "source_type": "raw",
   "expected_detection": "hikvision",
-  "expected_detection_status": "confirmed",
-  "expected_classification": "confirmed",
-  "expected_attribution_status": "confirmed",
-  "expected_regions": [
-    {
-      "offset": 512,
-      "length": 512
-    }
-  ],
+  "expected_detection_status": "not_detected",
+  "expected_classification": "unresolved",
+  "expected_attribution_status": "unresolved",
+  "expected_regions": [],
   "expected_parser_state": "parsed",
   "expected_recovery_state": "l1_carving_available",
   "expected_validation_state": "unknown",
-  "expected_warnings": [],
+  "expected_warnings": [
+    "random bytes with no boot structure at all"
+  ],
   "synthetic": true
 }

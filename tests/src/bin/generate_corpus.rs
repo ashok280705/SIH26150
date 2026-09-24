@@ -123,13 +123,50 @@ fn expectation(oem: OemShape, shape: FixtureShape) -> Expectation {
                      identifier offset; an identifier at the wrong offset is not a Hikvision volume",
                 ),
             },
-            other => Expectation {
-                validation: default_validation_state(other),
-                detection_status: "confirmed",
-                classification: "confirmed",
-                attribution: "confirmed",
+            // No identifier at any declared boot position: the Hikvision structure set does not
+            // apply. Confirmation would need the identifier *and* a HIKBTREE reached through the
+            // boot structure's own tree pointer, and none of these carries either.
+            FixtureShape::KnownNegative | FixtureShape::FalsePositive | FixtureShape::Orphaned => {
+                Expectation {
+                    validation: "unknown",
+                    detection_status: "not_detected",
+                    classification: "unresolved",
+                    attribution: "unresolved",
+                    regions: Vec::new(),
+                    note: Some(match shape {
+                        FixtureShape::KnownNegative => {
+                            "a FAT32 volume in random bytes; no Hikvision identifier at boot+16"
+                        }
+                        FixtureShape::FalsePositive => {
+                            "the identifier string sits at 4096 inside random data, which is not \
+                             a declared boot position plus the identifier offset"
+                        }
+                        _ => "random bytes with no boot structure at all",
+                    }),
+                }
+            }
+            // The identifier survives at boot+16, but none of these 8 KiB-class detection shapes
+            // carries coherent boot geometry or a HIKBTREE reachable through the tree pointer.
+            // That is Insufficient, exactly like Normal; claiming Confirmed here is what the
+            // detector is built to refuse.
+            FixtureShape::Sparse
+            | FixtureShape::Truncated
+            | FixtureShape::Fragmented
+            | FixtureShape::OverlappingSignature
+            | FixtureShape::Partial
+            | FixtureShape::MissingFrame
+            | FixtureShape::UnknownModel
+            | FixtureShape::UnknownFirmware => Expectation {
+                validation: "review",
+                detection_status: "insufficient",
+                classification: "insufficient",
+                attribution: "insufficient",
                 regions: boot_region,
-                note: None,
+                note: Some(
+                    "the identifier is present at boot+16 but no coherent boot geometry or \
+                     HIKBTREE is reachable in this detection fixture, so the identifier stands \
+                     alone and attribution is Insufficient",
+                ),
             },
         };
     }

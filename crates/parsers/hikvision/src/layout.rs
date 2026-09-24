@@ -176,6 +176,7 @@ pub mod key {
     pub const CARVE_MIN_CONDITIONS: &str = "hikvision_carve_min_conditions";
     pub const CARVE_SENTINEL_PROXIMITY_BYTES: &str = "hikvision_carve_sentinel_proximity_bytes";
     pub const RECORDING_JOIN_GAP_SECONDS: &str = "hikvision_recording_join_gap_seconds";
+    pub const ANNEXB_NORMALIZE_SCAN_BYTES: &str = "hikvision_annexb_normalize_scan_bytes";
 
     // ── Uncertainty flags ────────────────────────────────────────────────────────
     pub const UNCERTAINTY_BOOT_IDENTIFIER: &str = "uncertainty_boot_identifier_established";

@@ -556,6 +556,139 @@ fn a_volume_with_only_carveable_video_still_runs_every_stage() {
     assert!(parser.validate_structure(&reader, &profile).is_ok());
 }
 
+// ── Multi-clip reconstruction and Annex-B normalization ───────────────────────────
+
+#[test]
+fn consecutive_clips_in_one_block_join_into_one_recording_in_slot_order() {
+    let profile = shipped_profile();
+    let first = HikClipSpec::default();
+    let second = HikClipSpec {
+        start_time: first.end_time,
+        end_time: first.end_time + 600,
+        time_a: first.end_time,
+        ..Default::default()
+    };
+    let spec = HikvisionImageSpec {
+        blocks: vec![HikBlockSpec {
+            clips: vec![first, second],
+            ..Default::default()
+        }],
+        primary_tree: Some(HikTreeSpec::single_leaf(vec![HikEntrySpec::at(0, 0, 0)])),
+        ..Default::default()
+    };
+    let image = build_hikvision_image(&spec);
+    let (reader, _f) = reader_for(&image);
+    let volume = parser_hikvision::volume::read_volume(&reader, &profile).unwrap();
+    let built = &image.block(0).unwrap().clips;
+    assert_eq!(built.len(), 2);
+
+    // Seeding from the *second* clip must still yield both, in footer slot order.
+    let reconstruction = parser_hikvision::reconstruct_recording(
+        &reader,
+        &profile,
+        &volume,
+        &built[1].expected_clip_id,
+    )
+    .unwrap()
+    .expect("a recording");
+    assert_eq!(reconstruction.clips.len(), 2, "{:?}", reconstruction.notes);
+    assert_eq!(reconstruction.clip_regions[0].offset, built[0].clip_offset);
+    assert_eq!(reconstruction.clip_regions[1].offset, built[1].clip_offset);
+    assert_eq!(reconstruction.blocks, vec![0]);
+    // The seed id is the recording id; it is never regenerated.
+    assert_eq!(reconstruction.recording_id, built[1].expected_clip_id);
+
+    // Payload ranges lie inside the clips and exclude the MPEG-PS framing.
+    for r in &reconstruction.payload_regions {
+        assert!(reconstruction
+            .clip_regions
+            .iter()
+            .any(|c| r.offset >= c.offset && r.offset + r.length <= c.offset + c.length));
+    }
+    assert!(reconstruction.payload_bytes() < reconstruction.clip_bytes());
+}
+
+#[test]
+fn a_clean_stream_is_normalized_without_changing_its_layout() {
+    let profile = shipped_profile();
+    let image = minimal_volume();
+    let (reader, _f) = reader_for(&image);
+    let volume = parser_hikvision::volume::read_volume(&reader, &profile).unwrap();
+    let (_, clip) = image.first_clip().unwrap();
+    let reconstruction =
+        parser_hikvision::reconstruct_recording(&reader, &profile, &volume, &clip.expected_clip_id)
+            .unwrap()
+            .unwrap();
+
+    let n = &reconstruction.normalization;
+    assert_eq!(
+        n.evidence.state,
+        ValidationStateKind::Pass,
+        "{}",
+        n.evidence.reason
+    );
+    assert!(!n.changed_layout(), "{}", n.summary());
+    assert_eq!(
+        reconstruction.export_regions(),
+        &reconstruction.payload_regions[..]
+    );
+
+    // The exported bytes open on an Annex-B start code followed by a parameter set.
+    let first = reconstruction.export_regions()[0];
+    let head = evidence_reader::EvidenceReader::read_exact_at(&reader, first.offset, 5).unwrap();
+    assert_eq!(&head[..4], &[0x00, 0x00, 0x00, 0x01]);
+    assert_eq!(head[4] & 0x1F, 7, "an H.264 SPS leads the stream");
+    assert!(reconstruction
+        .oem_metadata()
+        .contains_key("hikvision_annexb_normalization"));
+}
+
+// ── Partially captured acquisitions ──────────────────────────────────────────────
+
+#[test]
+fn a_block_cut_off_by_the_end_of_the_image_is_out_of_scope_not_malformed() {
+    let parser = HikvisionParser::default();
+    let profile = shipped_profile();
+    let spec = HikvisionImageSpec {
+        blocks: vec![HikBlockSpec::default(), HikBlockSpec::default()],
+        primary_tree: Some(HikTreeSpec::single_leaf(vec![HikEntrySpec::at(0, 0, 0)])),
+        ..Default::default()
+    };
+    let mut image = build_hikvision_image(&spec);
+    // Cut the acquisition inside block 1's video data: its footer was never captured.
+    let block1 = image.block(1).unwrap().clone();
+    image.bytes.truncate((block1.offset + 64 * 1024) as usize);
+    let (reader, _f) = reader_for(&image);
+
+    let volume = parser_hikvision::volume::read_volume(&reader, &profile).unwrap();
+    let classified = volume
+        .blocks
+        .iter()
+        .find(|b| b.block_number() == 1)
+        .expect("the partially captured block is still enumerated");
+    assert_eq!(
+        classified.classification.label(),
+        "out-of-scope",
+        "{:?}",
+        classified.classification
+    );
+    assert_eq!(
+        volume.malformed_blocks().count(),
+        0,
+        "nothing is known to be damaged"
+    );
+    // Its captured bytes are still offered to the carver.
+    assert!(classified.is_carving_candidate());
+
+    // And an index over a domain that was not wholly captured is not a complete statement.
+    let index = parser.recording_index(&reader, &profile).unwrap().unwrap();
+    assert!(
+        matches!(index.authority, IndexAuthority::Partial { .. }),
+        "{:?}",
+        index.authority
+    );
+}
+
 #[test]
 fn the_tree_integrity_reexport_is_usable_from_outside_the_crate() {
     // A compile-level check that the public surface a consumer needs is actually exported.

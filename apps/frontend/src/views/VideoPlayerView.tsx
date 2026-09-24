@@ -148,7 +148,9 @@ export const VideoPlayerView: React.FC<Props> = ({ evidence, workflow }) => {
   const [timeEnd, setTimeEnd] = useState<string>('');
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
 
-  const parserKey = workflow?.parserUsed || workflow?.attributedOem || 'unified';
+  // Empty when no parser has been established; the server then attributes the evidence itself
+  // (or refuses) instead of being told to run the generic carver under a vendor's name.
+  const parserKey = workflow?.parserUsed || workflow?.attributedOem || '';
 
   useEffect(() => {
     setSessions([]);
@@ -186,6 +188,8 @@ export const VideoPlayerView: React.FC<Props> = ({ evidence, workflow }) => {
                 scan_end: scanEnd,
                 gap_seconds: g.missing_seconds,
                 nominal_seconds: s.nominal_segment_seconds || 10,
+                // Lets the server carve with the OEM's own structures (Hikvision MPEG-PS).
+                oem_key: parserKey || undefined,
               });
               map.set(gapKey(s, g), res);
             } catch {
@@ -287,7 +291,7 @@ export const VideoPlayerView: React.FC<Props> = ({ evidence, workflow }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
               <strong style={{ fontSize: '14px' }}>{evidence.source_device}</strong>
               <span className="badge badge-info">{evidence.image_format}</span>
-              <span className="badge badge-pass">parser: {parserKey}</span>
+              <span className="badge badge-pass">parser: {parserKey || 'unattributed'}</span>
             </div>
           </div>
         </div>

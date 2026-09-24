@@ -49,6 +49,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod annexb;
 pub mod block;
 pub mod boot;
 pub mod carve;
@@ -62,6 +63,7 @@ pub mod testing;
 pub mod timestamp;
 pub mod volume;
 
+pub use annexb::{AnnexBNormalization, NalRole};
 pub use block::{BlockGeometry, BlockIndex, BlockIndexRecognition, ClipRecord};
 pub use boot::{BootRecognition, HikBoot};
 pub use carve::{CarveResult, CarvedCandidate};

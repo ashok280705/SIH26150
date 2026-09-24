@@ -280,6 +280,161 @@ fn an_engine_discovered_clip_reconstructs_into_an_exportable_stream_with_provena
 }
 
 #[test]
+fn a_reconstructed_hikvision_recording_exports_as_artifacts_with_real_digests() {
+    let c = open(realistic_dvr_volume());
+    let profile = c
+        .registry
+        .find_applicable("hikvision", None, None, None)
+        .unwrap();
+    let volume = parser_hikvision::volume::read_volume(&c.reader, profile).unwrap();
+    let (_, clip) = c.image.first_clip().unwrap();
+    let rec =
+        parser_hikvision::reconstruct_recording(&c.reader, profile, &volume, &clip.expected_clip_id)
+            .unwrap()
+            .unwrap();
+
+    // ── The stream: exactly the normalized export ranges, all evidence bytes ──
+    let mut stream = Vec::new();
+    for r in rec.export_regions() {
+        assert!(r.offset + r.length <= c.reader.len());
+        stream.extend_from_slice(&c.reader.read_exact_at(r.offset, r.length as usize).unwrap());
+    }
+    // PES framing was stripped: the stream is Annex-B H.264, not MPEG-PS.
+    assert_ne!(&stream[..4], &[0x00, 0x00, 0x01, 0xBA], "no pack header in the export");
+    let codec_evidence = recovery::VideoReconstructor::classify_codec(&stream);
+    assert_eq!(codec_evidence.codec, recovery::VideoCodec::H264);
+    assert_eq!(codec_evidence.validation.state, ValidationStateKind::Pass);
+
+    // ── Export: native + derived artifacts with real digests ────────────────
+    let evidence_id = EvidenceId::new();
+    let native_region = Region::new(rec.export_regions()[0].offset, stream.len() as u64).unwrap();
+    let out = recovery::VideoReconstructor::reconstruct(
+        evidence_id,
+        native_region,
+        stream.clone(),
+        false,
+        false,
+    );
+    assert_eq!(out.native_artifact.evidence_id, evidence_id);
+    assert_ne!(
+        out.native_artifact.hash,
+        forensic_core::Hash::sha256(vec![0; 32]),
+        "the native artifact must carry a real digest of the recovered bytes"
+    );
+    for d in &out.derived_artifacts {
+        assert_eq!(d.provenance.source_evidence_id, evidence_id);
+    }
+    // A decode test that did not run is Unknown, never Pass.
+    assert_eq!(out.validation_state.state, ValidationStateKind::Unknown);
+}
+
+#[test]
+fn an_engine_discovered_orphan_exports_by_the_id_the_engine_reported() {
+    // The production export path for an engine discovery: recovery reports a fragment with a
+    // parent recording id; that id — not a freshly minted one — is what reconstruction resolves.
+    let c = open(realistic_dvr_volume());
+    let profile = c
+        .registry
+        .find_applicable("hikvision", None, None, None)
+        .unwrap();
+    let orchestrator = ParsingOrchestrator::new();
+    let parser = orchestrator.parser_for("hikvision").unwrap();
+    let evidence_id = EvidenceId::new();
+    let outcome = RecoveryEngine::new()
+        .execute_recovery(RecoveryRequest {
+            evidence_id,
+            reader: &c.reader,
+            profile,
+            oem_key: "hikvision",
+            parser,
+            bounds: &bounds(),
+            scan_window: None,
+            read_window_bytes: None,
+        })
+        .unwrap();
+
+    let block1 = c.image.block(1).unwrap();
+    let expected_parent = &block1.clips[0].expected_clip_id;
+    let (cand, frag) = outcome
+        .candidates
+        .iter()
+        .zip(outcome.fragments.iter())
+        .find(|(cand, _)| {
+            cand.data_state == DataState::Orphaned
+                && cand.source_offsets[0].offset >= block1.offset
+                && cand.source_offsets[0].offset < block1.footer_offset
+        })
+        .expect("the unreferenced block's video data is an orphan candidate");
+
+    // Provenance and identity survive from engine to export.
+    assert_eq!(frag.evidence_id, evidence_id);
+    assert!(frag.id_is_consistent());
+    assert_eq!(cand.provenance.source_evidence_id, evidence_id);
+    let parent = frag
+        .parent_recording
+        .value()
+        .expect("a fragment inside a described clip knows its recording");
+    assert_eq!(parent, expected_parent);
+
+    let volume = parser_hikvision::volume::read_volume(&c.reader, profile).unwrap();
+    let rec = parser_hikvision::reconstruct_recording(&c.reader, profile, &volume, parent)
+        .unwrap()
+        .expect("the engine's parent id resolves");
+    assert_eq!(&rec.recording_id, parent, "the id is used as given, never regenerated");
+    assert!(!rec.fully_accessible, "an orphan is not presented as a live recording");
+    assert!(rec.is_exportable());
+    // The fragment's bytes lie inside the reconstructed recording's clips.
+    let frag_start = cand.source_offsets[0].offset;
+    assert!(rec
+        .clip_regions
+        .iter()
+        .any(|r| frag_start >= r.offset && frag_start < r.offset + r.length));
+}
+
+#[test]
+fn the_audited_pipeline_runs_end_to_end_on_a_hikvision_volume() {
+    let c = open(realistic_dvr_volume());
+    let evidence_id = EvidenceId::new();
+    let run = pipeline::run_pipeline(
+        evidence_id,
+        &c.reader,
+        &c.registry,
+        &ConfidenceConfig::provisional_default(),
+        &pipeline::PipelineOptions::default(),
+    )
+    .expect("the pipeline runs");
+
+    for stage in &run.stages {
+        eprintln!("{:?} {:?}: {}", stage.stage, stage.status, stage.detail);
+    }
+
+    assert_eq!(
+        run.oem_key_used.as_deref(),
+        Some("hikvision"),
+        "the Hikvision parser was used, not the unified fallback"
+    );
+    assert!(!run.used_unified_fallback);
+    assert_eq!(run.attribution.as_ref().expect("attribution").oem_key, "hikvision");
+    assert_eq!(run.parsing.as_ref().expect("parsing").recordings.len(), 3);
+
+    if let Some(recovery_summary) = &run.recovery {
+        assert_eq!(
+            recovery_summary.metrics.deleted_count, 0,
+            "Hikvision structures carry no free marker, so no deletion finding is possible"
+        );
+        for (cand, frag) in recovery_summary
+            .candidates
+            .iter()
+            .zip(recovery_summary.fragments.iter())
+        {
+            assert_eq!(cand.provenance.source_evidence_id, evidence_id);
+            assert_eq!(frag.evidence_id, evidence_id);
+            assert!(frag.id_is_consistent());
+        }
+    }
+}
+
+#[test]
 fn parsing_stages_pass_and_report_real_structures() {
     let c = open(realistic_dvr_volume());
     let profile = c.registry.find_applicable("hikvision", None, None, None).unwrap();

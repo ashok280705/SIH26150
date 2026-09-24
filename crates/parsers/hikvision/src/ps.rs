@@ -589,6 +589,13 @@ pub struct ClipStream {
     pub rejections: Vec<String>,
     /// Whether the walk reached the end of the clip.
     pub reached_end: bool,
+    /// In carving mode, the rejection that ended the walk — the reason the candidate ends
+    /// where it does. `None` when the walk reached the end of its range, or in resync mode.
+    ///
+    /// Kept as a typed value so a caller can tell "the framing ended cleanly" (the next bytes
+    /// simply are not a part) from "a part claimed bytes that are not there".
+    #[serde(default)]
+    pub terminated_by: Option<PartRejection>,
     pub evidence: ValidationState,
 }
 
@@ -735,6 +742,8 @@ struct StreamWindow<'a> {
     window_size: usize,
     start: u64,
     bytes: Vec<u8>,
+    /// Reads that failed, in order. Surfaced as walk rejections.
+    read_errors: Vec<String>,
 }
 
 impl<'a> StreamWindow<'a> {
@@ -745,6 +754,7 @@ impl<'a> StreamWindow<'a> {
             window_size: window_size.max(4096),
             start: 0,
             bytes: Vec::new(),
+            read_errors: Vec::new(),
         }
     }
 
@@ -773,8 +783,19 @@ impl<'a> StreamWindow<'a> {
             return Ok(());
         }
         // A short read is not an error here: the clip may be truncated by the acquisition,
-        // and the walk should describe what is present.
-        let n = self.reader.read_at(offset, &mut buf).unwrap_or_default();
+        // and the walk should describe what is present. A failed read is different — it ends
+        // the walk just the same, but it is recorded so the stop is attributable to I/O rather
+        // than looking like the end of the clip's framing.
+        let n = match self.reader.read_at(offset, &mut buf) {
+            Ok(n) => n,
+            Err(e) => {
+                self.read_errors.push(format!(
+                    "reading {want} byte(s) at {offset} (0x{offset:X}) failed: {e}; the walk \
+                     stopped there"
+                ));
+                0
+            }
+        };
         buf.truncate(n);
         self.start = offset;
         self.bytes = buf;
@@ -1027,12 +1048,22 @@ pub fn walk_parts(
     let mut ofni_parts: Vec<OfniRecord> = Vec::new();
     let mut rejections: Vec<String> = Vec::new();
     let mut resyncs: Vec<String> = Vec::new();
+    let mut terminated_by: Option<PartRejection> = None;
     let mut bytes_walked = 0u64;
+
+    // How much of the window each step copies. A part is parsed from its fixed header
+    // fields alone, so copying the whole remaining window (up to the read-window size) per
+    // part made a long clip cost parts × window bytes of copying. The bound still leaves a
+    // resynchronisation search a useful distance to look ahead.
+    let step_bytes = header_need.max(64 * 1024);
 
     let mut cursor = region.offset;
     while cursor < region_end && parts.len() < max_parts {
         let remaining = region_end - cursor;
-        let buf = window.at(cursor, header_need)?.to_vec();
+        let buf = {
+            let loaded = window.at(cursor, header_need)?;
+            loaded[..loaded.len().min(step_bytes)].to_vec()
+        };
         if buf.is_empty() {
             break;
         }
@@ -1085,6 +1116,7 @@ pub fn walk_parts(
                 rejections.push(rejection.reason(cursor));
                 if mode == WalkMode::StopAtFirstRejection {
                     // Carving: valid framing has ended, and that boundary is the finding.
+                    terminated_by = Some(rejection);
                     break;
                 }
                 // Resynchronise to the next start-code prefix rather than abandoning the
@@ -1118,6 +1150,10 @@ pub fn walk_parts(
             }
         }
     }
+
+    // An I/O failure is a rejection in its own right: the walk stopped because bytes could
+    // not be read, not because the framing ended.
+    rejections.append(&mut window.read_errors);
 
     let reached_end = cursor >= region_end;
 
@@ -1176,6 +1212,7 @@ pub fn walk_parts(
         resyncs,
         rejections,
         reached_end,
+        terminated_by,
         evidence,
     })
 }

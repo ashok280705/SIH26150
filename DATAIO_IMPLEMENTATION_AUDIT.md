@@ -993,7 +993,7 @@ All seven parsers receive `&dyn EvidenceReader` and use only `len()`, `read_at()
 
 | Parser | What it reads | Offsets used | Line evidence |
 |---|---|---|---|
-| **Hikvision** | superblock at 0, size from `profile.layout["superblock_size"]` (default 512); HKSEG gate at `profile.layout["hkseg_start"]` (default 512) | **absolute** | `hikvision/src/parser.rs:42,45,102-103` |
+| **Hikvision** | *(superseded — the superblock-at-0 / `HKSEG` mock this row described was removed.)* Boot structure at the profile's boot positions (0x200, 0x4C56000) with the `HIKVISION@HANGZHOU` identifier at +16; HIKBTREE pages via the boot tree pointers; 1 GiB blocks whose last 1 MiB is the footer clip index; bounded MPEG-PS walks inside clip ranges | **absolute** | `hikvision/src/boot.rs`, `hikbtree.rs`, `block.rs`, `ps.rs` |
 | **Dahua** | DHFS superblock at 0; index header at `index_offset` with `+8` bounds pre-check; DHAV packet scan from offset 0 over a 16 MiB window | **absolute** | `dahua/src/parser.rs:110-111,148-149,258,341-345` |
 | **Uniview** | superblock at 0; **model byte at fixed 512**; **firmware bytes at fixed 1024**; EC1001 at `profile.layout["ec1001_start"]` (default 512) | **absolute, two hard-coded** | `uniview/src/parser.rs:45,78,84,120-121,157-164` |
 | **Honeywell** | header at 0, `sector_size` from `profile.layout["sector_size"]` **defaulting to 512** | **absolute** | `honeywell/src/parser.rs:41,45` |

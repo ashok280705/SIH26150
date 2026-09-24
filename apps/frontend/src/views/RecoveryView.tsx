@@ -78,6 +78,7 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
   onSelectEvidence,
   onNavigateToHex,
   onWorkflow,
+  workflow,
   gapTarget,
   onClearGapTarget,
 }) => {
@@ -147,6 +148,8 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
         scan_end: target.scanEnd,
         gap_seconds: target.gapSeconds,
         nominal_seconds: target.nominalSeconds,
+        // Lets the server carve with the OEM's own structures (Hikvision MPEG-PS).
+        oem_key: workflow?.parserUsed || workflow?.attributedOem || undefined,
       });
       setResult(res);
       const outcome: RecoveryOutcome =

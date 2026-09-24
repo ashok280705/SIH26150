@@ -40,6 +40,7 @@ use forensic_core::{ForensicError, OemProfile, Region, ValidationState, Validati
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::annexb::{self, AnnexBNormalization};
 use crate::block::ClipRecord;
 use crate::layout::{i64_from, key, u64_from, vs};
 use crate::ps::{self, ClipStream, CodecEvidence, HikCodec};
@@ -110,6 +111,9 @@ pub struct RecordingReconstruction {
     pub ordering: RecordingOrdering,
     /// Codec, decided from the reconstructed payload.
     pub codec: CodecEvidence,
+    /// How the payload is laid out for a decodable Annex-B export: leading partial-NAL trim
+    /// and parameter-set placement, every range still an evidence range.
+    pub normalization: AnnexBNormalization,
     /// Recorder clock span, when both ends decoded. Reported, never used to reorder.
     pub decoded_time_span: Option<(i64, i64)>,
     /// Whether every clip's block is referenced by the authoritative index.
@@ -137,6 +141,15 @@ impl RecordingReconstruction {
     /// Whether the reconstruction produced exportable payload.
     pub fn is_exportable(&self) -> bool {
         !self.payload_regions.is_empty()
+    }
+
+    /// The ordered physical ranges to concatenate for export.
+    ///
+    /// These are the payload ranges after Annex-B normalization: bytes in front of the first
+    /// start code dropped, and parameter sets that occur only after the first slice placed in
+    /// front of it. Every range is an evidence range; nothing is synthesised.
+    pub fn export_regions(&self) -> &[Region] {
+        &self.normalization.export_regions
     }
 
     /// Whether the codec's parameter sets were located, so a remux can decode.
@@ -218,6 +231,22 @@ impl RecordingReconstruction {
             "hikvision_payload_bytes".into(),
             self.payload_bytes().to_string(),
         );
+        m.insert(
+            "hikvision_annexb_normalization".into(),
+            self.normalization.summary(),
+        );
+        m.insert(
+            "hikvision_annexb_normalization_state".into(),
+            format!("{:?}", self.normalization.evidence.state),
+        );
+        // Provenance anchors: which B-tree entries placed each clip, so an export traces back
+        // to the index page and slot that referenced it.
+        let anchors: Vec<String> = self
+            .clips
+            .iter()
+            .map(|c| format!("{}<-{}", c.clip.clip_id(), c.order_basis))
+            .collect();
+        m.insert("hikvision_clip_order_basis".into(), anchors.join(" | "));
         m.insert(
             "hikvision_fully_accessible".into(),
             self.fully_accessible.to_string(),
@@ -509,12 +538,18 @@ fn build(
         ps::classify_codec(profile, &sample)
     };
 
-    if codec.codec != HikCodec::Unknown && !codec.has_parameter_sets() {
-        notes.push(format!(
-            "the reconstructed stream was identified as {} but no parameter set (SPS/PPS/VPS) was \
-             located in the sampled payload; a decoder may need parameter sets supplied separately",
-            codec.codec.label()
-        ));
+    // ── Annex-B normalization ────────────────────────────────────────────────────
+    //
+    // The concatenated PES payload is Annex-B already; normalization only checks that it
+    // opens on a start code and that parameter sets precede the first slice, and plans the
+    // export ranges accordingly. Its qualifications become reconstruction notes only when they
+    // affect decodability, so a clean stream stays a Pass.
+    let normalization = annexb::normalize(reader, profile, &payload_regions, codec.codec)?;
+    if codec.codec != HikCodec::Unknown && normalization.evidence.state != ValidationStateKind::Pass
+    {
+        for n in &normalization.notes {
+            notes.push(format!("Annex-B normalization: {n}"));
+        }
     }
 
     // ── Reported span ────────────────────────────────────────────────────────────
@@ -572,6 +607,7 @@ fn build(
         blocks,
         ordering,
         codec,
+        normalization,
         decoded_time_span,
         fully_accessible,
         notes,
@@ -640,9 +676,8 @@ fn reconstruction_evidence(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    // Reconstruction is exercised end-to-end against the synthetic volume builder in this
-    // crate's integration tests, where a real boot structure, HIKBTREE and block footer are
-    // present. Unit-testing it here would require duplicating that builder.
-}
+// Reconstruction needs a real boot structure, HIKBTREE and block footer, so it is exercised
+// against the synthetic volume builder rather than here: see `tests/integration.rs`
+// (multi-clip, multi-block, normalization, codec) and the workspace test
+// `hikvision_production_chain.rs` (engine discovery → reconstruction → artifact export).
+// Annex-B normalization has its own unit tests in `crate::annexb`.

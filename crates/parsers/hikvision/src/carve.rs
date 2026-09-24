@@ -217,6 +217,10 @@ pub struct CarveResult {
     pub bytes_scanned: u64,
     /// Whether the per-region candidate bound stopped the search.
     pub candidate_guard_reached: bool,
+    /// Windows that could not be read and were skipped, so a bad range is visible rather than
+    /// indistinguishable from a range with nothing in it.
+    #[serde(default)]
+    pub unreadable_windows: Vec<String>,
     pub evidence: ValidationState,
 }
 
@@ -258,6 +262,7 @@ pub fn carve_region(
             candidates: Vec::new(),
             bytes_scanned: 0,
             candidate_guard_reached: false,
+            unreadable_windows: Vec::new(),
             evidence: vs(
                 ValidationStateKind::Unknown,
                 format!(
@@ -274,6 +279,7 @@ pub fn carve_region(
     let mut sentinel_hits: Vec<u64> = Vec::new();
     let mut bytes_scanned = 0u64;
     let mut guard_reached = false;
+    let mut unreadable_windows: Vec<String> = Vec::new();
 
     // `search` is the next offset to look for a candidate start at. It jumps past an accepted
     // candidate, so overlapping candidates are not reported twice.
@@ -285,9 +291,12 @@ pub fn carve_region(
         let mut buf = vec![0u8; want];
         let n = match reader.read_at(window_start, &mut buf) {
             Ok(n) => n,
-            // A window that cannot be read is not a fatal error: record nothing for it and
-            // continue past, so one bad sector does not abandon the region.
-            Err(_) => {
+            // A window that cannot be read is not a fatal error: it is recorded and the scan
+            // continues past it, so one bad sector does not abandon the region.
+            Err(e) => {
+                unreadable_windows.push(format!(
+                    "{want} byte(s) at {window_start} (0x{window_start:X}) could not be read: {e}"
+                ));
                 window_start = window_start.saturating_add(window);
                 continue;
             }
@@ -390,19 +399,35 @@ pub fn carve_region(
         window_start = next.max(search.saturating_sub(overlap));
     }
 
-    let evidence = result_evidence(
+    let mut evidence = result_evidence(
         &region,
         &candidates,
         bytes_scanned,
         guard_reached,
         min_conditions,
     );
+    if !unreadable_windows.is_empty() {
+        // Part of the region was never examined, so "found nothing there" cannot be claimed
+        // for it.
+        evidence = vs(
+            ValidationStateKind::Review,
+            format!(
+                "{}. {} window(s) of the region could not be read and were not examined: {}",
+                evidence.reason,
+                unreadable_windows.len(),
+                unreadable_windows.join("; ")
+            ),
+            "hikvision_carve",
+            "region",
+        );
+    }
 
     Ok(CarveResult {
         region,
         candidates,
         bytes_scanned,
         candidate_guard_reached: guard_reached,
+        unreadable_windows,
         evidence,
     })
 }
@@ -456,29 +481,63 @@ fn evaluate(
                  be a fragment"
             ),
         ),
-        Condition::new(
-            "declared-lengths",
-            stream.rejections.is_empty(),
-            if stream.rejections.is_empty() {
-                "every declared part length inside the candidate validated".to_string()
-            } else {
-                format!(
-                    "{} declared length(s) or payload offset(s) did not validate: {}",
-                    stream.rejections.len(),
-                    stream.rejections[..stream.rejections.len().min(2)].join("; ")
-                )
-            },
-        ),
-        Condition::new(
-            "clip-boundary",
-            stream.bytes_walked == stream.region.length && stream.region.length > 0,
-            format!(
-                "the candidate's {} byte(s) are exactly accounted for by its {} part(s), so its end \
-                 is a structural boundary rather than a scan artifact",
-                stream.region.length,
-                stream.parts.len()
-            ),
-        ),
+        // The two conditions below are judged on *why* the walk stopped. In carving mode a
+        // walk always stops at its first rejection, so "was there a rejection" says nothing;
+        // what matters is whether that rejection was the framing ending cleanly or a part
+        // making a length claim the bytes do not support.
+        {
+            let (ok, detail) = match &stream.terminated_by {
+                Some(r @ ps::PartRejection::ImplausibleLength { .. })
+                | Some(r @ ps::PartRejection::PayloadOutsidePart { .. }) => (
+                    false,
+                    format!(
+                        "the part at the candidate's end declared a length or payload offset that \
+                         did not validate: {}",
+                        r.reason(end)
+                    ),
+                ),
+                _ if stream.rejections.len() > usize::from(stream.terminated_by.is_some()) => (
+                    false,
+                    format!(
+                        "{} declared length(s) or payload offset(s) did not validate: {}",
+                        stream.rejections.len(),
+                        stream.rejections[..stream.rejections.len().min(2)].join("; ")
+                    ),
+                ),
+                _ => (
+                    true,
+                    "every declared part length and payload offset inside the candidate validated"
+                        .to_string(),
+                ),
+            };
+            Condition::new("declared-lengths", ok, detail)
+        },
+        {
+            let (ok, detail) = match &stream.terminated_by {
+                None => (
+                    stream.region.length > 0,
+                    "the candidate's framing runs to the end of the carved range".to_string(),
+                ),
+                Some(ps::PartRejection::NoStartCode { .. })
+                | Some(ps::PartRejection::UnknownStreamId { .. }) => (
+                    true,
+                    format!(
+                        "the framing ends on a part boundary at {end} (0x{end:X}): the next bytes are \
+                         not a part, so the candidate's extent is structural rather than a scan \
+                         artifact"
+                    ),
+                ),
+                Some(r) => (
+                    false,
+                    format!(
+                        "the candidate ends because a part could not be completed ({}), so its true \
+                         end is not established",
+                        r.reason(end)
+                    ),
+                ),
+            };
+            Condition::new("clip-boundary", ok, detail)
+        },
         Condition::new(
             "codec-consistency",
             stream.codec.codec != HikCodec::Unknown,
@@ -833,6 +892,47 @@ mod tests {
         for c in &cand.conditions {
             assert!(!c.detail.is_empty(), "condition {} has no detail", c.name);
         }
+    }
+
+    #[test]
+    fn framing_that_ends_cleanly_before_padding_meets_both_length_and_boundary_conditions() {
+        // The carve walk always stops at the first non-part bytes. That stop is the clip's end,
+        // not a length failure, so it must not cost the candidate the declared-lengths condition.
+        let p = hikvision_profile();
+        let mut data = clip(1, &h264());
+        data.extend_from_slice(&[0xAAu8; 2048]);
+        let len = data.len() as u64;
+        let r = MemReader::new(data);
+        let out = carve_region(&r, &p, Region::new(0, len).unwrap()).unwrap();
+        let cand = &out.candidates[0];
+        for name in ["declared-lengths", "clip-boundary"] {
+            let c = cand.conditions.iter().find(|c| c.name == name).unwrap();
+            assert!(c.satisfied, "{name}: {}", c.detail);
+        }
+    }
+
+    #[test]
+    fn a_final_part_claiming_bytes_past_the_region_fails_the_boundary_condition() {
+        let p = hikvision_profile();
+        let mut data = clip(1, &h264());
+        // A video PES header that declares far more payload than the region still holds.
+        let mut cut = build::pes(0xE0, &[0x00u8; 4000], 14);
+        cut.truncate(64);
+        data.extend_from_slice(&cut);
+        let len = data.len() as u64;
+        let r = MemReader::new(data);
+        let out = carve_region(&r, &p, Region::new(0, len).unwrap()).unwrap();
+        let cand = &out.candidates[0];
+        let boundary = cand
+            .conditions
+            .iter()
+            .find(|c| c.name == "clip-boundary")
+            .unwrap();
+        assert!(
+            !boundary.satisfied,
+            "a candidate cut mid-part has no established end: {}",
+            boundary.detail
+        );
     }
 
     #[test]

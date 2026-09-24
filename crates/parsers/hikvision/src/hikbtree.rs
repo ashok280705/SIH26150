@@ -746,6 +746,13 @@ struct Pending {
     from: String,
 }
 
+/// One step of the depth-first walk. `Exit` marks the point where every page reachable from
+/// a page has been walked, so the page leaves the current path.
+enum Step {
+    Enter(Pending),
+    Exit(u64),
+}
+
 #[allow(clippy::too_many_arguments)]
 fn traverse(
     reader: &dyn EvidenceReader,
@@ -767,7 +774,22 @@ fn traverse(
     // Seed from every root pointer the header declares. Walking only the leaf root would
     // miss internal pages; walking only the pointer root would miss a tree whose leaves
     // chain directly.
-    let mut queue: Vec<Pending> = Vec::new();
+    //
+    // The walk is depth-first with an explicit stack. `on_path` holds the pages between the
+    // current root and the page being examined. That is what separates the two ways a page
+    // can be reached twice:
+    //
+    // * **convergence** — a leaf reachable from its parent's pointer *and* from its left
+    //   sibling's `nextPageOffset`, or from two header roots. Normal for a B-tree; the page is
+    //   skipped as a duplicate and completeness is unaffected;
+    // * **cycle** — a pointer back to a page still on the current path (an ancestor, or the
+    //   page itself). Following it would never terminate, and a tree that contains one is not
+    //   a complete statement.
+    //
+    // Treating every revisit as a cycle would mark ordinary multi-level trees incomplete.
+    let mut stack: Vec<Step> = Vec::new();
+    let mut on_path: BTreeSet<u64> = BTreeSet::new();
+    let mut roots: Vec<Pending> = Vec::new();
     for (name, value) in [
         ("FirstPointerPageOffset", header.first_pointer_page_offset),
         ("FirstLeafPageOffset", header.first_leaf_page_offset),
@@ -777,15 +799,24 @@ fn traverse(
         if let Some(v) = value {
             // Zero is "no such page", a legitimate structural statement, not a bad pointer.
             if v != 0 {
-                queue.push(Pending {
+                roots.push(Pending {
                     offset: v as u64,
                     from: format!("header {name}"),
                 });
             }
         }
     }
+    // Reverse so the first-declared root is walked first.
+    stack.extend(roots.into_iter().rev().map(Step::Enter));
 
-    while let Some(pending) = queue.pop() {
+    while let Some(step) = stack.pop() {
+        let pending = match step {
+            Step::Exit(offset) => {
+                on_path.remove(&offset);
+                continue;
+            }
+            Step::Enter(p) => p,
+        };
         if pages.len() >= guard {
             report.guard_reached = true;
             break;
@@ -826,16 +857,14 @@ fn traverse(
 
         // ── Cycles and duplicates ────────────────────────────────────────────────
         if !visited.insert(raw) {
-            // Reaching a visited page is a cycle when it came from a page pointer, and a
-            // benign duplicate when two roots converge. Both are recorded; only the first
-            // invalidates completeness, so they are counted separately.
-            if pending.from.starts_with("header ") {
-                report.duplicates_skipped.push(raw);
-            } else {
+            // Both are recorded; only a cycle invalidates completeness.
+            if on_path.contains(&raw) {
                 report.cycles_detected.push(format!(
-                    "{} -> {raw} (0x{raw:X}), which has already been traversed",
+                    "{} -> {raw} (0x{raw:X}), which is still on the current traversal path",
                     pending.from
                 ));
+            } else {
+                report.duplicates_skipped.push(raw);
             }
             continue;
         }
@@ -852,6 +881,11 @@ fn traverse(
         };
 
         let page = parse_page(profile, role, raw, &buf);
+
+        // The page is on the path until everything reachable from it has been walked.
+        on_path.insert(raw);
+        stack.push(Step::Exit(raw));
+        let mut children: Vec<Pending> = Vec::new();
 
         match &page.page_type {
             PageType::Unknown { discriminator } => {
@@ -881,7 +915,7 @@ fn traverse(
                             ));
                             continue;
                         }
-                        queue.push(Pending {
+                        children.push(Pending {
                             offset: v as u64,
                             from: format!("page {raw:#x} {name}"),
                         });
@@ -889,6 +923,9 @@ fn traverse(
                 }
             }
         }
+        // Reverse so `nextPageOffset` is walked before `otherPageOffset`, matching the order
+        // the pointers are listed above.
+        stack.extend(children.into_iter().rev().map(Step::Enter));
 
         pages.push(page);
     }
@@ -1699,6 +1736,89 @@ mod tests {
         assert_eq!(t.populated_entries().count(), 2);
         assert_eq!(t.integrity, TreeIntegrity::CompleteTraversal);
         assert_eq!(t.referenced_data_offsets().len(), 2);
+    }
+
+    #[test]
+    fn a_leaf_reached_from_its_parent_and_its_sibling_is_convergence_not_a_cycle() {
+        // header FirstPointer -> internal(1) { other = leaf_a, next = leaf_b }
+        // header FirstLeaf    -> leaf_a -> next = leaf_b
+        //
+        // leaf_b is reachable from the internal page *and* from leaf_a's next pointer, and
+        // leaf_a from the internal page *and* from the header's leaf root. That is how an
+        // ordinary B-tree with a linked leaf level looks, and it must stay complete.
+        let p = hikvision_profile();
+        let mut b = TreeBuilder::new(0x10000, 4);
+        let internal = b.page_offset(1);
+        let leaf_a = b.page_offset(2);
+        let leaf_b = b.page_offset(3);
+        b.header(internal, leaf_a, 3);
+        b.internal(1, leaf_a, leaf_b);
+        b.leaf(
+            2,
+            leaf_b,
+            &[populated_entry(leaf_a, 0, T_2026, T_2026 + 60, 0x4000_0000)],
+        );
+        b.leaf(
+            3,
+            0,
+            &[populated_entry(
+                leaf_b,
+                1,
+                T_2026 + 60,
+                T_2026 + 120,
+                0x5000_0000,
+            )],
+        );
+
+        let t = read_tree(
+            &b.reader(),
+            &p,
+            TreeRole::Primary,
+            Some(0x10000),
+            Some(4 * PAGE as u64),
+        )
+        .unwrap();
+
+        assert!(
+            t.traversal.cycles_detected.is_empty(),
+            "converging pointers are not a cycle: {:?}",
+            t.traversal.cycles_detected
+        );
+        assert!(!t.traversal.duplicates_skipped.is_empty());
+        assert_eq!(
+            t.leaf_pages().count(),
+            2,
+            "each page is parsed exactly once"
+        );
+        assert_eq!(t.internal_pages().count(), 1);
+        assert_eq!(t.populated_entries().count(), 2);
+        assert_eq!(t.integrity, TreeIntegrity::CompleteTraversal);
+    }
+
+    #[test]
+    fn a_pointer_back_to_an_ancestor_through_an_internal_page_is_a_cycle() {
+        // internal(1) { next = leaf(2) }, leaf(2) { next = internal(1) }: a real loop.
+        let p = hikvision_profile();
+        let mut b = TreeBuilder::new(0x10000, 3);
+        let internal = b.page_offset(1);
+        let leaf = b.page_offset(2);
+        b.header(internal, 0, 2);
+        b.internal(1, 0, leaf);
+        b.leaf(
+            2,
+            internal,
+            &[populated_entry(leaf, 0, T_2026, T_2026 + 60, 0x4000_0000)],
+        );
+        let t = read_tree(
+            &b.reader(),
+            &p,
+            TreeRole::Primary,
+            Some(0x10000),
+            Some(3 * PAGE as u64),
+        )
+        .unwrap();
+        assert!(!t.traversal.cycles_detected.is_empty());
+        assert!(!t.integrity.is_complete());
     }
 
     #[test]

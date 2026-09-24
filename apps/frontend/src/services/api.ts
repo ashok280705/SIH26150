@@ -244,15 +244,35 @@ export async function getFfmpegStatus(): Promise<FfmpegInfo> {
   return res.json();
 }
 
+export interface ReconstructPayload {
+  offset_start?: number;
+  length?: number;
+  channel?: number;
+  oem_key?: string;
+  /** Explicit ordered physical ranges, e.g. every block of an engine-discovered recording. */
+  regions?: { offset: number; length: number }[];
+  /** The recovery engine's fragment id, carried onto the artifact's provenance. */
+  fragment_id?: string;
+  /**
+   * An OEM recording id the parser can reconstruct frame-accurately (Dahua `dahua:...`,
+   * Hikvision `hikclip:...`). Preferred over ranges: the server exports the parser's own
+   * payload order rather than raw container bytes.
+   */
+  recording_chain_id?: string;
+}
+
 export async function reconstructRecording(
   evidenceId: string,
   recordingId: string,
-  payload?: { offset_start?: number; length?: number; channel?: number; oem_key?: string }
+  payload?: ReconstructPayload
 ): Promise<ReconstructResponse> {
   const cleanEvId = evidenceId.replace('evidence-', '');
-  const cleanRecId = recordingId.includes('-') && recordingId.length === 36 ? recordingId : uuidv4();
+  // The recording id is sent as given. It used to be replaced by a random UUID whenever it
+  // was not one already, which detached the exported artifact from the recording it came
+  // from. OEM ids contain ':' and similar, so it is URL-encoded instead.
+  const recPath = encodeURIComponent(recordingId);
 
-  const res = await fetch(`${API_BASE}/evidence/${cleanEvId}/recordings/${cleanRecId}/reconstruct`, {
+  const res = await fetch(`${API_BASE}/evidence/${cleanEvId}/recordings/${recPath}/reconstruct`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload || {}),
@@ -310,11 +330,4 @@ export async function listEvidenceArtifacts(evidenceId: string): Promise<Artifac
     throw new Error(err.error || 'Failed to list artifacts');
   }
   return res.json();
-}
-
-function uuidv4(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
 }

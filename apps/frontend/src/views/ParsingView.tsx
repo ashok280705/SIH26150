@@ -220,10 +220,16 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
     if (!evidence) return;
     setReconstructing(rec.id);
     try {
-      const oemKey = workflow?.parserUsed || workflow?.attributedOem || 'unified';
+      // No vendor is assumed: without an established parser the server runs attribution
+      // itself and refuses rather than guessing.
+      const oemKey = workflow?.parserUsed || workflow?.attributedOem || undefined;
+      // A recording with no parsed extent is resolved server-side from its persisted row.
+      // A guessed length would export arbitrary bytes under this recording's id.
+      const hasExtent = rec.offset_end > rec.offset_start;
       const res = await reconstructRecording(evidence.id, rec.id, {
-        offset_start: rec.offset_start,
-        length: rec.offset_end > rec.offset_start ? rec.offset_end - rec.offset_start : 131072,
+        ...(hasExtent
+          ? { offset_start: rec.offset_start, length: rec.offset_end - rec.offset_start }
+          : {}),
         channel: rec.channel_id,
         oem_key: oemKey,
       });
@@ -234,7 +240,7 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
           videoUrl: res.remux.video_url,
           recordingId: rec.id,
           channel: rec.channel_id,
-          oemName: detectedOem || 'TP-Link VIGI',
+          oemName: detectedOem || 'Unattributed',
           sourceOffset: rec.offset_start,
           sourceLength: res.elementary_stream.size_bytes,
           nativeTime: rec.start_time.recorder_native,
@@ -432,7 +438,7 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
             <div>
               <strong>No Proprietary DVR File Structure Detected</strong>
               <div className="text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>
-                This image currently does not match known Dahua (DHFS), Hikvision (HIKVISION_FS), Uniview (UBIFS), or CP Plus magic signatures at sector 0.
+                This image currently does not match the known Dahua (DHFS), Hikvision (HIKVISION@HANGZHOU boot identifier with a HIKBTREE index), Uniview (UBIFS), or CP Plus structures at their documented offsets.
                 You can run a full signature scan on the <strong>Detection</strong> page or inspect raw sectors in the <strong>Byte Inspector</strong>.
               </div>
             </div>

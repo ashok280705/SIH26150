@@ -490,6 +490,13 @@ hikvision_carve_sentinel_proximity_bytes = 65536
 # recordings.
 hikvision_recording_join_gap_seconds = 5
 
+# ── Annex-B normalization ────────────────────────────────────────────────────────
+#
+# How much of a reconstructed stream's payload prefix is scanned for the leading start code
+# and for SPS/PPS/VPS placement before export. A bounded prefix: that is where a decoder
+# needs its parameter sets, and it keeps normalization from reading a whole recording.
+hikvision_annexb_normalize_scan_bytes = 8388608   # 8 MiB
+
 # Upper bound on how many video blocks one volume read will enumerate footers for.
 # This is a loop guard against a boot structure that declares an absurd block count, not
 # a semantic limit: the real bound is how many blocks the acquired image can hold, and

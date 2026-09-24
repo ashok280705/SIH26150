@@ -150,11 +150,15 @@ async fn test_video_reconstruction_pipeline_and_streaming() {
 
     let rec_id = "rec-001";
 
-    // 5. Trigger Video Reconstruction
+    // 5. Trigger Video Reconstruction. The OEM is named explicitly, as it was for parsing:
+    // the export path no longer falls back to a default vendor when attribution is not
+    // established, so the request states which parser located the recording.
+    let reconstruct_payload = serde_json::json!({ "oem_key": "tplink" });
     let req = Request::builder()
         .method("POST")
         .uri(format!("/api/evidence/{evidence_id}/recordings/{rec_id}/reconstruct"))
-        .body(Body::empty())
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&reconstruct_payload).unwrap()))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
