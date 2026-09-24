@@ -42,7 +42,10 @@ impl ConfidenceEngine {
         config: &ConfidenceConfig,
     ) -> Result<ClassifiedDetectionResult, ForensicError> {
         if outputs.is_empty() {
-            return Err(ForensicError::corrupt("confidence_engine", "no detector outputs provided"));
+            return Err(ForensicError::corrupt(
+                "confidence_engine",
+                "no detector outputs provided",
+            ));
         }
 
         // 1. Compute weighted scores for each detector output
@@ -70,13 +73,19 @@ impl ConfidenceEngine {
                 total_quality += q_factor;
                 quality_count += 1;
 
-                if item.is_exclusive && item.rule_match_status == forensic_core::RuleMatchStatus::Match {
+                if item.is_exclusive
+                    && item.rule_match_status == forensic_core::RuleMatchStatus::Match
+                {
                     has_exclusive = true;
                 }
             }
 
             let confidence = (raw_score / max_possible_score).clamp(0.0, 1.0);
-            let average_quality = if quality_count > 0 { total_quality / quality_count as f64 } else { 0.0 };
+            let average_quality = if quality_count > 0 {
+                total_quality / quality_count as f64
+            } else {
+                0.0
+            };
             let is_insufficient = out.status == detection::DetectionStatus::Insufficient;
 
             scores.push(CandidateScore {
@@ -91,7 +100,11 @@ impl ConfidenceEngine {
         }
 
         // 2. Sort candidates by confidence descending
-        scores.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        scores.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let top = &scores[0];
         let second = scores.get(1);
@@ -105,38 +118,73 @@ impl ConfidenceEngine {
         let top_output = &outputs[top.output_index];
 
         // 3. Strict Decision Order (Req 10.11)
-        let (classification, attribution_status, explanation, val_state) = if top.is_insufficient || top_output.evidence.is_empty() {
+        let (classification, attribution_status, explanation, val_state) = if top.is_insufficient
+            || top_output.evidence.is_empty()
+        {
             // (1) Structurally insufficient evidence OR lone magic -> Insufficient
             let expl = format!("Structural evidence for '{}' is insufficient (lone magic or incomplete indicators)", top.oem_key);
-            let vs = ValidationState::review(&expl, "detection_classification", &top_output.oem_key)
-                .map_err(|e| ForensicError::corrupt("classify", format!("{e}")))?;
-            (Classification::Insufficient, AttributionStatus::Unknown, expl, vs)
-
+            let vs =
+                ValidationState::review(&expl, "detection_classification", &top_output.oem_key)
+                    .map_err(|e| ForensicError::corrupt("classify", format!("{e}")))?;
+            (
+                Classification::Insufficient,
+                AttributionStatus::Unknown,
+                expl,
+                vs,
+            )
         } else if top.confidence < config.min_confidence {
             // (2) No candidate reaches threshold -> Unknown
-            let expl = format!("Top candidate '{}' confidence ({:.2}) below threshold ({:.2})", top.oem_key, top.confidence, config.min_confidence);
+            let expl = format!(
+                "Top candidate '{}' confidence ({:.2}) below threshold ({:.2})",
+                top.oem_key, top.confidence, config.min_confidence
+            );
             let vs = ValidationState::pass(&expl, "detection_classification", "evidence_source")
                 .map_err(|e| ForensicError::corrupt("classify", format!("{e}")))?;
-            (Classification::Unknown, AttributionStatus::Unknown, expl, vs)
+            (
+                Classification::Unknown,
+                AttributionStatus::Unknown,
+                expl,
+                vs,
+            )
         } else if second.is_some() && margin < config.min_margin {
             // (3) Top-two margin below minimum -> Ambiguous
             let sec_name = &second.unwrap().oem_key;
             let expl = format!("Ambiguous detection between '{}' ({:.2}) and '{}' ({:.2}); margin ({:.2}) < min_margin ({:.2})", top.oem_key, top.confidence, sec_name, second.unwrap().confidence, margin, config.min_margin);
-            let vs = ValidationState::review(&expl, "detection_classification", &top_output.oem_key)
-                .map_err(|e| ForensicError::corrupt("classify", format!("{e}")))?;
-            (Classification::Ambiguous, AttributionStatus::Unknown, expl, vs)
-        } else if top.confidence >= config.min_confidence && margin >= config.min_margin && top.average_quality >= config.min_quality && top.has_exclusive_evidence {
+            let vs =
+                ValidationState::review(&expl, "detection_classification", &top_output.oem_key)
+                    .map_err(|e| ForensicError::corrupt("classify", format!("{e}")))?;
+            (
+                Classification::Ambiguous,
+                AttributionStatus::Unknown,
+                expl,
+                vs,
+            )
+        } else if top.confidence >= config.min_confidence
+            && margin >= config.min_margin
+            && top.average_quality >= config.min_quality
+            && top.has_exclusive_evidence
+        {
             // (4) Threshold + margin + quality satisfied AND OEM_Exclusive_Evidence present -> Confirmed
             let expl = format!("Confirmed attribution for '{}' (confidence: {:.2}, margin: {:.2}, exclusive evidence present)", top.oem_key, top.confidence, margin);
             let vs = ValidationState::pass(&expl, "detection_classification", &top_output.oem_key)
                 .map_err(|e| ForensicError::corrupt("classify", format!("{e}")))?;
-            (Classification::Confirmed, AttributionStatus::Confirmed, expl, vs)
+            (
+                Classification::Confirmed,
+                AttributionStatus::Confirmed,
+                expl,
+                vs,
+            )
         } else {
             // (5) Otherwise -> CompatibleCandidate (covers CP Plus / UBS non-exclusive cases — Req 2.4)
             let expl = format!("Compatible candidate attribution for '{}' (confidence: {:.2}, non-exclusive storage structures)", top.oem_key, top.confidence);
             let vs = ValidationState::pass(&expl, "detection_classification", &top_output.oem_key)
                 .map_err(|e| ForensicError::corrupt("classify", format!("{e}")))?;
-            (Classification::CompatibleCandidate, AttributionStatus::CompatibleCandidate, expl, vs)
+            (
+                Classification::CompatibleCandidate,
+                AttributionStatus::CompatibleCandidate,
+                expl,
+                vs,
+            )
         };
 
         let top_result = ClassifiedDetectionResult {
@@ -197,14 +245,23 @@ impl ConfidenceEngine {
             }
 
             let confidence = (raw_score / max_possible_score).clamp(0.0, 1.0);
-            let average_quality = if quality_count > 0 { total_quality / quality_count as f64 } else { 0.0 };
+            let average_quality = if quality_count > 0 {
+                total_quality / quality_count as f64
+            } else {
+                0.0
+            };
 
             let val_state = ValidationState::new(
                 forensic_core::ValidationStateKind::Unknown,
-                if out.evidence.is_empty() { "No matching signatures found" } else { "Candidate score evaluated" },
+                if out.evidence.is_empty() {
+                    "No matching signatures found"
+                } else {
+                    "Candidate score evaluated"
+                },
                 "detection_classification",
                 &out.oem_key,
-            ).unwrap();
+            )
+            .unwrap();
 
             results.push(ClassifiedDetectionResult {
                 detector_output: out.clone(),
@@ -214,13 +271,23 @@ impl ConfidenceEngine {
                 second_candidate: None,
                 margin: 0.0,
                 evidence_quality: average_quality,
-                classification: if out.evidence.is_empty() { Classification::Unknown } else { Classification::Insufficient },
+                classification: if out.evidence.is_empty() {
+                    Classification::Unknown
+                } else {
+                    Classification::Insufficient
+                },
                 attribution_status: AttributionStatus::Unknown,
                 validation_state: val_state,
                 explanation: if out.evidence.is_empty() {
-                    format!("No matching structural signatures detected for '{}'", out.oem_key)
+                    format!(
+                        "No matching structural signatures detected for '{}'",
+                        out.oem_key
+                    )
                 } else {
-                    format!("Candidate evaluated with confidence {:.2}%", confidence * 100.0)
+                    format!(
+                        "Candidate evaluated with confidence {:.2}%",
+                        confidence * 100.0
+                    )
                 },
                 config_version: config.config_version.clone(),
                 config_hash: config.config_hash.clone(),
@@ -234,7 +301,9 @@ impl ConfidenceEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forensic_core::{EvidenceId, EvidenceItem, EvidenceStatus, Hash, OemProfile, RuleMatchStatus};
+    use forensic_core::{
+        EvidenceId, EvidenceItem, EvidenceStatus, Hash, OemProfile, RuleMatchStatus,
+    };
 
     fn dummy_item(name: &str, score: f64, is_exclusive: bool) -> EvidenceItem {
         EvidenceItem::new(
@@ -256,7 +325,8 @@ mod tests {
 
     #[test]
     fn decision_order_confirmed_with_exclusive() {
-        let dahua_profile = OemProfile::from_toml_str(r#"
+        let dahua_profile = OemProfile::from_toml_str(
+            r#"
 
 profile_id = "dahua-1"
 profile_version = "1.0"
@@ -272,7 +342,9 @@ weight = 0.85
 is_exclusive = true
 [confidence_weights]
 max_possible_score = 1.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let registry = ProfileRegistry::from_profiles(vec![dahua_profile]);
         let config = ConfidenceConfig::provisional_default();
@@ -302,7 +374,6 @@ max_possible_score = 1.0
         let config = ConfidenceConfig::provisional_default();
 
         let output = DetectorOutput {
-
             oem_key: "cpplus_ubs".into(),
             storage_family: "CPPLUS_UBS".into(),
             status: detection::DetectionStatus::Confirmed,
@@ -317,7 +388,13 @@ max_possible_score = 1.0
         };
 
         let classified = ConfidenceEngine::classify(&[output], &registry, &config).unwrap();
-        assert_eq!(classified.classification, Classification::CompatibleCandidate);
-        assert_eq!(classified.attribution_status, AttributionStatus::CompatibleCandidate);
+        assert_eq!(
+            classified.classification,
+            Classification::CompatibleCandidate
+        );
+        assert_eq!(
+            classified.attribution_status,
+            AttributionStatus::CompatibleCandidate
+        );
     }
 }

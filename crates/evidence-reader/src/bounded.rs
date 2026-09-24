@@ -4,8 +4,8 @@
 //! Automatically rejects any out-of-bounds reads beyond the bounded region and maps
 //! local window offsets back to absolute evidence offsets to preserve forensic provenance.
 
-use forensic_core::ForensicError;
 use crate::reader::{EvidenceReader, SourceKind};
+use forensic_core::ForensicError;
 
 /// A bounded window into an underlying `EvidenceReader`.
 pub struct BoundedReader<'a> {
@@ -113,7 +113,12 @@ mod tests {
         }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
             if offset >= self.len() {
-                return Err(ForensicError::out_of_bounds("MockReader read past end", offset, buf.len() as u64, self.len()));
+                return Err(ForensicError::out_of_bounds(
+                    "MockReader read past end",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let avail = (self.len() - offset) as usize;
             let to_read = buf.len().min(avail);

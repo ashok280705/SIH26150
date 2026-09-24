@@ -1,13 +1,14 @@
+use evidence_reader::raw::RawReader;
 use forensic_core::{
-    Hash, OemProfile, SignatureRule, OffsetConstraint, EvidenceStatus, ConfidenceWeights, ValidationStateKind
+    ConfidenceWeights, EvidenceStatus, Hash, OemProfile, OffsetConstraint, SignatureRule,
+    ValidationStateKind,
 };
+use forensic_tests::fixtures::{generate_fixture, FixtureShape, OemShape};
 use parser_cpplus_ubs::CpPlusUbsParser;
 use parsers_core::Parser;
-use forensic_tests::fixtures::{generate_fixture, OemShape, FixtureShape};
-use evidence_reader::raw::RawReader;
+use std::collections::HashMap;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use std::collections::HashMap;
 
 fn mock_cpplus_profile() -> OemProfile {
     let mut layout = HashMap::new();
@@ -26,17 +27,15 @@ fn mock_cpplus_profile() -> OemProfile {
             storage_variants: vec!["single_disk".to_string()],
             reference: Some("CP Plus test".to_string()),
         },
-        signatures: vec![
-            SignatureRule {
-                name: "ubs_partition_marker".to_string(),
-                pattern_hex: "55 42 53 5F".to_string(), // UBS_
-                evidence_status: EvidenceStatus::Provisional,
-                weight: 0.70,
-                is_exclusive: false,
-                explanation: "UBS magic".to_string(),
-                offset_constraints: vec![OffsetConstraint::Exact { offset: 0 }],
-            }
-        ],
+        signatures: vec![SignatureRule {
+            name: "ubs_partition_marker".to_string(),
+            pattern_hex: "55 42 53 5F".to_string(), // UBS_
+            evidence_status: EvidenceStatus::Provisional,
+            weight: 0.70,
+            is_exclusive: false,
+            explanation: "UBS magic".to_string(),
+            offset_constraints: vec![OffsetConstraint::Exact { offset: 0 }],
+        }],
         validation_rules: vec![],
         layout,
         confidence_weights: ConfidenceWeights {
@@ -60,26 +59,38 @@ fn test_cpplus_parser_normal_fixture() {
     let parser = CpPlusUbsParser::default();
     let (reader, _file) = fixture_reader(FixtureShape::Normal);
     let profile = mock_cpplus_profile();
-    
+
     // Parse filesystem
     let runs = parser.parse_filesystem(&reader, &profile).unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].operation_name, "parse_filesystem");
-    
+
     assert_eq!(runs[0].validation_state.state, ValidationStateKind::Pass);
-    assert!(runs[0].validation_state.reason.contains("UBS_ Superblock Found"));
-    
+    assert!(runs[0]
+        .validation_state
+        .reason
+        .contains("UBS_ Superblock Found"));
+
     // Parse metadata
     let metadata_runs = parser.parse_metadata(&reader, &profile).unwrap();
     assert_eq!(metadata_runs.len(), 1);
-    assert_eq!(metadata_runs[0].validation_state.state, ValidationStateKind::Unknown); // Handled gracefully
-    
+    assert_eq!(
+        metadata_runs[0].validation_state.state,
+        ValidationStateKind::Unknown
+    ); // Handled gracefully
+
     // Parse recordings
     let (_recordings, rec_runs) = parser.parse_recordings(&reader, &profile).unwrap();
     assert_eq!(rec_runs.len(), 1);
-    
-    assert_eq!(rec_runs[0].validation_state.state, ValidationStateKind::Review);
-    assert!(rec_runs[0].validation_state.reason.contains("Mock CPPLUS segment parse complete"));
+
+    assert_eq!(
+        rec_runs[0].validation_state.state,
+        ValidationStateKind::Review
+    );
+    assert!(rec_runs[0]
+        .validation_state
+        .reason
+        .contains("Mock CPPLUS segment parse complete"));
 }
 
 #[test]
@@ -87,10 +98,10 @@ fn test_cpplus_parser_adversarial_wrong_offset() {
     let parser = CpPlusUbsParser::default();
     let (reader, _file) = fixture_reader(FixtureShape::WrongOffset);
     let profile = mock_cpplus_profile();
-    
+
     let runs = parser.parse_filesystem(&reader, &profile).unwrap();
     assert_eq!(runs.len(), 1);
-    
+
     assert_eq!(runs[0].validation_state.state, ValidationStateKind::Review);
     assert!(runs[0].validation_state.reason.contains("Magic mismatch"));
 }

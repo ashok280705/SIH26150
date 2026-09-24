@@ -9,12 +9,10 @@
 
 use chrono::Utc;
 use forensic_core::{
-    chain_of_custody::CustodyAction,
-    CapabilityStages, CaseId, EvidenceId, ExaminerId, Hash,
+    chain_of_custody::CustodyAction, CapabilityStages, CaseId, EvidenceId, ExaminerId, Hash,
 };
 use reporting::{
-    model::*,
-    CsvReportExporter, FormattedReportExporter, JsonReportExporter, ReportAuditor,
+    model::*, CsvReportExporter, FormattedReportExporter, JsonReportExporter, ReportAuditor,
 };
 
 fn create_full_test_report() -> ForensicReport {
@@ -169,10 +167,20 @@ fn test_full_report_json_export_and_hashing() {
     let hash = ReportAuditor::hash_report(json_output.as_bytes());
     assert_eq!(hash.algorithm, forensic_core::HashAlgorithm::Sha256);
 
-    let artifact = ReportAuditor::create_report_artifact(report.evidence_id, "/reports/REP-2026-001.json", hash.clone(), "JSON");
+    let artifact = ReportAuditor::create_report_artifact(
+        report.evidence_id,
+        "/reports/REP-2026-001.json",
+        hash.clone(),
+        "JSON",
+    );
     assert_eq!(artifact.provenance.output_hash, hash);
 
-    let custody_event = ReportAuditor::create_custody_event(report.case_id, report.examiner_id.clone(), hash, "JSON");
+    let custody_event = ReportAuditor::create_custody_event(
+        report.case_id,
+        report.examiner_id.clone(),
+        hash,
+        "JSON",
+    );
     assert_eq!(custody_event.action, CustodyAction::Export);
 }
 
@@ -188,7 +196,8 @@ fn test_full_report_csv_export() {
     assert!(recov_csv.contains("cand-002,2,L2,Orphaned,Recoverable"));
 
     let time_csv = CsvReportExporter::export_timeline_csv(&report);
-    assert!(time_csv.contains("1,2026-09-01T12:00:00Z,2026-09-01 12:00:00,\"Recording Start (Camera 1)\""));
+    assert!(time_csv
+        .contains("1,2026-09-01T12:00:00Z,2026-09-01 12:00:00,\"Recording Start (Camera 1)\""));
 }
 
 #[test]

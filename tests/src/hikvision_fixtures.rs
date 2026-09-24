@@ -604,8 +604,8 @@ pub fn build_hikvision_image(spec: &HikvisionImageSpec) -> HikvisionImage {
             );
             write_at(&mut bytes, cursor, &clip_bytes);
 
-            let slot_offset = footer_offset + BLOCK_INDEX_CLIP_BASE
-                + slot_index as u64 * BLOCK_INDEX_CLIP_STRIDE;
+            let slot_offset =
+                footer_offset + BLOCK_INDEX_CLIP_BASE + slot_index as u64 * BLOCK_INDEX_CLIP_STRIDE;
             clip_layouts.push(HikClipLayout {
                 slot_index,
                 slot_offset,
@@ -620,10 +620,7 @@ pub fn build_hikvision_image(spec: &HikvisionImageSpec) -> HikvisionImage {
                 },
                 end_time: clip_spec.end_time,
                 codec: clip_spec.codec,
-                expected_clip_id: format!(
-                    "hikclip:b{block_number}:s{slot_index}:{:#x}",
-                    cursor
-                ),
+                expected_clip_id: format!("hikclip:b{block_number}:s{slot_index}:{:#x}", cursor),
             });
             // Separate clips so a carver's candidates are unambiguous.
             cursor += clip_bytes.len() as u64 + 512;
@@ -698,7 +695,10 @@ pub fn build_hikvision_image(spec: &HikvisionImageSpec) -> HikvisionImage {
     // ── 5. Boot structure ────────────────────────────────────────────────────────
     {
         let boot = spec.boot_offset as usize;
-        let identifier = spec.identifier.clone().unwrap_or_else(|| IDENTIFIER.to_vec());
+        let identifier = spec
+            .identifier
+            .clone()
+            .unwrap_or_else(|| IDENTIFIER.to_vec());
         let end = (boot + 16 + identifier.len()).min(bytes.len());
         bytes[boot + 16..end].copy_from_slice(&identifier[..end - (boot + 16)]);
 
@@ -809,8 +809,18 @@ fn write_footer(
     put_u16(header, 20, declared_count);
 
     // Epoch span across the block's clips.
-    let epoch_start = spec.clips.iter().map(|c| c.start_time.max(c.time_a)).min().unwrap_or(T_BASE);
-    let epoch_end = spec.clips.iter().map(|c| c.end_time).max().unwrap_or(T_BASE);
+    let epoch_start = spec
+        .clips
+        .iter()
+        .map(|c| c.start_time.max(c.time_a))
+        .min()
+        .unwrap_or(T_BASE);
+    let epoch_end = spec
+        .clips
+        .iter()
+        .map(|c| c.end_time)
+        .max()
+        .unwrap_or(T_BASE);
     put_u32(header, 32, epoch_start);
     put_u32(header, 36, epoch_end);
 
@@ -850,38 +860,39 @@ fn write_footer(
 }
 
 /// Write a HIKBTREE: header page, then the spec's pages.
-fn write_tree(
-    bytes: &mut [u8],
-    tree_offset: u64,
-    spec: &HikTreeSpec,
-    blocks: &[HikBlockLayout],
-) {
+fn write_tree(bytes: &mut [u8], tree_offset: u64, spec: &HikTreeSpec, blocks: &[HikBlockLayout]) {
     let page_at = |index: usize| tree_offset + index as u64 * BTREE_PAGE_SIZE;
 
     // ── Header page ──────────────────────────────────────────────────────────────
     {
         let h = tree_offset as usize;
-        let magic = spec.magic.clone().unwrap_or_else(|| HIKBTREE_MAGIC.to_vec());
+        let magic = spec
+            .magic
+            .clone()
+            .unwrap_or_else(|| HIKBTREE_MAGIC.to_vec());
         write_at(bytes, tree_offset, &magic);
         let header = &mut bytes[h..h + BTREE_PAGE_SIZE as usize];
         put_i32(header, 60, spec.tree_timestamp);
         put_i64(
             header,
             64,
-            spec.first_pointer_page_index.map(|i| page_at(i) as i64).unwrap_or(0),
+            spec.first_pointer_page_index
+                .map(|i| page_at(i) as i64)
+                .unwrap_or(0),
         );
         put_i64(header, 72, 0);
         put_i64(header, 80, 0);
         put_i64(
             header,
             88,
-            spec.first_leaf_page_index.map(|i| page_at(i) as i64).unwrap_or(0),
+            spec.first_leaf_page_index
+                .map(|i| page_at(i) as i64)
+                .unwrap_or(0),
         );
         put_i32(
             header,
             96,
-            spec.declared_page_count
-                .unwrap_or(spec.pages.len() as i32),
+            spec.declared_page_count.unwrap_or(spec.pages.len() as i32),
         );
     }
 
@@ -1200,7 +1211,8 @@ mod tests {
         let block = img.block(0).unwrap();
         let clip = &block.clips[0];
         let slot = &img.bytes[clip.slot_offset as usize..][..512];
-        let read_u32 = |at: usize| u32::from_le_bytes([slot[at], slot[at + 1], slot[at + 2], slot[at + 3]]);
+        let read_u32 =
+            |at: usize| u32::from_le_bytes([slot[at], slot[at + 1], slot[at + 2], slot[at + 3]]);
         assert_eq!(
             read_u32(72) as u64,
             clip.clip_offset - block.offset,
@@ -1220,13 +1232,11 @@ mod tests {
         let tree = img.primary_tree_offset.unwrap();
         let entry_at = (tree + BTREE_PAGE_SIZE) as usize + BTREE_LEAF_ENTRIES_OFFSET;
         let e = &img.bytes[entry_at..entry_at + BTREE_ENTRY_SIZE];
-        let data_offset = i64::from_le_bytes([
-            e[32], e[33], e[34], e[35], e[36], e[37], e[38], e[39],
-        ]);
+        let data_offset =
+            i64::from_le_bytes([e[32], e[33], e[34], e[35], e[36], e[37], e[38], e[39]]);
         assert_eq!(data_offset as u64, clip.clip_offset);
         // The sentinel must be the populated value.
-        let sentinel =
-            u64::from_le_bytes([e[8], e[9], e[10], e[11], e[12], e[13], e[14], e[15]]);
+        let sentinel = u64::from_le_bytes([e[8], e[9], e[10], e[11], e[12], e[13], e[14], e[15]]);
         assert_eq!(sentinel, 0);
     }
 

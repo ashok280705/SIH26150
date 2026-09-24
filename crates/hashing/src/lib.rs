@@ -10,12 +10,14 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::Instant;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::Instant;
 
-use evidence_reader::{CancellationToken, EvidenceReader, ProgressCallback, RegionScanner, ScanOptions};
+use evidence_reader::{
+    CancellationToken, EvidenceReader, ProgressCallback, RegionScanner, ScanOptions,
+};
 use forensic_core::{ArtifactId, ForensicError, Hash, HashAlgorithm, Region, ValidationState};
 
 /// Detailed record of a computed cryptographic hash.
@@ -81,7 +83,10 @@ impl HashingService {
 
         if !report.is_complete() {
             let val_state = ValidationState::review(
-                format!("hashing terminated prematurely: {}", report.termination_reason),
+                format!(
+                    "hashing terminated prematurely: {}",
+                    report.termination_reason
+                ),
                 "streaming_sha256",
                 reader.source_path(),
             )
@@ -102,7 +107,10 @@ impl HashingService {
         let hash = Hash::sha256(hash_bytes);
 
         let val_state = ValidationState::pass(
-            format!("streaming SHA-256 completed ({} bytes)", report.searched_bytes),
+            format!(
+                "streaming SHA-256 completed ({} bytes)",
+                report.searched_bytes
+            ),
             "streaming_sha256",
             reader.source_path(),
         )
@@ -128,7 +136,10 @@ impl HashingService {
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
         let status = ValidationState::pass(
-            format!("SHA-256 computed for in-memory buffer ({} bytes)", bytes.len()),
+            format!(
+                "SHA-256 computed for in-memory buffer ({} bytes)",
+                bytes.len()
+            ),
             "hash_bytes",
             subject_name,
         )
@@ -160,7 +171,12 @@ mod tests {
         }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
             if offset >= self.len() {
-                return Err(ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.len()));
+                return Err(ForensicError::out_of_bounds(
+                    "test",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let start = offset as usize;
             let available = (self.data.len() - start).min(buf.len());
@@ -214,7 +230,10 @@ mod tests {
         let base_record = HashingService::hash_reader(&reader, windows[0], None, None).unwrap();
         let in_mem_record = HashingService::hash_bytes(&data, "mem_test").unwrap();
 
-        assert_eq!(base_record.value, in_mem_record.value, "Streaming and in-memory must match exactly");
+        assert_eq!(
+            base_record.value, in_mem_record.value,
+            "Streaming and in-memory must match exactly"
+        );
 
         for &w in &windows[1..] {
             let record = HashingService::hash_reader(&reader, w, None, None).unwrap();
@@ -245,10 +264,22 @@ mod tests {
         let hash_c = HashingService::hash_bytes(&file_c, "file_c").unwrap().value;
         let hash_d = HashingService::hash_bytes(&file_d, "file_d").unwrap().value;
 
-        assert_ne!(hash_a, hash_b, "Flipping a single bit at the end must produce a different hash");
-        assert_ne!(hash_a, hash_c, "Flipping a single bit at the start must produce a different hash");
-        assert_ne!(hash_b, hash_c, "Different bit modifications must produce distinct hashes");
-        assert_ne!(hash_a, hash_d, "Different length files must produce distinct hashes");
+        assert_ne!(
+            hash_a, hash_b,
+            "Flipping a single bit at the end must produce a different hash"
+        );
+        assert_ne!(
+            hash_a, hash_c,
+            "Flipping a single bit at the start must produce a different hash"
+        );
+        assert_ne!(
+            hash_b, hash_c,
+            "Different bit modifications must produce distinct hashes"
+        );
+        assert_ne!(
+            hash_a, hash_d,
+            "Different length files must produce distinct hashes"
+        );
     }
 
     #[test]

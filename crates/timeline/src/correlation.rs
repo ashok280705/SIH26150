@@ -9,7 +9,7 @@
 //! - Deterministic canonical tie-breaking prevents arrival-order variance (Req 20.1)
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use forensic_core::{TimelineEvent, TimeZoneState, ValidationState, ValidationStateKind};
+use forensic_core::{TimeZoneState, TimelineEvent, ValidationState, ValidationStateKind};
 use serde::{Deserialize, Serialize};
 
 /// A correlated cluster of events across multiple cameras occurring in close temporal proximity.
@@ -62,7 +62,8 @@ impl CrossCameraCorrelator {
         sorted_events.sort_by(|a, b| {
             let a_norm = a.time.normalized.as_ref().map(|t| &t.iso_8601);
             let b_norm = b.time.normalized.as_ref().map(|t| &t.iso_8601);
-            a_norm.cmp(&b_norm)
+            a_norm
+                .cmp(&b_norm)
                 .then_with(|| a.channel.cmp(&b.channel))
                 .then_with(|| {
                     let a_off = a.source_offsets.first().map(|r| r.offset);
@@ -79,10 +80,16 @@ impl CrossCameraCorrelator {
         let mut current_has_uncertainty = false;
 
         for event in sorted_events {
-            let parsed_time = event.time.normalized.as_ref()
+            let parsed_time = event
+                .time
+                .normalized
+                .as_ref()
                 .and_then(|n| Self::parse_timestamp_flexible(&n.iso_8601))
                 .or_else(|| {
-                    event.time.recorder_native.as_ref()
+                    event
+                        .time
+                        .recorder_native
+                        .as_ref()
                         .and_then(|n| Self::parse_timestamp_flexible(&n.iso_8601))
                 });
 
@@ -169,10 +176,14 @@ impl CrossCameraCorrelator {
         } else {
             ValidationState::new(
                 ValidationStateKind::Pass,
-                format!("Multi-camera correlation confirmed across {} channels", channels.len()),
+                format!(
+                    "Multi-camera correlation confirmed across {} channels",
+                    channels.len()
+                ),
                 "cross_camera_correlation",
                 format!("Group-{}", group_idx),
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         CorrelatedEventGroup {
@@ -190,9 +201,16 @@ impl CrossCameraCorrelator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forensic_core::{Hash, NormalizedTime, ProfileId, Provenance, RawTimestamp, RecorderNativeTime, Region};
+    use forensic_core::{
+        Hash, NormalizedTime, ProfileId, Provenance, RawTimestamp, RecorderNativeTime, Region,
+    };
 
-    fn make_test_event(channel: u32, native_time: &str, norm_time: &str, tz: TimeZoneState) -> TimelineEvent {
+    fn make_test_event(
+        channel: u32,
+        native_time: &str,
+        norm_time: &str,
+        tz: TimeZoneState,
+    ) -> TimelineEvent {
         let raw_prov = Provenance::new(
             forensic_core::EvidenceId::new(),
             Hash::sha256(vec![0; 32]),
@@ -204,9 +222,18 @@ mod tests {
         );
 
         let time = forensic_core::TimeEvidence {
-            raw: RawTimestamp { value: 123, format: "BCD".into(), source: raw_prov },
-            recorder_native: Some(RecorderNativeTime { iso_8601: native_time.into() }),
-            normalized: Some(NormalizedTime { iso_8601: norm_time.into(), method: "UTC offset".into() }),
+            raw: RawTimestamp {
+                value: 123,
+                format: "BCD".into(),
+                source: raw_prov,
+            },
+            recorder_native: Some(RecorderNativeTime {
+                iso_8601: native_time.into(),
+            }),
+            normalized: Some(NormalizedTime {
+                iso_8601: norm_time.into(),
+                method: "UTC offset".into(),
+            }),
             reference: None,
             timezone: tz,
             correction: None,
@@ -216,7 +243,10 @@ mod tests {
             channel,
             time,
             description: format!("Motion on Camera {}", channel),
-            source_offsets: vec![Region { offset: 1024 * channel as u64, length: 512 }],
+            source_offsets: vec![Region {
+                offset: 1024 * channel as u64,
+                length: 512,
+            }],
             parser_id: "test_parser".into(),
             parser_version: "1.0.0".into(),
             profile_id: ProfileId("test-prof".into()),
@@ -226,8 +256,18 @@ mod tests {
 
     #[test]
     fn test_cross_camera_correlation_links_multi_channel_events() {
-        let e1 = make_test_event(1, "2026-09-01T12:00:00Z", "2026-09-01T12:00:00Z", TimeZoneState::Known("UTC".into()));
-        let e2 = make_test_event(2, "2026-09-01T12:00:15Z", "2026-09-01T12:00:15Z", TimeZoneState::Known("UTC".into()));
+        let e1 = make_test_event(
+            1,
+            "2026-09-01T12:00:00Z",
+            "2026-09-01T12:00:00Z",
+            TimeZoneState::Known("UTC".into()),
+        );
+        let e2 = make_test_event(
+            2,
+            "2026-09-01T12:00:15Z",
+            "2026-09-01T12:00:15Z",
+            TimeZoneState::Known("UTC".into()),
+        );
 
         let groups = CrossCameraCorrelator::correlate_events(&[e1, e2], 30);
         assert_eq!(groups.len(), 1);
@@ -238,8 +278,18 @@ mod tests {
 
     #[test]
     fn test_unknown_timezone_flags_correlation_uncertainty() {
-        let e1 = make_test_event(1, "2026-09-01T12:00:00Z", "2026-09-01T12:00:00Z", TimeZoneState::Known("UTC".into()));
-        let e2 = make_test_event(2, "2026-09-01T12:00:10", "2026-09-01T12:00:10", TimeZoneState::Unknown);
+        let e1 = make_test_event(
+            1,
+            "2026-09-01T12:00:00Z",
+            "2026-09-01T12:00:00Z",
+            TimeZoneState::Known("UTC".into()),
+        );
+        let e2 = make_test_event(
+            2,
+            "2026-09-01T12:00:10",
+            "2026-09-01T12:00:10",
+            TimeZoneState::Unknown,
+        );
 
         let groups = CrossCameraCorrelator::correlate_events(&[e1, e2], 30);
         assert_eq!(groups.len(), 1);
@@ -249,8 +299,12 @@ mod tests {
 
     #[test]
     fn test_space_delimited_timestamp_parsed_without_panic() {
-        let (dt, explicit) = CrossCameraCorrelator::parse_timestamp_flexible("2026-09-01 12:00:00").unwrap();
-        assert_eq!(dt.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-09-01 12:00:00");
+        let (dt, explicit) =
+            CrossCameraCorrelator::parse_timestamp_flexible("2026-09-01 12:00:00").unwrap();
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-09-01 12:00:00"
+        );
         assert!(!explicit, "Space-delimited timestamp lacks explicit offset");
     }
 }

@@ -3,9 +3,9 @@
 //! Tests the Axum HTTP REST endpoints for case creation, evidence registration,
 //! source safety inspection, custody retrieval, and bounded byte reads.
 
-use std::fs;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use std::fs;
 use tower::ServiceExt;
 
 use forensic_api::{app_router, AppState};
@@ -13,7 +13,9 @@ use forensic_tests::fixtures::{generate_fixture, FixtureShape, OemShape};
 
 #[tokio::test]
 async fn test_api_case_creation_and_evidence_flow() {
-    let pool = forensic_api::db::connection::init_pool("sqlite::memory:").await.unwrap();
+    let pool = forensic_api::db::connection::init_pool("sqlite::memory:")
+        .await
+        .unwrap();
     let state = AppState::new(pool);
     let app = app_router(state);
 
@@ -34,7 +36,9 @@ async fn test_api_case_creation_and_evidence_flow() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let case_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     let case_id = case_json["id"].as_str().unwrap().replace("case-", "");
 
@@ -71,21 +75,30 @@ async fn test_api_case_creation_and_evidence_flow() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let ev_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-    let evidence_id = ev_res["evidence"]["id"].as_str().unwrap().replace("evidence-", "");
+    let evidence_id = ev_res["evidence"]["id"]
+        .as_str()
+        .unwrap()
+        .replace("evidence-", "");
 
     // 4. Read Evidence Bytes through API
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/evidence/{evidence_id}/bytes?offset=0&length=16"))
+        .uri(format!(
+            "/api/evidence/{evidence_id}/bytes?offset=0&length=16"
+        ))
         .body(Body::empty())
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let bytes_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     let hex_val = bytes_res["hex"].as_str().unwrap();
     assert_eq!(hex_val, hex::encode(&fixture.bytes[..16]));

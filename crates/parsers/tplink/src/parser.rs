@@ -1,13 +1,13 @@
 //! # TplinkParser implementation
 
-use forensic_core::{
-    ForensicError, Recording, TimelineEvent, ParserRun, OemProfile,
-    ValidationState, Hash, Region, TimeEvidence, RawTimestamp,
-    RecorderNativeTime, NormalizedTime, TimeZoneState, Provenance,
-};
-use forensic_core::identifiers::ProfileId;
-use parsers_core::Parser;
 use evidence_reader::EvidenceReader;
+use forensic_core::identifiers::ProfileId;
+use forensic_core::{
+    ForensicError, Hash, NormalizedTime, OemProfile, ParserRun, Provenance, RawTimestamp,
+    RecorderNativeTime, Recording, Region, TimeEvidence, TimeZoneState, TimelineEvent,
+    ValidationState,
+};
+use parsers_core::Parser;
 
 pub struct TplinkParser {
     pub id: String,
@@ -52,20 +52,25 @@ impl Parser for TplinkParser {
                 "EXT4 Superblock verified with magic 0xEF53",
                 "parse_filesystem",
                 "ext4_superblock",
-            ).unwrap()
+            )
+            .unwrap()
         } else {
             ValidationState::review(
                 "EXT4 superblock signature not detected within search boundary",
                 "parse_filesystem",
                 "ext4_superblock",
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         runs.push(ParserRun::new(
             self.id.clone(),
             self.version.clone(),
             ProfileId(profile.profile_id.clone()),
-            profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+            profile
+                .profile_hash
+                .clone()
+                .unwrap_or(Hash::sha256(vec![0; 32])),
             "parse_filesystem".to_string(),
             validation_state,
         ));
@@ -86,8 +91,12 @@ impl Parser for TplinkParser {
         if let Ok(read_len) = reader.read_at(0, &mut scan_buf) {
             let chunk = &scan_buf[..read_len];
             has_tp_magic = chunk.windows(2).any(|w| w == b"TP");
-            has_tp_meta = chunk.windows(b"TP-Link Corporation Limited".len()).any(|w| w == b"TP-Link Corporation Limited");
-            has_sqlite = chunk.windows(b"SQLite format 3\0".len()).any(|w| w == b"SQLite format 3\0");
+            has_tp_meta = chunk
+                .windows(b"TP-Link Corporation Limited".len())
+                .any(|w| w == b"TP-Link Corporation Limited");
+            has_sqlite = chunk
+                .windows(b"SQLite format 3\0".len())
+                .any(|w| w == b"SQLite format 3\0");
         }
 
         let validation_state = if has_tp_magic && has_tp_meta && has_sqlite {
@@ -95,13 +104,15 @@ impl Parser for TplinkParser {
                 "TP-Link rawDiskLayout and sys.bin SQLite database metadata verified",
                 "parse_metadata",
                 "sys_bin_sqlite",
-            ).unwrap()
+            )
+            .unwrap()
         } else if has_tp_magic || has_tp_meta {
             ValidationState::review(
                 "Partial TP-Link metadata identified",
                 "parse_metadata",
                 "sys_bin_sqlite",
-            ).unwrap()
+            )
+            .unwrap()
         } else {
             ValidationState::not_run(
                 "parse_metadata",
@@ -113,7 +124,10 @@ impl Parser for TplinkParser {
             self.id.clone(),
             self.version.clone(),
             ProfileId(profile.profile_id.clone()),
-            profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+            profile
+                .profile_hash
+                .clone()
+                .unwrap_or(Hash::sha256(vec![0; 32])),
             "parse_metadata".to_string(),
             validation_state,
         )])
@@ -139,16 +153,23 @@ impl Parser for TplinkParser {
                 "TP-Link VIGI video recording stream and zone structures extracted",
                 "parse_recordings",
                 "vigi_stream",
-            ).unwrap()
+            )
+            .unwrap()
         } else {
-            ValidationState::not_run("parse_recordings", "Payload size insufficient for recordings")
+            ValidationState::not_run(
+                "parse_recordings",
+                "Payload size insufficient for recordings",
+            )
         };
 
         runs.push(ParserRun::new(
             self.id.clone(),
             self.version.clone(),
             ProfileId(profile.profile_id.clone()),
-            profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+            profile
+                .profile_hash
+                .clone()
+                .unwrap_or(Hash::sha256(vec![0; 32])),
             "parse_recordings".to_string(),
             validation_state,
         ));
@@ -157,13 +178,21 @@ impl Parser for TplinkParser {
         if !streams.is_empty() {
             for stream in streams {
                 let dt_utc = chrono::DateTime::from_timestamp(stream.timestamp as i64, 0);
-                let norm_iso = dt_utc.map(|d| d.to_rfc3339()).unwrap_or_else(|| "2026-09-18T18:30:00Z".to_string());
-                let local_dt = dt_utc.map(|d| d + chrono::Duration::hours(5) + chrono::Duration::minutes(30));
-                let native_iso = local_dt.map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()).unwrap_or_else(|| "2026-09-19T00:00:00".to_string());
+                let norm_iso = dt_utc
+                    .map(|d| d.to_rfc3339())
+                    .unwrap_or_else(|| "2026-09-18T18:30:00Z".to_string());
+                let local_dt =
+                    dt_utc.map(|d| d + chrono::Duration::hours(5) + chrono::Duration::minutes(30));
+                let native_iso = local_dt
+                    .map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string())
+                    .unwrap_or_else(|| "2026-09-19T00:00:00".to_string());
 
                 let raw_prov = Provenance::new(
                     forensic_core::EvidenceId::new(),
-                    profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                    profile
+                        .profile_hash
+                        .clone()
+                        .unwrap_or(Hash::sha256(vec![0; 32])),
                     vec![],
                     "tplink-vigi-parser",
                     "1.0.0",
@@ -171,9 +200,18 @@ impl Parser for TplinkParser {
                     ValidationState::pass("raw", "valid", "raw").unwrap(),
                 );
                 let time_evidence = TimeEvidence {
-                    raw: RawTimestamp { value: stream.timestamp, format: "UNIX_LE".into(), source: raw_prov },
-                    recorder_native: Some(RecorderNativeTime { iso_8601: native_iso }),
-                    normalized: Some(NormalizedTime { iso_8601: norm_iso, method: "utc_fixed".to_string() }),
+                    raw: RawTimestamp {
+                        value: stream.timestamp,
+                        format: "UNIX_LE".into(),
+                        source: raw_prov,
+                    },
+                    recorder_native: Some(RecorderNativeTime {
+                        iso_8601: native_iso,
+                    }),
+                    normalized: Some(NormalizedTime {
+                        iso_8601: norm_iso,
+                        method: "utc_fixed".to_string(),
+                    }),
                     reference: None,
                     timezone: TimeZoneState::Known("UTC+05:30".to_string()),
                     correction: None,
@@ -187,14 +225,20 @@ impl Parser for TplinkParser {
                     self.id.clone(),
                     self.version.clone(),
                     ProfileId(profile.profile_id.clone()),
-                    profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                    profile
+                        .profile_hash
+                        .clone()
+                        .unwrap_or(Hash::sha256(vec![0; 32])),
                 );
                 recordings.push(rec);
             }
         } else if has_payload {
             let raw_prov = Provenance::new(
                 forensic_core::EvidenceId::new(),
-                profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                profile
+                    .profile_hash
+                    .clone()
+                    .unwrap_or(Hash::sha256(vec![0; 32])),
                 vec![],
                 "tplink-vigi-parser",
                 "1.0.0",
@@ -202,9 +246,18 @@ impl Parser for TplinkParser {
                 ValidationState::pass("raw", "valid", "raw").unwrap(),
             );
             let time_evidence = TimeEvidence {
-                raw: RawTimestamp { value: 1726700000, format: "UNIX_LE".into(), source: raw_prov },
-                recorder_native: Some(RecorderNativeTime { iso_8601: "2026-09-19T00:00:00".to_string() }),
-                normalized: Some(NormalizedTime { iso_8601: "2026-09-18T18:30:00Z".to_string(), method: "utc_fixed".to_string() }),
+                raw: RawTimestamp {
+                    value: 1726700000,
+                    format: "UNIX_LE".into(),
+                    source: raw_prov,
+                },
+                recorder_native: Some(RecorderNativeTime {
+                    iso_8601: "2026-09-19T00:00:00".to_string(),
+                }),
+                normalized: Some(NormalizedTime {
+                    iso_8601: "2026-09-18T18:30:00Z".to_string(),
+                    method: "utc_fixed".to_string(),
+                }),
                 reference: None,
                 timezone: TimeZoneState::Known("UTC+05:30".to_string()),
                 correction: None,
@@ -218,7 +271,10 @@ impl Parser for TplinkParser {
                 self.id.clone(),
                 self.version.clone(),
                 ProfileId(profile.profile_id.clone()),
-                profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                profile
+                    .profile_hash
+                    .clone()
+                    .unwrap_or(Hash::sha256(vec![0; 32])),
             );
             recordings.push(rec);
         }
@@ -237,16 +293,21 @@ impl Parser for TplinkParser {
 
         let validation_state = if !streams.is_empty() {
             ValidationState::pass(
-                format!("Extracted {} motion and continuous recording timeline events", streams.len()),
+                format!(
+                    "Extracted {} motion and continuous recording timeline events",
+                    streams.len()
+                ),
                 "extract_timeline_events",
                 "vigi_events",
-            ).unwrap()
+            )
+            .unwrap()
         } else if has_payload {
             ValidationState::pass(
                 "Extracted motion and continuous recording timeline events",
                 "extract_timeline_events",
                 "vigi_events",
-            ).unwrap()
+            )
+            .unwrap()
         } else {
             ValidationState::not_run("extract_timeline_events", "No timeline events extracted")
         };
@@ -255,7 +316,10 @@ impl Parser for TplinkParser {
             self.id.clone(),
             self.version.clone(),
             ProfileId(profile.profile_id.clone()),
-            profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+            profile
+                .profile_hash
+                .clone()
+                .unwrap_or(Hash::sha256(vec![0; 32])),
             "extract_timeline_events".to_string(),
             validation_state,
         ));
@@ -264,13 +328,21 @@ impl Parser for TplinkParser {
         if !streams.is_empty() {
             for stream in streams {
                 let dt_utc = chrono::DateTime::from_timestamp(stream.timestamp as i64, 0);
-                let norm_iso = dt_utc.map(|d| d.to_rfc3339()).unwrap_or_else(|| "2026-09-18T18:30:00Z".to_string());
-                let local_dt = dt_utc.map(|d| d + chrono::Duration::hours(5) + chrono::Duration::minutes(30));
-                let native_iso = local_dt.map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()).unwrap_or_else(|| "2026-09-19T00:00:00".to_string());
+                let norm_iso = dt_utc
+                    .map(|d| d.to_rfc3339())
+                    .unwrap_or_else(|| "2026-09-18T18:30:00Z".to_string());
+                let local_dt =
+                    dt_utc.map(|d| d + chrono::Duration::hours(5) + chrono::Duration::minutes(30));
+                let native_iso = local_dt
+                    .map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string())
+                    .unwrap_or_else(|| "2026-09-19T00:00:00".to_string());
 
                 let raw_prov = Provenance::new(
                     forensic_core::EvidenceId::new(),
-                    profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                    profile
+                        .profile_hash
+                        .clone()
+                        .unwrap_or(Hash::sha256(vec![0; 32])),
                     vec![],
                     "tplink-vigi-parser",
                     "1.0.0",
@@ -278,9 +350,18 @@ impl Parser for TplinkParser {
                     ValidationState::pass("raw", "valid", "raw").unwrap(),
                 );
                 let time_evidence = TimeEvidence {
-                    raw: RawTimestamp { value: stream.timestamp, format: "UNIX_LE".into(), source: raw_prov },
-                    recorder_native: Some(RecorderNativeTime { iso_8601: native_iso }),
-                    normalized: Some(NormalizedTime { iso_8601: norm_iso, method: "utc_fixed".to_string() }),
+                    raw: RawTimestamp {
+                        value: stream.timestamp,
+                        format: "UNIX_LE".into(),
+                        source: raw_prov,
+                    },
+                    recorder_native: Some(RecorderNativeTime {
+                        iso_8601: native_iso,
+                    }),
+                    normalized: Some(NormalizedTime {
+                        iso_8601: norm_iso,
+                        method: "utc_fixed".to_string(),
+                    }),
                     reference: None,
                     timezone: TimeZoneState::Known("UTC+05:30".to_string()),
                     correction: None,
@@ -289,18 +370,27 @@ impl Parser for TplinkParser {
                 events.push(TimelineEvent::new(
                     stream.channel,
                     time_evidence,
-                    format!("TP-Link VIGI Ch{} ({}) stream start at 0x{:X}", stream.channel, stream.description, stream.offset),
+                    format!(
+                        "TP-Link VIGI Ch{} ({}) stream start at 0x{:X}",
+                        stream.channel, stream.description, stream.offset
+                    ),
                     vec![reg],
                     self.id.clone(),
                     self.version.clone(),
                     ProfileId(profile.profile_id.clone()),
-                    profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                    profile
+                        .profile_hash
+                        .clone()
+                        .unwrap_or(Hash::sha256(vec![0; 32])),
                 ));
             }
         } else if has_payload {
             let raw_prov = Provenance::new(
                 forensic_core::EvidenceId::new(),
-                profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                profile
+                    .profile_hash
+                    .clone()
+                    .unwrap_or(Hash::sha256(vec![0; 32])),
                 vec![],
                 "tplink-vigi-parser",
                 "1.0.0",
@@ -308,9 +398,18 @@ impl Parser for TplinkParser {
                 ValidationState::pass("raw", "valid", "raw").unwrap(),
             );
             let time_evidence = TimeEvidence {
-                raw: RawTimestamp { value: 1726700000, format: "UNIX_LE".into(), source: raw_prov },
-                recorder_native: Some(RecorderNativeTime { iso_8601: "2026-09-19T00:00:00".to_string() }),
-                normalized: Some(NormalizedTime { iso_8601: "2026-09-18T18:30:00Z".to_string(), method: "utc_fixed".to_string() }),
+                raw: RawTimestamp {
+                    value: 1726700000,
+                    format: "UNIX_LE".into(),
+                    source: raw_prov,
+                },
+                recorder_native: Some(RecorderNativeTime {
+                    iso_8601: "2026-09-19T00:00:00".to_string(),
+                }),
+                normalized: Some(NormalizedTime {
+                    iso_8601: "2026-09-18T18:30:00Z".to_string(),
+                    method: "utc_fixed".to_string(),
+                }),
                 reference: None,
                 timezone: TimeZoneState::Known("UTC+05:30".to_string()),
                 correction: None,
@@ -324,7 +423,10 @@ impl Parser for TplinkParser {
                 self.id.clone(),
                 self.version.clone(),
                 ProfileId(profile.profile_id.clone()),
-                profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+                profile
+                    .profile_hash
+                    .clone()
+                    .unwrap_or(Hash::sha256(vec![0; 32])),
             ));
         }
 
@@ -337,7 +439,8 @@ impl Parser for TplinkParser {
         profile: &OemProfile,
     ) -> Result<Vec<ParserRun>, ForensicError> {
         let mut mbr = [0u8; 512];
-        let has_mbr = if reader.read_at(0, &mut mbr).is_ok() && mbr[510] == 0x55 && mbr[511] == 0xAA {
+        let has_mbr = if reader.read_at(0, &mut mbr).is_ok() && mbr[510] == 0x55 && mbr[511] == 0xAA
+        {
             let p1_type = mbr[446 + 4];
             let p2_type = mbr[462 + 4];
             p1_type == 0x82 && p2_type == 0x83
@@ -350,20 +453,25 @@ impl Parser for TplinkParser {
                 "MBR Partition Table verified with Swap (0x82) and EXT4 (0x83) regions",
                 "validate_structure",
                 "mbr_table",
-            ).unwrap()
+            )
+            .unwrap()
         } else {
             ValidationState::review(
                 "MBR partition table or expected partition types not found",
                 "validate_structure",
                 "mbr_table",
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         Ok(vec![ParserRun::new(
             self.id.clone(),
             self.version.clone(),
             ProfileId(profile.profile_id.clone()),
-            profile.profile_hash.clone().unwrap_or(Hash::sha256(vec![0; 32])),
+            profile
+                .profile_hash
+                .clone()
+                .unwrap_or(Hash::sha256(vec![0; 32])),
             "validate_structure".to_string(),
             validation_state,
         )])
@@ -444,4 +552,3 @@ fn scan_tplink_streams(reader: &dyn EvidenceReader) -> Vec<ParsedStream> {
 
     streams
 }
-

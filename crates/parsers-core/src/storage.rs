@@ -277,4 +277,3 @@ pub struct ContainerRecord {
     /// length or trailer failed verification must not be `Pass`.
     pub evidence: ValidationState,
 }
-

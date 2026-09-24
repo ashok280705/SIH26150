@@ -7,9 +7,7 @@
 //! - Bounded search truncation yields REVIEW
 
 use evidence_reader::{EvidenceReader, SourceKind};
-use forensic_core::{
-    CancelToken, ForensicError, OemProfile, RecoveryBounds, ValidationStateKind,
-};
+use forensic_core::{CancelToken, ForensicError, OemProfile, RecoveryBounds, ValidationStateKind};
 use parser_uniview::UniviewParser;
 use recovery::RecoveryEngine;
 
@@ -24,7 +22,12 @@ impl EvidenceReader for UniviewMockReader {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
         if offset >= self.data.len() as u64 {
-            return Err(ForensicError::out_of_bounds("UniviewMockReader", offset, buf.len() as u64, self.data.len() as u64));
+            return Err(ForensicError::out_of_bounds(
+                "UniviewMockReader",
+                offset,
+                buf.len() as u64,
+                self.data.len() as u64,
+            ));
         }
         let available = ((self.data.len() as u64 - offset) as usize).min(buf.len());
         buf[..available].copy_from_slice(&self.data[offset as usize..offset as usize + available]);
@@ -74,7 +77,7 @@ ec1001_start = 512
 #[test]
 fn test_uniview_recovery_full_scan() {
     let mut data = vec![0u8; 2 * 1024 * 1024]; // 2 MB
-    // Set UBIFS magic at offset 0
+                                               // Set UBIFS magic at offset 0
     data[0..4].copy_from_slice(&[0x31, 0x18, 0x10, 0x06]);
     // Set Uniview marker at 512
     data[512] = b'U';
@@ -94,7 +97,10 @@ fn test_uniview_recovery_full_scan() {
         time_limit: None,
     };
 
-    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
+    let run = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap()
+        .run;
     assert_eq!(run.validation_state.state, ValidationStateKind::Pass);
     assert_eq!(run.searched_regions.len(), 2);
 }
@@ -117,7 +123,10 @@ fn test_uniview_recovery_truncated_yields_review() {
         time_limit: None,
     };
 
-    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
+    let run = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap()
+        .run;
     assert!(run.truncated);
     assert_eq!(run.validation_state.state, ValidationStateKind::Review);
 }

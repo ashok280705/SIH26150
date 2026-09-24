@@ -2,8 +2,8 @@
 //!
 //! Parses event and GOP metadata from the SQLite sys.bin DB.
 
-use forensic_core::ForensicError;
 use crate::types::RecordingEvent;
+use forensic_core::ForensicError;
 
 pub struct RecordingIndexParser;
 

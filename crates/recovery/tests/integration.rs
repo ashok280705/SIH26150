@@ -1,8 +1,8 @@
-use forensic_core::{
-    CancelToken, ForensicError, OemProfile, ParserRun, RecoveryBounds, Recording,
-    TimelineEvent, ValidationStateKind,
-};
 use evidence_reader::{EvidenceReader, SourceKind};
+use forensic_core::{
+    CancelToken, ForensicError, OemProfile, ParserRun, Recording, RecoveryBounds, TimelineEvent,
+    ValidationStateKind,
+};
 use parsers_core::parser::Parser;
 use recovery::RecoveryEngine;
 
@@ -18,10 +18,17 @@ impl EvidenceReader for MockReader {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
         if offset >= self.len {
-            return Err(ForensicError::out_of_bounds("MockReader", offset, buf.len() as u64, self.len));
+            return Err(ForensicError::out_of_bounds(
+                "MockReader",
+                offset,
+                buf.len() as u64,
+                self.len,
+            ));
         }
         let available = ((self.len - offset) as usize).min(buf.len());
-        for b in &mut buf[..available] { *b = 0; }
+        for b in &mut buf[..available] {
+            *b = 0;
+        }
         Ok(available)
     }
 
@@ -47,7 +54,12 @@ impl EvidenceReader for CodecReader {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
         if offset >= self.len {
-            return Err(ForensicError::out_of_bounds("CodecReader", offset, buf.len() as u64, self.len));
+            return Err(ForensicError::out_of_bounds(
+                "CodecReader",
+                offset,
+                buf.len() as u64,
+                self.len,
+            ));
         }
         // A small, real H.264 Annex-B fragment repeated to fill the window.
         const PATTERN: [u8; 24] = [
@@ -75,24 +87,52 @@ impl EvidenceReader for CodecReader {
 struct AlwaysRecognizeParser;
 
 impl Parser for AlwaysRecognizeParser {
-    fn id(&self) -> &str { "mock-always" }
-    fn version(&self) -> &str { "1.0.0" }
-    fn parse_filesystem(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+    fn id(&self) -> &str {
+        "mock-always"
+    }
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
+    fn parse_filesystem(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<Vec<ParserRun>, ForensicError> {
         Ok(vec![])
     }
-    fn parse_metadata(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+    fn parse_metadata(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<Vec<ParserRun>, ForensicError> {
         Ok(vec![])
     }
-    fn parse_recordings(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<Recording>, Vec<ParserRun>), ForensicError> {
+    fn parse_recordings(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<(Vec<Recording>, Vec<ParserRun>), ForensicError> {
         Ok((vec![], vec![]))
     }
-    fn extract_timeline_events(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<TimelineEvent>, Vec<ParserRun>), ForensicError> {
+    fn extract_timeline_events(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<(Vec<TimelineEvent>, Vec<ParserRun>), ForensicError> {
         Ok((vec![], vec![]))
     }
-    fn validate_structure(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+    fn validate_structure(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<Vec<ParserRun>, ForensicError> {
         Ok(vec![])
     }
-    fn recognize_candidate(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<bool, ForensicError> {
+    fn recognize_candidate(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<bool, ForensicError> {
         Ok(true)
     }
 }
@@ -101,24 +141,52 @@ impl Parser for AlwaysRecognizeParser {
 struct NeverRecognizeParser;
 
 impl Parser for NeverRecognizeParser {
-    fn id(&self) -> &str { "mock-never" }
-    fn version(&self) -> &str { "1.0.0" }
-    fn parse_filesystem(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+    fn id(&self) -> &str {
+        "mock-never"
+    }
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
+    fn parse_filesystem(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<Vec<ParserRun>, ForensicError> {
         Ok(vec![])
     }
-    fn parse_metadata(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+    fn parse_metadata(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<Vec<ParserRun>, ForensicError> {
         Ok(vec![])
     }
-    fn parse_recordings(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<Recording>, Vec<ParserRun>), ForensicError> {
+    fn parse_recordings(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<(Vec<Recording>, Vec<ParserRun>), ForensicError> {
         Ok((vec![], vec![]))
     }
-    fn extract_timeline_events(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<(Vec<TimelineEvent>, Vec<ParserRun>), ForensicError> {
+    fn extract_timeline_events(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<(Vec<TimelineEvent>, Vec<ParserRun>), ForensicError> {
         Ok((vec![], vec![]))
     }
-    fn validate_structure(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<Vec<ParserRun>, ForensicError> {
+    fn validate_structure(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<Vec<ParserRun>, ForensicError> {
         Ok(vec![])
     }
-    fn recognize_candidate(&self, _: &dyn EvidenceReader, _: &OemProfile) -> Result<bool, ForensicError> {
+    fn recognize_candidate(
+        &self,
+        _: &dyn EvidenceReader,
+        _: &OemProfile,
+    ) -> Result<bool, ForensicError> {
         Ok(false)
     }
 }
@@ -154,7 +222,9 @@ max_possible_score = 0.5
 #[test]
 fn test_engine_truncation_on_byte_limit() {
     let engine = RecoveryEngine::new();
-    let reader = MockReader { len: 10 * 1024 * 1024 }; // 10 MB
+    let reader = MockReader {
+        len: 10 * 1024 * 1024,
+    }; // 10 MB
     let profile = make_mock_profile();
     let parser = NeverRecognizeParser;
 
@@ -168,17 +238,29 @@ fn test_engine_truncation_on_byte_limit() {
         time_limit: None,
     };
 
-    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
-    
-    assert!(run.truncated, "Run should be truncated when byte limit is reached");
-    assert_eq!(run.validation_state.state, ValidationStateKind::Review, "Truncated run must be REVIEW");
+    let run = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap()
+        .run;
+
+    assert!(
+        run.truncated,
+        "Run should be truncated when byte limit is reached"
+    );
+    assert_eq!(
+        run.validation_state.state,
+        ValidationStateKind::Review,
+        "Truncated run must be REVIEW"
+    );
 }
 
 #[test]
 fn test_engine_truncation_on_candidate_limit() {
     let engine = RecoveryEngine::new();
     // Real codec bytes so each indexed chunk yields a recovery candidate.
-    let reader = CodecReader { len: 10 * 1024 * 1024 };
+    let reader = CodecReader {
+        len: 10 * 1024 * 1024,
+    };
     let profile = make_mock_profile();
     let parser = AlwaysRecognizeParser; // every chunk is indexed and holds codec data
 
@@ -192,16 +274,24 @@ fn test_engine_truncation_on_candidate_limit() {
         time_limit: None,
     };
 
-    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
-    
-    assert!(run.truncated, "Run should be truncated when candidate limit is reached");
+    let run = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap()
+        .run;
+
+    assert!(
+        run.truncated,
+        "Run should be truncated when candidate limit is reached"
+    );
     assert_eq!(run.validation_state.state, ValidationStateKind::Review);
 }
 
 #[test]
 fn test_engine_cancellation_yields_review() {
     let engine = RecoveryEngine::new();
-    let reader = MockReader { len: 10 * 1024 * 1024 };
+    let reader = MockReader {
+        len: 10 * 1024 * 1024,
+    };
     let profile = make_mock_profile();
     let parser = NeverRecognizeParser;
     let cancel = CancelToken::new();
@@ -217,8 +307,11 @@ fn test_engine_cancellation_yields_review() {
         time_limit: None,
     };
 
-    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
-    
+    let run = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap()
+        .run;
+
     assert!(run.cancelled, "Run should be cancelled");
     assert_eq!(run.validation_state.state, ValidationStateKind::Review);
 }
@@ -240,18 +333,27 @@ fn test_engine_full_scan_pass() {
         time_limit: None,
     };
 
-    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
-    
+    let run = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap()
+        .run;
+
     assert!(!run.truncated, "Run should NOT be truncated");
     assert!(!run.cancelled, "Run should NOT be cancelled");
-    assert_eq!(run.validation_state.state, ValidationStateKind::Pass, "Complete run should be PASS");
+    assert_eq!(
+        run.validation_state.state,
+        ValidationStateKind::Pass,
+        "Complete run should be PASS"
+    );
 }
 
 #[test]
 fn test_engine_parser_never_drives_level_selection() {
     // This test asserts that the engine, not the parser, decides the scanning loop.
     let engine = RecoveryEngine::new();
-    let reader = CodecReader { len: 3 * 1024 * 1024 };
+    let reader = CodecReader {
+        len: 3 * 1024 * 1024,
+    };
     let profile = make_mock_profile();
     let parser = AlwaysRecognizeParser;
 
@@ -265,11 +367,21 @@ fn test_engine_parser_never_drives_level_selection() {
         time_limit: None,
     };
 
-    let run = engine.execute_recovery(request(&reader, &profile, &parser, &bounds)).unwrap().run;
-    
+    let run = engine
+        .execute_recovery(request(&reader, &profile, &parser, &bounds))
+        .unwrap()
+        .run;
+
     // The engine drove all 3 chunks (3 MB / 1 MB chunk = 3 regions)
-    assert_eq!(run.searched_regions.len(), 3, "Engine should have driven 3 scan regions");
-    assert_eq!(run.candidate_count, 3, "All 3 regions should have produced candidates");
+    assert_eq!(
+        run.searched_regions.len(),
+        3,
+        "Engine should have driven 3 scan regions"
+    );
+    assert_eq!(
+        run.candidate_count, 3,
+        "All 3 regions should have produced candidates"
+    );
 }
 
 /// Build a whole-image recovery request.
@@ -302,7 +414,9 @@ fn test_without_index_evidence_no_candidate_is_active() {
     // parser used to do. That must no longer be able to produce `Active`, because it is
     // not index evidence.
     let engine = RecoveryEngine::new();
-    let reader = CodecReader { len: 3 * 1024 * 1024 };
+    let reader = CodecReader {
+        len: 3 * 1024 * 1024,
+    };
     let profile = make_mock_profile();
     let parser = AlwaysRecognizeParser;
 
@@ -320,7 +434,10 @@ fn test_without_index_evidence_no_candidate_is_active() {
         .execute_recovery(request(&reader, &profile, &parser, &bounds))
         .unwrap();
 
-    assert!(!outcome.candidates.is_empty(), "codec bytes should be discovered");
+    assert!(
+        !outcome.candidates.is_empty(),
+        "codec bytes should be discovered"
+    );
     for c in &outcome.candidates {
         assert_eq!(
             c.data_state,
@@ -339,7 +456,9 @@ fn test_without_index_evidence_no_candidate_is_active() {
 #[test]
 fn test_evidence_id_is_stable_across_every_candidate() {
     let engine = RecoveryEngine::new();
-    let reader = CodecReader { len: 3 * 1024 * 1024 };
+    let reader = CodecReader {
+        len: 3 * 1024 * 1024,
+    };
     let profile = make_mock_profile();
     let parser = AlwaysRecognizeParser;
     let evidence_id = forensic_core::EvidenceId::new();
@@ -385,7 +504,9 @@ fn test_evidence_id_is_stable_across_every_candidate() {
 #[test]
 fn test_scan_window_preserves_absolute_physical_offsets() {
     let engine = RecoveryEngine::new();
-    let reader = CodecReader { len: 4 * 1024 * 1024 };
+    let reader = CodecReader {
+        len: 4 * 1024 * 1024,
+    };
     let profile = make_mock_profile();
     let parser = AlwaysRecognizeParser;
 

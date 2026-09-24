@@ -11,7 +11,10 @@ impl JsonReportExporter {
     /// Export report as formatted, deterministic JSON string.
     pub fn export_to_json(report: &ForensicReport) -> Result<String, ForensicError> {
         serde_json::to_string_pretty(report).map_err(|e| {
-            ForensicError::io("export_to_json", std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            ForensicError::io(
+                "export_to_json",
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+            )
         })
     }
 }

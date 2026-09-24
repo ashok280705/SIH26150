@@ -2,13 +2,13 @@
 //!
 //! Models representing timestamps extracted from DVR/NVR filesystems.
 //!
-//! To satisfy evidentiary requirements (Req 4.1–4.7, 24.2), this module maintains strict separation 
+//! To satisfy evidentiary requirements (Req 4.1–4.7, 24.2), this module maintains strict separation
 //! between raw, recorder-native, normalized, and reference times. No field ever overwrites another.
-//! 
+//!
 //! Impossible timestamps are handled as invalid states rather than causing panics.
 
-use serde::{Deserialize, Serialize};
 use crate::provenance::Provenance;
+use serde::{Deserialize, Serialize};
 
 /// The raw bytes or primitive integer exactly as found on disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

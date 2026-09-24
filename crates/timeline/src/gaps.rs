@@ -16,7 +16,7 @@
 //!   instants are not comparable) and counted separately, never silently treated as UTC.
 
 use forensic_core::{
-    RangeSet, Region, TimeEvidence, TimelineEvent, TimeZoneState, ValidationState,
+    RangeSet, Region, TimeEvidence, TimeZoneState, TimelineEvent, ValidationState,
     ValidationStateKind,
 };
 use serde::{Deserialize, Serialize};
@@ -221,7 +221,10 @@ pub fn detect_timeline_gaps(events: &[TimelineEvent], max_gap_seconds: i64) -> V
     for e in events {
         if let Some(instant) = comparable_instant(&e.time) {
             let offset = e.source_offsets.iter().map(|r| r.offset).min().unwrap_or(0);
-            per_channel.entry(e.channel).or_default().push((instant, offset));
+            per_channel
+                .entry(e.channel)
+                .or_default()
+                .push((instant, offset));
         }
     }
 
@@ -270,8 +273,10 @@ pub fn analyze(
         .iter()
         .filter(|e| e.time.timezone == TimeZoneState::Unknown)
         .count();
-    let events_without_normalized_time =
-        events.iter().filter(|e| e.time.normalized.is_none()).count();
+    let events_without_normalized_time = events
+        .iter()
+        .filter(|e| e.time.normalized.is_none())
+        .count();
 
     let comparable_events = events.len()
         - events
@@ -377,8 +382,14 @@ mod tests {
         TimelineEvent {
             channel,
             time: TimeEvidence {
-                raw: RawTimestamp { value: 0, format: "UNIX".into(), source: prov },
-                recorder_native: Some(RecorderNativeTime { iso_8601: "2024-01-01T00:00:00".into() }),
+                raw: RawTimestamp {
+                    value: 0,
+                    format: "UNIX".into(),
+                    source: prov,
+                },
+                recorder_native: Some(RecorderNativeTime {
+                    iso_8601: "2024-01-01T00:00:00".into(),
+                }),
                 normalized: norm.map(|n| NormalizedTime {
                     iso_8601: n.to_string(),
                     method: "test".into(),
@@ -388,7 +399,10 @@ mod tests {
                 correction: None,
             },
             description: "e".into(),
-            source_offsets: vec![Region { offset, length: 100 }],
+            source_offsets: vec![Region {
+                offset,
+                length: 100,
+            }],
             parser_id: "p".into(),
             parser_version: "1".into(),
             profile_id: ProfileId("prof".into()),
@@ -399,8 +413,18 @@ mod tests {
     #[test]
     fn detects_temporal_gap_beyond_threshold() {
         let events = vec![
-            event(1, 0, Some("2024-01-01T00:00:00Z"), TimeZoneState::Known("UTC".into())),
-            event(1, 500, Some("2024-01-01T01:00:00Z"), TimeZoneState::Known("UTC".into())),
+            event(
+                1,
+                0,
+                Some("2024-01-01T00:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
+            event(
+                1,
+                500,
+                Some("2024-01-01T01:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
         ];
         let gaps = detect_timeline_gaps(&events, 60);
         assert_eq!(gaps.len(), 1);
@@ -411,8 +435,18 @@ mod tests {
     #[test]
     fn no_gap_within_threshold() {
         let events = vec![
-            event(1, 0, Some("2024-01-01T00:00:00Z"), TimeZoneState::Known("UTC".into())),
-            event(1, 500, Some("2024-01-01T00:00:30Z"), TimeZoneState::Known("UTC".into())),
+            event(
+                1,
+                0,
+                Some("2024-01-01T00:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
+            event(
+                1,
+                500,
+                Some("2024-01-01T00:00:30Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
         ];
         assert!(detect_timeline_gaps(&events, 60).is_empty());
     }
@@ -427,7 +461,16 @@ mod tests {
         ];
         assert!(detect_timeline_gaps(&events, 60).is_empty());
 
-        let analysis = analyze(&events, vec![Region { offset: 0, length: 100 }], 100, 60, 4096);
+        let analysis = analyze(
+            &events,
+            vec![Region {
+                offset: 0,
+                length: 100,
+            }],
+            100,
+            60,
+            4096,
+        );
         assert_eq!(analysis.events_with_unknown_timezone, 2);
         // Cannot claim PASS when continuity was not assessable.
         assert_ne!(analysis.validation.state, ValidationStateKind::Pass);
@@ -436,8 +479,18 @@ mod tests {
     #[test]
     fn gaps_are_reported_per_channel_independently() {
         let events = vec![
-            event(1, 0, Some("2024-01-01T00:00:00Z"), TimeZoneState::Known("UTC".into())),
-            event(2, 100, Some("2024-01-01T05:00:00Z"), TimeZoneState::Known("UTC".into())),
+            event(
+                1,
+                0,
+                Some("2024-01-01T00:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
+            event(
+                2,
+                100,
+                Some("2024-01-01T05:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
         ];
         // One event per channel: no intra-channel pair, so no gap.
         assert!(detect_timeline_gaps(&events, 60).is_empty());
@@ -447,8 +500,14 @@ mod tests {
     fn coverage_merges_overlapping_regions() {
         let cov = estimate_coverage(
             vec![
-                Region { offset: 0, length: 100 },
-                Region { offset: 50, length: 100 },
+                Region {
+                    offset: 0,
+                    length: 100,
+                },
+                Region {
+                    offset: 50,
+                    length: 100,
+                },
             ],
             200,
             1,
@@ -463,8 +522,14 @@ mod tests {
     fn coverage_suppresses_small_holes() {
         let cov = estimate_coverage(
             vec![
-                Region { offset: 0, length: 100 },
-                Region { offset: 200, length: 100 },
+                Region {
+                    offset: 0,
+                    length: 100,
+                },
+                Region {
+                    offset: 200,
+                    length: 100,
+                },
             ],
             300,
             4096,
@@ -477,10 +542,29 @@ mod tests {
     #[test]
     fn full_coverage_and_continuity_passes() {
         let events = vec![
-            event(1, 0, Some("2024-01-01T00:00:00Z"), TimeZoneState::Known("UTC".into())),
-            event(1, 100, Some("2024-01-01T00:00:10Z"), TimeZoneState::Known("UTC".into())),
+            event(
+                1,
+                0,
+                Some("2024-01-01T00:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
+            event(
+                1,
+                100,
+                Some("2024-01-01T00:00:10Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
         ];
-        let analysis = analyze(&events, vec![Region { offset: 0, length: 1000 }], 1000, 60, 4096);
+        let analysis = analyze(
+            &events,
+            vec![Region {
+                offset: 0,
+                length: 1000,
+            }],
+            1000,
+            60,
+            4096,
+        );
         assert!(!analysis.gaps_present);
         assert_eq!(analysis.validation.state, ValidationStateKind::Pass);
         assert_eq!(analysis.coverage.coverage_ratio, 1.0);
@@ -489,10 +573,29 @@ mod tests {
     #[test]
     fn gaps_are_never_filled() {
         let events = vec![
-            event(1, 0, Some("2024-01-01T00:00:00Z"), TimeZoneState::Known("UTC".into())),
-            event(1, 500, Some("2024-01-01T02:00:00Z"), TimeZoneState::Known("UTC".into())),
+            event(
+                1,
+                0,
+                Some("2024-01-01T00:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
+            event(
+                1,
+                500,
+                Some("2024-01-01T02:00:00Z"),
+                TimeZoneState::Known("UTC".into()),
+            ),
         ];
-        let analysis = analyze(&events, vec![Region { offset: 0, length: 600 }], 1000, 60, 100);
+        let analysis = analyze(
+            &events,
+            vec![Region {
+                offset: 0,
+                length: 600,
+            }],
+            1000,
+            60,
+            100,
+        );
         // The gap is recorded; the event count is unchanged — nothing synthesized.
         assert_eq!(events.len(), 2);
         assert_eq!(analysis.temporal_gaps.len(), 1);

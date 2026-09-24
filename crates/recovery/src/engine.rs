@@ -121,7 +121,9 @@ impl RecoveryOutcome {
         &self,
         state: forensic_core::DataState,
     ) -> impl Iterator<Item = &RecoveryCandidate> {
-        self.candidates.iter().filter(move |c| c.data_state == state)
+        self.candidates
+            .iter()
+            .filter(move |c| c.data_state == state)
     }
 }
 
@@ -289,11 +291,7 @@ impl RecoveryEngine {
                 }
             }
             // Byte budget: stop before exceeding it rather than after.
-            if run
-                .searched_bytes
-                .saturating_add(target.region.length)
-                > bounds.max_scan_bytes
-            {
+            if run.searched_bytes.saturating_add(target.region.length) > bounds.max_scan_bytes {
                 run.truncated = true;
                 break;
             }

@@ -61,7 +61,9 @@ impl CsvReportExporter {
 
     /// Export timeline events to CSV string.
     pub fn export_timeline_csv(report: &ForensicReport) -> String {
-        let mut out = String::from("channel,normalized_time,recorder_native_time,description,source_offset\n");
+        let mut out = String::from(
+            "channel,normalized_time,recorder_native_time,description,source_offset\n",
+        );
         for evt in &report.timeline_events {
             out.push_str(&format!(
                 "{},{},{},\"{}\",{}\n",
@@ -112,21 +114,20 @@ mod tests {
             capabilities: CapabilityStages::not_implemented(),
             validation_summary: vec![],
             recordings: vec![],
-            recovery_items: vec![
-                RecoveryReportItem {
-                    candidate_id: "cand-1".into(),
-                    channel: Some(1),
-                    recovery_level: "L2".into(),
-                    data_state: "Orphaned".into(),
-                    recovery_status: "Recoverable".into(),
-                    source_offset: 1024,
-                    source_length: 512,
-                    validation_state: "PASS".into(),
-                    validation_reason: "Valid GOP".into(),
-                    discovery_method: "unclaimed-scan-in-index-scope".into(),
-                    state_reason: "authoritative index governs this region without referencing it".into(),
-                }
-            ],
+            recovery_items: vec![RecoveryReportItem {
+                candidate_id: "cand-1".into(),
+                channel: Some(1),
+                recovery_level: "L2".into(),
+                data_state: "Orphaned".into(),
+                recovery_status: "Recoverable".into(),
+                source_offset: 1024,
+                source_length: 512,
+                validation_state: "PASS".into(),
+                validation_reason: "Valid GOP".into(),
+                discovery_method: "unclaimed-scan-in-index-scope".into(),
+                state_reason: "authoritative index governs this region without referencing it"
+                    .into(),
+            }],
             recovery_run_bounds: None,
             timeline_events: vec![],
             native_artifacts: vec![],

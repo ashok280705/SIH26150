@@ -6,9 +6,9 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
-pub mod result;
 pub mod engine;
+pub mod result;
 
 pub use config::ConfidenceConfig;
-pub use result::{AttributionStatus, Classification, ClassifiedDetectionResult};
 pub use engine::ConfidenceEngine;
+pub use result::{AttributionStatus, Classification, ClassifiedDetectionResult};

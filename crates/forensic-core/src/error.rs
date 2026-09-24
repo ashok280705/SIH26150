@@ -6,8 +6,6 @@
 //!
 //! No `unwrap`/`expect` is permitted on evidence-derived values.
 
-
-
 /// The canonical error type for all forensic operations.
 ///
 /// Each variant represents a category of failure that the platform can encounter when
@@ -22,7 +20,9 @@ pub enum ForensicError {
     },
 
     /// A read or computation references a byte range outside the evidence source bounds.
-    #[error("out of bounds: {context} (offset={offset}, length={length}, source_len={source_len})")]
+    #[error(
+        "out of bounds: {context} (offset={offset}, length={length}, source_len={source_len})"
+    )]
     OutOfBounds {
         context: String,
         offset: u64,
@@ -105,8 +105,6 @@ impl ForensicError {
 // ForensicError is not Clone because std::io::Error is not Clone. This is intentional:
 // errors are consumed, not copied.
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,10 +133,7 @@ mod tests {
     fn overflow_displays_context() {
         let err = ForensicError::overflow("sector_size * start_sector");
         let msg = format!("{err}");
-        assert!(
-            msg.contains("sector_size * start_sector"),
-            "got: {msg}"
-        );
+        assert!(msg.contains("sector_size * start_sector"), "got: {msg}");
     }
 
     #[test]
@@ -146,10 +141,7 @@ mod tests {
         // Ensure every variant implements std::error::Error (compile-time via thiserror,
         // but exercised here as a smoke test).
         let errors: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(ForensicError::io(
-                "test",
-                std::io::Error::other("x"),
-            )),
+            Box::new(ForensicError::io("test", std::io::Error::other("x"))),
             Box::new(ForensicError::out_of_bounds("test", 0, 0, 0)),
             Box::new(ForensicError::UnsupportedFormat {
                 format: "E01".into(),

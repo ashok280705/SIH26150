@@ -353,9 +353,8 @@ fn build_provenance(
     let level_str = level_label(assessment.recovery_level);
     let mut reason = format!("{level_str}: {}", assessment.reason);
     if truncated_view {
-        reason.push_str(
-            "; window truncated to the scan cap, bytes beyond the cap were not examined",
-        );
+        reason
+            .push_str("; window truncated to the scan cap, bytes beyond the cap were not examined");
     }
 
     let prov_state = vs(
@@ -507,7 +506,8 @@ fn build_fragment(
         if let Some(t) = end {
             end_timestamp_unix = FieldEvidence::known(t, source.clone());
         } else {
-            end_timestamp_unix = FieldEvidence::unknown(format!("{source} records no end timestamp"));
+            end_timestamp_unix =
+                FieldEvidence::unknown(format!("{source} records no end timestamp"));
         }
     }
 
@@ -622,7 +622,8 @@ pub fn scan_target_all(
     target: &ScanTarget,
 ) -> Result<Vec<ScanFinding>, ForensicError> {
     // Bounds and overflow are enforced here, before any OEM code sees the region.
-    let (window, truncated_view) = read_bounded_window(reader, &target.region, ctx.max_window_bytes)?;
+    let (window, truncated_view) =
+        read_bounded_window(reader, &target.region, ctx.max_window_bytes)?;
 
     // Corroborating observation only. Recorded on each finding, never fed into the state.
     // Errors are surfaced as "not recognised" rather than failing the whole region, since a
@@ -665,21 +666,15 @@ pub fn scan_target_all(
                 );
                 continue;
             }
-            if let Some(finding) = finding_from_record(
-                reader,
-                ctx,
-                target,
-                record,
-                oem_format_recognised,
-            )? {
+            if let Some(finding) =
+                finding_from_record(reader, ctx, target, record, oem_format_recognised)?
+            {
                 findings.push(finding);
             }
         }
         if !findings.is_empty() {
             // Deterministic order: ascending physical offset.
-            findings.sort_by_key(|f| {
-                f.fragment.physical_region.offset
-            });
+            findings.sort_by_key(|f| f.fragment.physical_region.offset);
             return Ok(findings);
         }
     }
@@ -706,8 +701,14 @@ pub fn scan_target_all(
     };
 
     let report = validation_report(&codec, structurally_valid, &target.claim, None);
-    let provenance =
-        build_provenance(ctx, target, target.region, &window, &assessment, truncated_view);
+    let provenance = build_provenance(
+        ctx,
+        target,
+        target.region,
+        &window,
+        &assessment,
+        truncated_view,
+    );
 
     // The payload sub-range comes from the OEM parser via the planner. It is never inferred
     // here — a region with no established framing has no payload boundary.
@@ -835,7 +836,10 @@ fn finding_from_record(
             codec.validation.reason,
             record.evidence.reason,
             if oem_format_recognised {
-                format!("{} container framing recognised in this region", ctx.oem_key)
+                format!(
+                    "{} container framing recognised in this region",
+                    ctx.oem_key
+                )
             } else {
                 format!(
                     "{} container framing was not recognised across the whole region",
@@ -1206,9 +1210,18 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(f.candidate.validation.continuity.state, ValidationStateKind::Unknown);
-        assert_eq!(f.candidate.validation.timestamps.state, ValidationStateKind::Unknown);
-        assert_eq!(f.candidate.validation.channel.state, ValidationStateKind::Unknown);
+        assert_eq!(
+            f.candidate.validation.continuity.state,
+            ValidationStateKind::Unknown
+        );
+        assert_eq!(
+            f.candidate.validation.timestamps.state,
+            ValidationStateKind::Unknown
+        );
+        assert_eq!(
+            f.candidate.validation.channel.state,
+            ValidationStateKind::Unknown
+        );
     }
 
     #[test]
@@ -1254,7 +1267,9 @@ mod tests {
 
     #[test]
     fn non_video_bytes_produce_no_candidate() {
-        let reader = MemReader { data: vec![0u8; 4096] };
+        let reader = MemReader {
+            data: vec![0u8; 4096],
+        };
         let t = target(
             Region::new(0, 4096).unwrap(),
             RegionClaim::Indexed {
@@ -1274,15 +1289,15 @@ mod tests {
 
     #[test]
     fn overflow_region_rejected() {
-        let reader = MemReader { data: vec![0u8; 1024] };
+        let reader = MemReader {
+            data: vec![0u8; 1024],
+        };
         let t = target(
             Region {
                 offset: u64::MAX - 10,
                 length: 20,
             },
-            RegionClaim::NoIndexEvidence {
-                reason: "n".into(),
-            },
+            RegionClaim::NoIndexEvidence { reason: "n".into() },
             DiscoveryMethod::WholeImageScanWithoutIndex,
         );
         let err = scan_target(&reader, &profile(), &YesParser, &ctx(), &t).unwrap_err();
@@ -1291,15 +1306,15 @@ mod tests {
 
     #[test]
     fn out_of_bounds_region_rejected() {
-        let reader = MemReader { data: vec![0u8; 1024] };
+        let reader = MemReader {
+            data: vec![0u8; 1024],
+        };
         let t = target(
             Region {
                 offset: 2000,
                 length: 500,
             },
-            RegionClaim::NoIndexEvidence {
-                reason: "n".into(),
-            },
+            RegionClaim::NoIndexEvidence { reason: "n".into() },
             DiscoveryMethod::WholeImageScanWithoutIndex,
         );
         let err = scan_target(&reader, &profile(), &YesParser, &ctx(), &t).unwrap_err();

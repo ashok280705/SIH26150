@@ -2,10 +2,10 @@
 //!
 //! Simulates a 2TB TP-Link NVR HDD and verifies the detector architecture.
 
-use forensic_core::{ProfileRegistry, OemProfile, ForensicError};
-use evidence_reader::EvidenceReader;
 use detection::orchestrator::DetectionOrchestrator;
 use detection::output::DetectionStatus;
+use evidence_reader::EvidenceReader;
+use forensic_core::{ForensicError, OemProfile, ProfileRegistry};
 
 struct SyntheticTpLinkDisk {
     size: u64,
@@ -26,9 +26,14 @@ impl EvidenceReader for SyntheticTpLinkDisk {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
         if offset >= self.size {
-            return Err(ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.size));
+            return Err(ForensicError::out_of_bounds(
+                "test",
+                offset,
+                buf.len() as u64,
+                self.size,
+            ));
         }
-        
+
         let start = offset as usize;
         let mut bytes_written = 0;
 
@@ -36,17 +41,17 @@ impl EvidenceReader for SyntheticTpLinkDisk {
         if offset == 0 && buf.len() >= 512 {
             buf[510] = 0x55;
             buf[511] = 0xAA;
-            
+
             // Partition 1: Linux Swap (0x82)
             buf[446 + 4] = 0x82;
             buf[446 + 8] = 1; // start sector
             buf[446 + 12] = 100; // num sectors
-            
+
             // Partition 2: EXT4 Linux (0x83)
             buf[462 + 4] = 0x83;
             buf[462 + 8] = 101; // start sector
             buf[462 + 12] = 0xFF; // mock size
-            
+
             bytes_written = 512.min(buf.len());
         }
 
@@ -108,7 +113,8 @@ impl EvidenceReader for SyntheticTpLinkDisk {
 #[test]
 fn test_synthetic_tplink_2tb_detection() {
     // 1. Create the mock profile
-    let profile = OemProfile::from_toml_str(r#"
+    let profile = OemProfile::from_toml_str(
+        r#"
 profile_id = "tplink-vigi-nvr-v1.0"
 profile_version = "1.0.0"
 schema_version = "1.0"
@@ -149,25 +155,36 @@ is_exclusive = false
 [confidence_weights]
 max_possible_score = 2.25
 min_threshold = 0.60
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let registry = ProfileRegistry::from_profiles(vec![profile]);
     let disk = SyntheticTpLinkDisk::new_2tb();
-    
+
     // 2. Run the detection orchestrator
     let orchestrator = DetectionOrchestrator::new();
     let outputs = orchestrator.run(&disk, &registry).unwrap();
-    
+
     // 3. Verify TP-Link was detected
     let tplink_output = outputs.iter().find(|o| o.oem_key == "tplink").unwrap();
-    
+
     // We expect Confirmed status because all indicators (TP magic, metadata, SQLite, EXT4) were mocked
     assert_eq!(tplink_output.status, DetectionStatus::Confirmed);
-    assert!(tplink_output.evidence.len() >= 4, "Expected at least 4 evidence items");
-    
-    let has_tp_magic = tplink_output.evidence.iter().any(|e| e.kind == "tp_layout_magic");
-    let has_tp_metadata = tplink_output.evidence.iter().any(|e| e.kind == "tp_metadata_string");
-    
+    assert!(
+        tplink_output.evidence.len() >= 4,
+        "Expected at least 4 evidence items"
+    );
+
+    let has_tp_magic = tplink_output
+        .evidence
+        .iter()
+        .any(|e| e.kind == "tp_layout_magic");
+    let has_tp_metadata = tplink_output
+        .evidence
+        .iter()
+        .any(|e| e.kind == "tp_metadata_string");
+
     assert!(has_tp_magic);
     assert!(has_tp_metadata);
 }

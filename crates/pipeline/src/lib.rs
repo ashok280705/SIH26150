@@ -264,7 +264,12 @@ pub struct PipelineRun {
 }
 
 impl PipelineRun {
-    fn record_stage(&mut self, stage: PipelineStage, status: StageStatus, detail: impl Into<String>) {
+    fn record_stage(
+        &mut self,
+        stage: PipelineStage,
+        status: StageStatus,
+        detail: impl Into<String>,
+    ) {
         self.stages.push(StageRecord {
             stage,
             status,
@@ -355,11 +360,10 @@ fn candidates_to_events(
     let mut withheld = 0usize;
 
     for (c, f) in candidates.iter().zip(fragments.iter()) {
-        let region = c
-            .source_offsets
-            .first()
-            .cloned()
-            .unwrap_or(Region { offset: 0, length: 0 });
+        let region = c.source_offsets.first().cloned().unwrap_or(Region {
+            offset: 0,
+            length: 0,
+        });
 
         let (Some(channel), Some(ts)) = (f.camera_id.value(), f.timestamp_unix.value()) else {
             withheld += 1;
@@ -464,7 +468,10 @@ pub fn run_pipeline(
     run.record_stage(
         PipelineStage::Detection,
         StageStatus::Completed,
-        format!("{} detector(s) evaluated in parallel", detector_outputs.len()),
+        format!(
+            "{} detector(s) evaluated in parallel",
+            detector_outputs.len()
+        ),
     );
 
     let classified = ConfidenceEngine::classify_all(&detector_outputs, registry, config)?;
@@ -494,9 +501,10 @@ pub fn run_pipeline(
                 explanation: t.explanation.clone(),
             });
             match t.classification {
-                Classification::Confirmed | Classification::CompatibleCandidate => {
-                    (ThresholdDecision::OemConfirmed, Some(t.detector_output.oem_key.clone()))
-                }
+                Classification::Confirmed | Classification::CompatibleCandidate => (
+                    ThresholdDecision::OemConfirmed,
+                    Some(t.detector_output.oem_key.clone()),
+                ),
                 Classification::Ambiguous => (ThresholdDecision::Ambiguous, None),
                 Classification::Unknown | Classification::Insufficient => {
                     (ThresholdDecision::Unresolved, None)
@@ -542,12 +550,14 @@ pub fn run_pipeline(
     let parsing_result: ParsingResult = match threshold_decision {
         ThresholdDecision::OemConfirmed => {
             let key = oem_key.clone().unwrap();
-            let profile = registry.find_applicable(&key, None, None, None).ok_or_else(|| {
-                forensic_core::ForensicError::corrupt(
-                    "pipeline",
-                    format!("attributed OEM '{key}' has no applicable profile"),
-                )
-            })?;
+            let profile = registry
+                .find_applicable(&key, None, None, None)
+                .ok_or_else(|| {
+                    forensic_core::ForensicError::corrupt(
+                        "pipeline",
+                        format!("attributed OEM '{key}' has no applicable profile"),
+                    )
+                })?;
             let result = orchestrator.run_parsing(&key, reader, profile)?;
             run.oem_key_used = Some(key.clone());
             run.record_stage(
@@ -597,7 +607,11 @@ pub fn run_pipeline(
     // ── Gate: IS PARSED? ────────────────────────────────────────────────────
     let parsed = is_parsed(&parsing_result);
     run.gates.push(GateRecord::Parsed {
-        decision: if parsed { ParseDecision::Parsed } else { ParseDecision::NotParsed },
+        decision: if parsed {
+            ParseDecision::Parsed
+        } else {
+            ParseDecision::NotParsed
+        },
         reason: if parsed {
             format!(
                 "{} recording(s) and {} passing stage(s): evidence parsed",
@@ -678,13 +692,21 @@ pub fn run_pipeline(
     // ── Gate: Gaps? ─────────────────────────────────────────────────────────
     let gaps_present = gap_analysis.gaps_present;
     run.gates.push(GateRecord::Gaps {
-        decision: if gaps_present { GapDecision::GapsPresent } else { GapDecision::NoGaps },
+        decision: if gaps_present {
+            GapDecision::GapsPresent
+        } else {
+            GapDecision::NoGaps
+        },
         reason: gap_analysis.validation.reason.clone(),
     });
     run.record_stage(
         PipelineStage::GapGate,
         StageStatus::Completed,
-        if gaps_present { "Gaps present -> recovery" } else { "No gaps -> final timeline" },
+        if gaps_present {
+            "Gaps present -> recovery"
+        } else {
+            "No gaps -> final timeline"
+        },
     );
 
     // ── Stage: Recovery (only when gaps are present) ────────────────────────
@@ -702,7 +724,10 @@ pub fn run_pipeline(
         };
         // The recovery engine needs a parser + profile to vet candidates. Reuse the
         // same one the extraction stage used (OEM or unified fallback).
-        let key = run.oem_key_used.clone().unwrap_or_else(|| UNIFIED_OEM_KEY.to_string());
+        let key = run
+            .oem_key_used
+            .clone()
+            .unwrap_or_else(|| UNIFIED_OEM_KEY.to_string());
         let unified = unified_profile();
         let profile = registry
             .find_applicable(&key, None, None, None)
@@ -736,12 +761,18 @@ pub fn run_pipeline(
             let accepted = candidates
                 .iter()
                 .filter(|c| {
-                    !matches!(c.recovery_status, forensic_core::RecoveryStatus::Unrecoverable)
+                    !matches!(
+                        c.recovery_status,
+                        forensic_core::RecoveryStatus::Unrecoverable
+                    )
                 })
                 .count();
-            let any_partial = candidates
-                .iter()
-                .any(|c| matches!(c.recovery_status, forensic_core::RecoveryStatus::PartiallyRecoverable));
+            let any_partial = candidates.iter().any(|c| {
+                matches!(
+                    c.recovery_status,
+                    forensic_core::RecoveryStatus::PartiallyRecoverable
+                )
+            });
 
             let decision = if accepted == 0 {
                 RecoveryDecision::NotRecovered
@@ -820,7 +851,11 @@ pub fn run_pipeline(
                         StageStatus::Completed,
                         format!("{accepted} candidate(s) partially recovered"),
                     );
-                    run.record_stage(PipelineStage::RecoveryGate, StageStatus::Completed, "Partially recovered");
+                    run.record_stage(
+                        PipelineStage::RecoveryGate,
+                        StageStatus::Completed,
+                        "Partially recovered",
+                    );
                     run.outcome = PipelineOutcome::CompletedPartialRecovery;
                 }
                 RecoveryDecision::CompletelyRecovered => {
@@ -829,7 +864,11 @@ pub fn run_pipeline(
                         StageStatus::Completed,
                         format!("{accepted} candidate(s) recovered"),
                     );
-                    run.record_stage(PipelineStage::RecoveryGate, StageStatus::Completed, "Recovered");
+                    run.record_stage(
+                        PipelineStage::RecoveryGate,
+                        StageStatus::Completed,
+                        "Recovered",
+                    );
                     run.outcome = PipelineOutcome::CompletedAfterRecovery;
                 }
             }
@@ -849,7 +888,11 @@ pub fn run_pipeline(
             );
         }
     } else {
-        run.record_stage(PipelineStage::Recovery, StageStatus::Skipped, "No gaps; recovery not required");
+        run.record_stage(
+            PipelineStage::Recovery,
+            StageStatus::Skipped,
+            "No gaps; recovery not required",
+        );
         run.outcome = PipelineOutcome::CompletedNoGaps;
     }
 
@@ -858,8 +901,15 @@ pub fn run_pipeline(
     let final_timeline = TimelineEngine::build_timeline(final_events, options.ordering);
     run.record_stage(
         PipelineStage::FinalTimeline,
-        if run.requires_analyst { StageStatus::Completed } else { StageStatus::Completed },
-        format!("Final timeline built with {} event(s)", final_timeline.events.len()),
+        if run.requires_analyst {
+            StageStatus::Completed
+        } else {
+            StageStatus::Completed
+        },
+        format!(
+            "Final timeline built with {} event(s)",
+            final_timeline.events.len()
+        ),
     );
 
     run.parsing = Some(parsing_result);

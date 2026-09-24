@@ -120,7 +120,9 @@ fn a_random_image_is_not_attributed_to_hikvision() {
     let reader = RawReader::open(path.to_str().unwrap()).unwrap();
     let registry = ProfileRegistry::load_from_dir(&profiles_dir()).unwrap();
 
-    let outputs = DetectionOrchestrator::new().run(&reader, &registry).unwrap();
+    let outputs = DetectionOrchestrator::new()
+        .run(&reader, &registry)
+        .unwrap();
     let hik = outputs.iter().find(|o| o.oem_key == "hikvision").unwrap();
     assert_ne!(
         hik.status,
@@ -134,7 +136,9 @@ fn full_chain_detection_to_orphan_and_active_separation() {
     let c = open(realistic_dvr_volume());
 
     // ── Detection → confidence → profile → parser, as the API resolves them ──
-    let detector_outputs = DetectionOrchestrator::new().run(&c.reader, &c.registry).unwrap();
+    let detector_outputs = DetectionOrchestrator::new()
+        .run(&c.reader, &c.registry)
+        .unwrap();
     let classified = ConfidenceEngine::classify(
         &detector_outputs,
         &c.registry,
@@ -169,7 +173,11 @@ fn full_chain_detection_to_orphan_and_active_separation() {
         .expect("recovery runs");
 
     // ── Geometry and index came from evidence ────────────────────────────────
-    let geometry = outcome.plan.geometry.as_ref().expect("geometry established");
+    let geometry = outcome
+        .plan
+        .geometry
+        .as_ref()
+        .expect("geometry established");
     assert_eq!(geometry.physical_size, c.reader.len());
     assert_eq!(geometry.block_size, Some(c.image.block_size));
     assert_eq!(
@@ -252,10 +260,14 @@ fn an_engine_discovered_clip_reconstructs_into_an_exportable_stream_with_provena
     let volume = parser_hikvision::volume::read_volume(&c.reader, profile).unwrap();
     let (_, clip) = c.image.first_clip().expect("a clip in the fixture");
 
-    let reconstruction =
-        parser_hikvision::reconstruct_recording(&c.reader, profile, &volume, &clip.expected_clip_id)
-            .unwrap()
-            .expect("the recording behind the clip id");
+    let reconstruction = parser_hikvision::reconstruct_recording(
+        &c.reader,
+        profile,
+        &volume,
+        &clip.expected_clip_id,
+    )
+    .unwrap()
+    .expect("the recording behind the clip id");
 
     // The reconstruction is exportable: it has ordered payload ranges and a real codec.
     assert!(reconstruction.is_exportable());
@@ -266,7 +278,10 @@ fn an_engine_discovered_clip_reconstructs_into_an_exportable_stream_with_provena
     // range lies inside the clip it came from — never rebased, never past the end.
     let mut assembled = Vec::new();
     for r in &reconstruction.payload_regions {
-        assert!(r.offset + r.length <= c.reader.len(), "no range past the evidence");
+        assert!(
+            r.offset + r.length <= c.reader.len(),
+            "no range past the evidence"
+        );
         assembled.extend_from_slice(&c.reader.read_exact_at(r.offset, r.length as usize).unwrap());
     }
     assert_eq!(assembled.len() as u64, reconstruction.payload_bytes());
@@ -288,10 +303,14 @@ fn a_reconstructed_hikvision_recording_exports_as_artifacts_with_real_digests() 
         .unwrap();
     let volume = parser_hikvision::volume::read_volume(&c.reader, profile).unwrap();
     let (_, clip) = c.image.first_clip().unwrap();
-    let rec =
-        parser_hikvision::reconstruct_recording(&c.reader, profile, &volume, &clip.expected_clip_id)
-            .unwrap()
-            .unwrap();
+    let rec = parser_hikvision::reconstruct_recording(
+        &c.reader,
+        profile,
+        &volume,
+        &clip.expected_clip_id,
+    )
+    .unwrap()
+    .unwrap();
 
     // ── The stream: exactly the normalized export ranges, all evidence bytes ──
     let mut stream = Vec::new();
@@ -300,7 +319,11 @@ fn a_reconstructed_hikvision_recording_exports_as_artifacts_with_real_digests() 
         stream.extend_from_slice(&c.reader.read_exact_at(r.offset, r.length as usize).unwrap());
     }
     // PES framing was stripped: the stream is Annex-B H.264, not MPEG-PS.
-    assert_ne!(&stream[..4], &[0x00, 0x00, 0x01, 0xBA], "no pack header in the export");
+    assert_ne!(
+        &stream[..4],
+        &[0x00, 0x00, 0x01, 0xBA],
+        "no pack header in the export"
+    );
     let codec_evidence = recovery::VideoReconstructor::classify_codec(&stream);
     assert_eq!(codec_evidence.codec, recovery::VideoCodec::H264);
     assert_eq!(codec_evidence.validation.state, ValidationStateKind::Pass);
@@ -380,8 +403,14 @@ fn an_engine_discovered_orphan_exports_by_the_id_the_engine_reported() {
     let rec = parser_hikvision::reconstruct_recording(&c.reader, profile, &volume, parent)
         .unwrap()
         .expect("the engine's parent id resolves");
-    assert_eq!(&rec.recording_id, parent, "the id is used as given, never regenerated");
-    assert!(!rec.fully_accessible, "an orphan is not presented as a live recording");
+    assert_eq!(
+        &rec.recording_id, parent,
+        "the id is used as given, never regenerated"
+    );
+    assert!(
+        !rec.fully_accessible,
+        "an orphan is not presented as a live recording"
+    );
     assert!(rec.is_exportable());
     // The fragment's bytes lie inside the reconstructed recording's clips.
     let frag_start = cand.source_offsets[0].offset;
@@ -414,7 +443,10 @@ fn the_audited_pipeline_runs_end_to_end_on_a_hikvision_volume() {
         "the Hikvision parser was used, not the unified fallback"
     );
     assert!(!run.used_unified_fallback);
-    assert_eq!(run.attribution.as_ref().expect("attribution").oem_key, "hikvision");
+    assert_eq!(
+        run.attribution.as_ref().expect("attribution").oem_key,
+        "hikvision"
+    );
     assert_eq!(run.parsing.as_ref().expect("parsing").recordings.len(), 3);
 
     if let Some(recovery_summary) = &run.recovery {
@@ -437,7 +469,10 @@ fn the_audited_pipeline_runs_end_to_end_on_a_hikvision_volume() {
 #[test]
 fn parsing_stages_pass_and_report_real_structures() {
     let c = open(realistic_dvr_volume());
-    let profile = c.registry.find_applicable("hikvision", None, None, None).unwrap();
+    let profile = c
+        .registry
+        .find_applicable("hikvision", None, None, None)
+        .unwrap();
     let result = ParsingOrchestrator::new()
         .run_parsing("hikvision", &c.reader, profile)
         .expect("parsing runs");
@@ -464,7 +499,9 @@ fn parsing_stages_pass_and_report_real_structures() {
     assert_eq!(result.recordings.len(), 3);
     let available = result.recordings.iter().filter(|r| {
         r.integrity.iter().any(|f| match f {
-            forensic_core::IntegrityFlag::Custom(s) => s.contains("unreferenced") || s.contains("available"),
+            forensic_core::IntegrityFlag::Custom(s) => {
+                s.contains("unreferenced") || s.contains("available")
+            }
             _ => false,
         })
     });
@@ -484,7 +521,10 @@ fn parsing_stages_pass_and_report_real_structures() {
 #[test]
 fn a_multi_block_recording_reconstructs_across_the_block_boundary() {
     let c = open(forensic_tests::hikvision_fixtures::multi_block_recording_volume());
-    let profile = c.registry.find_applicable("hikvision", None, None, None).unwrap();
+    let profile = c
+        .registry
+        .find_applicable("hikvision", None, None, None)
+        .unwrap();
     let volume = parser_hikvision::volume::read_volume(&c.reader, profile).unwrap();
     let (_, seed) = c
         .image
@@ -495,10 +535,14 @@ fn a_multi_block_recording_reconstructs_across_the_block_boundary() {
         .map(|clip| (0u32, clip))
         .unwrap();
 
-    let reconstruction =
-        parser_hikvision::reconstruct_recording(&c.reader, profile, &volume, &seed.expected_clip_id)
-            .unwrap()
-            .expect("a recording");
+    let reconstruction = parser_hikvision::reconstruct_recording(
+        &c.reader,
+        profile,
+        &volume,
+        &seed.expected_clip_id,
+    )
+    .unwrap()
+    .expect("a recording");
     assert_eq!(
         reconstruction.blocks.len(),
         2,
@@ -522,7 +566,10 @@ fn a_corrupt_footer_block_yields_carved_candidates_not_index_claims() {
         ..Default::default()
     };
     let c = open(build_hikvision_image(&spec));
-    let profile = c.registry.find_applicable("hikvision", None, None, None).unwrap();
+    let profile = c
+        .registry
+        .find_applicable("hikvision", None, None, None)
+        .unwrap();
     let parser = ParsingOrchestrator::new();
     let parser = parser.parser_for("hikvision").unwrap();
 

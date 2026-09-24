@@ -38,7 +38,14 @@ fn dahua_fixture_runs_full_flow_to_final_timeline() {
     let config = ConfidenceConfig::provisional_default();
     let options = PipelineOptions::default();
 
-    let run = run_pipeline(forensic_core::EvidenceId::new(), &reader, &registry, &config, &options).expect("pipeline runs");
+    let run = run_pipeline(
+        forensic_core::EvidenceId::new(),
+        &reader,
+        &registry,
+        &config,
+        &options,
+    )
+    .expect("pipeline runs");
 
     // Attribution should confirm Dahua and take the OEM-confirmed branch.
     let attribution = run.attribution.as_ref().expect("attribution present");
@@ -107,11 +114,22 @@ fn every_stage_and_gate_has_a_reason() {
     let reader = RawReader::open(raw.to_str().unwrap()).unwrap();
     let registry = load_registry();
     let config = ConfidenceConfig::provisional_default();
-    let run = run_pipeline(forensic_core::EvidenceId::new(), &reader, &registry, &config, &PipelineOptions::default()).unwrap();
+    let run = run_pipeline(
+        forensic_core::EvidenceId::new(),
+        &reader,
+        &registry,
+        &config,
+        &PipelineOptions::default(),
+    )
+    .unwrap();
 
     // Auditability: no stage detail or gate reason may be empty.
     for stage in &run.stages {
-        assert!(!stage.detail.trim().is_empty(), "stage {:?} has empty detail", stage.stage);
+        assert!(
+            !stage.detail.trim().is_empty(),
+            "stage {:?} has empty detail",
+            stage.stage
+        );
     }
     for gate in &run.gates {
         let reason = match gate {

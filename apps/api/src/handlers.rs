@@ -1,27 +1,27 @@
-use std::sync::Arc;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use evidence_reader::{inspect_source, RawReader};
 
-use forensic_core::case_manager::EvidenceRegistrationInput;
-use forensic_core::{CaseId, EvidenceId, ExaminerId, ForensicError, Evidence};
-use forensic_core::acquisition::{Acquisition, AcquisitionStatus};
-use forensic_core::chain_of_custody::{CustodyEvent, CustodyAction};
-use hashing::HashingService;
 use chrono::Utc;
+use forensic_core::acquisition::{Acquisition, AcquisitionStatus};
+use forensic_core::case_manager::EvidenceRegistrationInput;
+use forensic_core::chain_of_custody::{CustodyAction, CustodyEvent};
+use forensic_core::{CaseId, Evidence, EvidenceId, ExaminerId, ForensicError};
+use hashing::HashingService;
 
+use confidence::config::ConfidenceConfig;
+use confidence::engine::ConfidenceEngine;
 use detection::orchestrator::DetectionOrchestrator;
 use detection::topology::StorageTopologyProfiler;
-use confidence::engine::ConfidenceEngine;
-use confidence::config::ConfidenceConfig;
 use parsing::ParsingOrchestrator;
 
-use crate::state::AppState;
 use crate::capability_service;
 use crate::db::repositories;
+use crate::state::AppState;
 
 /// Standard API problem response format.
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,13 +32,14 @@ pub struct ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let status = if self.error.contains("missing required field") || self.error.contains("not found") {
-            StatusCode::BAD_REQUEST
-        } else if self.error.contains("REJECTED") {
-            StatusCode::UNPROCESSABLE_ENTITY
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
+        let status =
+            if self.error.contains("missing required field") || self.error.contains("not found") {
+                StatusCode::BAD_REQUEST
+            } else if self.error.contains("REJECTED") {
+                StatusCode::UNPROCESSABLE_ENTITY
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
         (status, Json(self)).into_response()
     }
 }
@@ -73,12 +74,20 @@ pub async fn create_case(
     Json(payload): Json<CreateCasePayload>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     let examiner = ExaminerId::new(payload.examiner);
-    
-    let case = repositories::cases::create_case(&state.db_pool, &payload.name, &payload.description, &examiner)
-        .await
-        .map_err(map_err)?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::to_value(&case).unwrap())))
+    let case = repositories::cases::create_case(
+        &state.db_pool,
+        &payload.name,
+        &payload.description,
+        &examiner,
+    )
+    .await
+    .map_err(map_err)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&case).unwrap()),
+    ))
 }
 
 /// GET /api/cases/:id
@@ -115,8 +124,9 @@ pub async fn register_evidence(
     let reader_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(reader);
 
     // Compute ingest SHA-256 in bounded windows
-    let hash_record = HashingService::hash_reader(reader_arc.as_ref(), 16 * 1024 * 1024, None, None)
-        .map_err(map_err)?;
+    let hash_record =
+        HashingService::hash_reader(reader_arc.as_ref(), 16 * 1024 * 1024, None, None)
+            .map_err(map_err)?;
 
     let now = Utc::now();
     let evidence_id = EvidenceId::new();
@@ -132,7 +142,9 @@ pub async fn register_evidence(
         responsible_examiner: input.responsible_examiner.clone(),
         acquisition_tool: input.acquisition_tool,
         acquisition_tool_version: input.acquisition_tool_version,
-        source_state: input.source_state.unwrap_or(forensic_core::SourceState::Unknown),
+        source_state: input
+            .source_state
+            .unwrap_or(forensic_core::SourceState::Unknown),
         acquisition_id: Some(acq_id.clone()),
         path: input.path.clone(),
         registered_at: now,
@@ -160,14 +172,24 @@ pub async fn register_evidence(
     let custody = CustodyEvent::new(
         evidence.responsible_examiner.clone(),
         CustodyAction::Ingest,
-        format!("Registered evidence {} (hash: {})", evidence_id.0, hash_record.value.hex()),
+        format!(
+            "Registered evidence {} (hash: {})",
+            evidence_id.0,
+            hash_record.value.hex()
+        ),
         case_id.clone(),
     );
 
     // Save to DB in correct dependency order (acquisitions before evidence to satisfy foreign key)
-    repositories::acquisitions::create_acquisition(&state.db_pool, &acquisition).await.map_err(map_err)?;
-    repositories::evidence::create_evidence(&state.db_pool, &evidence).await.map_err(map_err)?;
-    repositories::custody::insert_event(&state.db_pool, &custody).await.map_err(map_err)?;
+    repositories::acquisitions::create_acquisition(&state.db_pool, &acquisition)
+        .await
+        .map_err(map_err)?;
+    repositories::evidence::create_evidence(&state.db_pool, &evidence)
+        .await
+        .map_err(map_err)?;
+    repositories::custody::insert_event(&state.db_pool, &custody)
+        .await
+        .map_err(map_err)?;
 
     // Register reader in state for byte reads
     let mut readers = state.readers.write().await;
@@ -292,9 +314,9 @@ pub async fn read_evidence_bytes(
     // Limit maximum read window to 64 KiB for interactive hex view
     let max_len = 65536;
     let mut length = params.length.min(max_len);
-    
+
     let source_len = reader.len();
-    
+
     // Gracefully handle requests near or past EOF so the frontend doesn't crash on mocked offsets
     if params.offset >= source_len {
         length = 0;
@@ -335,7 +357,7 @@ pub async fn search_evidence(
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let evidence_id = EvidenceId(id);
-    
+
     // Pattern to search
     let pattern = if params.search_type == "hex" {
         hex::decode(&params.term).map_err(|_| ApiError {
@@ -351,23 +373,30 @@ pub async fn search_evidence(
     // Use RegionScanner to search up to 1GB forward
     let max_len = 1024 * 1024 * 1024; // 1GB bound
     let end_offset = params.offset.saturating_add(max_len).min(reader.len());
-    let target = forensic_core::Region::new(params.offset, end_offset - params.offset).map_err(map_err)?;
+    let target =
+        forensic_core::Region::new(params.offset, end_offset - params.offset).map_err(map_err)?;
     let options = evidence_reader::scanner::ScanOptions::default();
-    let scanner = evidence_reader::scanner::RegionScanner::new(reader.as_ref(), target, options).map_err(map_err)?;
-    
+    let scanner = evidence_reader::scanner::RegionScanner::new(reader.as_ref(), target, options)
+        .map_err(map_err)?;
+
     let mut found_offset = None;
     let pattern_len = pattern.len();
 
     if pattern_len > 0 {
-        scanner.scan(None, None, |chunk_offset, chunk| {
-            if chunk.len() >= pattern_len {
-                if let Some(pos) = chunk.windows(pattern_len).position(|window| window == pattern) {
-                    found_offset = Some(chunk_offset + pos as u64);
-                    return Ok(false);
+        scanner
+            .scan(None, None, |chunk_offset, chunk| {
+                if chunk.len() >= pattern_len {
+                    if let Some(pos) = chunk
+                        .windows(pattern_len)
+                        .position(|window| window == pattern)
+                    {
+                        found_offset = Some(chunk_offset + pos as u64);
+                        return Ok(false);
+                    }
                 }
-            }
-            Ok(true)
-        }).map_err(map_err)?;
+                Ok(true)
+            })
+            .map_err(map_err)?;
     }
 
     Ok(Json(serde_json::json!({
@@ -400,8 +429,9 @@ pub async fn run_detection(
     let config = ConfidenceConfig::provisional_default();
 
     // Evaluate outputs through the confidence engine across all candidates
-    let results = ConfidenceEngine::classify_all(&detector_outputs, &state.profile_registry, &config)
-        .map_err(map_err)?;
+    let results =
+        ConfidenceEngine::classify_all(&detector_outputs, &state.profile_registry, &config)
+            .map_err(map_err)?;
 
     Ok(Json(serde_json::to_value(results).unwrap()))
 }
@@ -420,7 +450,9 @@ pub async fn run_parsing(
     let evidence_id = EvidenceId(id);
     let reader = get_or_open_reader(&state, &evidence_id).await?;
 
-    let profile = state.profile_registry.find_applicable(&payload.oem_key, None, None, None)
+    let profile = state
+        .profile_registry
+        .find_applicable(&payload.oem_key, None, None, None)
         .ok_or_else(|| ApiError {
             error: format!("No active profile found for OEM: {}", payload.oem_key),
             details: None,
@@ -460,7 +492,8 @@ pub async fn run_parsing(
                 rec,
                 None,
                 None,
-            ).await;
+            )
+            .await;
         }
     }
 
@@ -539,7 +572,10 @@ fn reconstruct_oem_chain(
     oem_key: &str,
     chain_id: &str,
 ) -> Result<Option<(Vec<forensic_core::Region>, u32, String)>, ApiError> {
-    let profile = match state.profile_registry.find_applicable(oem_key, None, None, None) {
+    let profile = match state
+        .profile_registry
+        .find_applicable(oem_key, None, None, None)
+    {
         Some(p) => p,
         None => return Ok(None),
     };
@@ -549,8 +585,9 @@ fn reconstruct_oem_chain(
         let Some(classified) = parser_dahua::find_chain(&volume, chain_id) else {
             return Ok(None);
         };
-        let reconstruction = parser_dahua::reconstruct_recording(reader, profile, &classified.chain)
-            .map_err(map_err)?;
+        let reconstruction =
+            parser_dahua::reconstruct_recording(reader, profile, &classified.chain)
+                .map_err(map_err)?;
         if reconstruction.payload_regions.is_empty() {
             return Err(ApiError {
                 error: format!(
@@ -657,7 +694,9 @@ pub async fn reconstruct_recording(
     // 1. Resolve source regions
     let rec_uuid = uuid::Uuid::parse_str(&rec_id_raw).ok();
     let db_rec = match rec_uuid {
-        Some(u) => repositories::recordings::get_recording(&state.db_pool, u).await.map_err(map_err)?,
+        Some(u) => repositories::recordings::get_recording(&state.db_pool, u)
+            .await
+            .map_err(map_err)?,
         None => None,
     };
 
@@ -797,7 +836,10 @@ pub async fn reconstruct_recording(
     let max_sync_bytes: u64 = 500 * 1024 * 1024;
     if total_bytes > max_sync_bytes {
         return Err(ApiError {
-            error: format!("Recording payload ({} MB) exceeds maximum synchronous threshold (500 MB)", total_bytes / (1024 * 1024)),
+            error: format!(
+                "Recording payload ({} MB) exceeds maximum synchronous threshold (500 MB)",
+                total_bytes / (1024 * 1024)
+            ),
             details: Some("Consider running bounded L2/L3 region carving".into()),
         });
     }
@@ -805,7 +847,9 @@ pub async fn reconstruct_recording(
     // 3. Extract exact bytes from evidence
     let mut raw_payload = Vec::with_capacity(total_bytes as usize);
     for reg in &source_regions {
-        let chunk = reader.read_exact_at(reg.offset, reg.length as usize).map_err(map_err)?;
+        let chunk = reader
+            .read_exact_at(reg.offset, reg.length as usize)
+            .map_err(map_err)?;
         raw_payload.extend_from_slice(&chunk);
     }
 
@@ -826,23 +870,51 @@ pub async fn reconstruct_recording(
     // spelling is used: ':' is illegal on Windows and '/' or '..' would escape the case tree.
     let rec_dir_name: String = rec_id_raw
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    let base_artifact_dir = std::path::PathBuf::from(format!("artifacts/cases/{}/recordings/{}", case_id.0, rec_dir_name));
+    let base_artifact_dir = std::path::PathBuf::from(format!(
+        "artifacts/cases/{}/recordings/{}",
+        case_id.0, rec_dir_name
+    ));
     let es_dir = base_artifact_dir.join("elementary");
     let remux_dir = base_artifact_dir.join("remux");
 
-    state.write_guard.validate_write_path(&es_dir.join(&es_filename)).map_err(map_err)?;
-    state.write_guard.validate_write_path(&remux_dir).map_err(map_err)?;
+    state
+        .write_guard
+        .validate_write_path(&es_dir.join(&es_filename))
+        .map_err(map_err)?;
+    state
+        .write_guard
+        .validate_write_path(&remux_dir)
+        .map_err(map_err)?;
 
-    std::fs::create_dir_all(&es_dir).map_err(|e| {
-        ForensicError::io(format!("Creating elementary stream directory '{}'", es_dir.display()), e)
-    }).map_err(map_err)?;
+    std::fs::create_dir_all(&es_dir)
+        .map_err(|e| {
+            ForensicError::io(
+                format!(
+                    "Creating elementary stream directory '{}'",
+                    es_dir.display()
+                ),
+                e,
+            )
+        })
+        .map_err(map_err)?;
 
     let es_path = es_dir.join(&es_filename);
-    std::fs::write(&es_path, &raw_payload).map_err(|e| {
-        ForensicError::io(format!("Materializing elementary stream at '{}'", es_path.display()), e)
-    }).map_err(map_err)?;
+    std::fs::write(&es_path, &raw_payload)
+        .map_err(|e| {
+            ForensicError::io(
+                format!("Materializing elementary stream at '{}'", es_path.display()),
+                e,
+            )
+        })
+        .map_err(map_err)?;
 
     let es_sha256 = recovery::ffmpeg::hash_file_sha256(&es_path).map_err(map_err)?;
     let es_hash = forensic_core::Hash::sha256(hex::decode(&es_sha256).map_err(|e| ApiError {
@@ -880,7 +952,11 @@ pub async fn reconstruct_recording(
         raw_payload.len(),
         source_regions.len()
     );
-    if let Some(fid) = payload.fragment_id.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(fid) = payload
+        .fragment_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
         // Preserved, never regenerated: the artifact carries the same identifier the recovery
         // engine assigned the discovery.
         es_reason.push_str(&format!("; recovery engine fragment id {fid}"));
@@ -927,13 +1003,17 @@ pub async fn reconstruct_recording(
         &es_sha256,
         raw_payload.len() as u64,
         0,
-    ).await.map_err(map_err)?;
+    )
+    .await
+    .map_err(map_err)?;
 
     // 6. Invoke FFmpeg stream-copy remux
     let mut remux_response = None;
     let ffmpeg_status = state.ffmpeg_service.status();
 
-    if ffmpeg_status.available && (codec == recovery::VideoCodec::H264 || codec == recovery::VideoCodec::H265) {
+    if ffmpeg_status.available
+        && (codec == recovery::VideoCodec::H264 || codec == recovery::VideoCodec::H265)
+    {
         let remux_art_id = forensic_core::ArtifactId::new();
         let mp4_filename = format!("{}.mp4", remux_art_id.0);
         let mp4_path = remux_dir.join(&mp4_filename);
@@ -943,7 +1023,11 @@ pub async fn reconstruct_recording(
             timeout_secs: Some(300),
         };
 
-        match state.ffmpeg_service.remux_elementary_stream_file(&es_path, &mp4_path, remux_opts, None).await {
+        match state
+            .ffmpeg_service
+            .remux_elementary_stream_file(&es_path, &mp4_path, remux_opts, None)
+            .await
+        {
             Ok(remux_res) => {
                 let mp4_hash = forensic_core::Hash::sha256(
                     hex::decode(&remux_res.output_sha256).map_err(|e| ApiError {
@@ -988,7 +1072,9 @@ pub async fn reconstruct_recording(
                     &remux_res.output_sha256,
                     remux_res.output_size_bytes,
                     remux_res.duration_ms,
-                ).await.map_err(map_err)?;
+                )
+                .await
+                .map_err(map_err)?;
 
                 remux_response = Some(serde_json::json!({
                     "artifact_id": remux_art_id.0,
@@ -1050,9 +1136,10 @@ pub async fn list_evidence_artifacts(
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let evidence_id = EvidenceId(id);
-    let records = repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
-        .await
-        .map_err(map_err)?;
+    let records =
+        repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
+            .await
+            .map_err(map_err)?;
 
     Ok(Json(serde_json::to_value(records).unwrap()))
 }
@@ -1094,39 +1181,49 @@ pub async fn stream_artifact_video(
         })?;
 
     let target_path = std::path::PathBuf::from(&record.output_path);
-    state.write_guard.validate_write_path(&target_path).map_err(map_err)?;
+    state
+        .write_guard
+        .validate_write_path(&target_path)
+        .map_err(map_err)?;
 
     if !target_path.exists() {
         return Err(ApiError {
-            error: format!("artifact file '{}' does not exist on disk", target_path.display()),
+            error: format!(
+                "artifact file '{}' does not exist on disk",
+                target_path.display()
+            ),
             details: None,
         });
     }
 
-    let metadata = std::fs::metadata(&target_path).map_err(|e| {
-        ApiError {
-            error: format!("failed to read metadata for '{}': {e}", target_path.display()),
-            details: None,
-        }
+    let metadata = std::fs::metadata(&target_path).map_err(|e| ApiError {
+        error: format!(
+            "failed to read metadata for '{}': {e}",
+            target_path.display()
+        ),
+        details: None,
     })?;
 
     let total_size = metadata.len();
-    let mut file = std::fs::File::open(&target_path).map_err(|e| {
-        ApiError {
-            error: format!("failed to open '{}': {e}", target_path.display()),
-            details: None,
-        }
+    let mut file = std::fs::File::open(&target_path).map_err(|e| ApiError {
+        error: format!("failed to open '{}': {e}", target_path.display()),
+        details: None,
     })?;
 
     // Check for HTTP Range header
-    let range_header = headers.get(axum::http::header::RANGE).and_then(|h| h.to_str().ok());
+    let range_header = headers
+        .get(axum::http::header::RANGE)
+        .and_then(|h| h.to_str().ok());
 
     if let Some(range_val) = range_header {
         if let Some(range_spec) = range_val.strip_prefix("bytes=") {
             let parts: Vec<&str> = range_spec.split('-').collect();
             let start = parts[0].parse::<u64>().unwrap_or(0);
             let end = if parts.len() > 1 && !parts[1].is_empty() {
-                parts[1].parse::<u64>().unwrap_or(total_size - 1).min(total_size - 1)
+                parts[1]
+                    .parse::<u64>()
+                    .unwrap_or(total_size - 1)
+                    .min(total_size - 1)
             } else {
                 total_size - 1
             };
@@ -1136,18 +1233,14 @@ pub async fn stream_artifact_video(
                 let chunk_len = (end - start + 1) as usize;
                 let mut buffer = vec![0u8; chunk_len];
 
-                file.seek(SeekFrom::Start(start)).map_err(|e| {
-                    ApiError {
-                        error: format!("seek failed on video file: {e}"),
-                        details: None,
-                    }
+                file.seek(SeekFrom::Start(start)).map_err(|e| ApiError {
+                    error: format!("seek failed on video file: {e}"),
+                    details: None,
                 })?;
 
-                file.read_exact(&mut buffer).map_err(|e| {
-                    ApiError {
-                        error: format!("read failed on video chunk: {e}"),
-                        details: None,
-                    }
+                file.read_exact(&mut buffer).map_err(|e| ApiError {
+                    error: format!("read failed on video chunk: {e}"),
+                    details: None,
                 })?;
 
                 let content_range = format!("bytes {}-{}/{}", start, end, total_size);
@@ -1169,11 +1262,9 @@ pub async fn stream_artifact_video(
     // Full file response (200 OK)
     use std::io::Read;
     let mut buffer = Vec::with_capacity(total_size as usize);
-    file.read_to_end(&mut buffer).map_err(|e| {
-        ApiError {
-            error: format!("failed to read full video file: {e}"),
-            details: None,
-        }
+    file.read_to_end(&mut buffer).map_err(|e| ApiError {
+        error: format!("failed to read full video file: {e}"),
+        details: None,
     })?;
 
     let response = Response::builder()
@@ -1210,8 +1301,12 @@ async fn resolve_oem_key(
     let detector_outputs = orchestrator
         .run(reader, &state.profile_registry)
         .map_err(map_err)?;
-    let results = ConfidenceEngine::classify_all(&detector_outputs, &state.profile_registry, &config_default())
-        .map_err(map_err)?;
+    let results = ConfidenceEngine::classify_all(
+        &detector_outputs,
+        &state.profile_registry,
+        &config_default(),
+    )
+    .map_err(map_err)?;
 
     // Only an attribution the confidence engine actually made counts. The first result is
     // always present when any detector ran, even when every score is zero — taking it
@@ -1399,9 +1494,10 @@ pub async fn run_recovery(
     let claim_map = &outcome.plan.claim_map;
 
     // Which artifacts already exist for this evidence (drives the artifact badges).
-    let artifacts = repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
-        .await
-        .unwrap_or_default();
+    let artifacts =
+        repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
+            .await
+            .unwrap_or_default();
     let has_native_artifact = artifacts.iter().any(|a| a.kind.contains("elementary"));
     let has_derived_artifact = artifacts.iter().any(|a| a.kind.contains("remux"));
 
@@ -1479,7 +1575,11 @@ pub async fn run_recovery(
             fragment_id: None,
             channel: Some(rec.channel),
             partition,
-            time_native: rec.time.recorder_native.as_ref().map(|t| t.iso_8601.clone()),
+            time_native: rec
+                .time
+                .recorder_native
+                .as_ref()
+                .map(|t| t.iso_8601.clone()),
             time_normalized: rec.time.normalized.as_ref().map(|t| t.iso_8601.clone()),
             timezone_state,
             start_time_unix: start_unix,
@@ -1710,13 +1810,9 @@ fn has_annexb_start(b: &[u8]) -> bool {
 /// zero (`00 00 00 01`) when present so the inspector shows the full start code. Returns
 /// `None` when the window has no start code (e.g. a slot of pure zero padding).
 fn first_annexb_start(b: &[u8]) -> Option<usize> {
-    b.windows(4).position(is_nal_start).map(|i| {
-        if i > 0 && b[i - 1] == 0x00 {
-            i - 1
-        } else {
-            i
-        }
-    })
+    b.windows(4)
+        .position(is_nal_start)
+        .map(|i| if i > 0 && b[i - 1] == 0x00 { i - 1 } else { i })
 }
 
 /// POST /api/evidence/:id/recovery/gap
@@ -1783,17 +1879,27 @@ pub async fn recover_gap(
             })?;
         let region =
             forensic_core::Region::new(scan_start, scan_end - scan_start).map_err(map_err)?;
-        Some(parser_hikvision::carve::carve_region(reader.as_ref(), profile, region).map_err(map_err)?)
+        Some(
+            parser_hikvision::carve::carve_region(reader.as_ref(), profile, region)
+                .map_err(map_err)?,
+        )
     } else {
         None
     };
 
     for k in 0..num_slots {
         let off = scan_start + (k as u64) * slot_bytes;
-        let this_len = if k + 1 == num_slots { scan_end.saturating_sub(off) } else { slot_bytes };
+        let this_len = if k + 1 == num_slots {
+            scan_end.saturating_sub(off)
+        } else {
+            slot_bytes
+        };
 
         if let Some(carve) = &hikvision_carve {
-            let slot = forensic_core::Region { offset: off, length: this_len };
+            let slot = forensic_core::Region {
+                offset: off,
+                length: this_len,
+            };
             let overlapping: Vec<&parser_hikvision::CarvedCandidate> = carve
                 .candidates
                 .iter()
@@ -1809,7 +1915,10 @@ pub async fn recover_gap(
                 let (data_state, status) = if recoverable {
                     // No index evidence here either: present and structurally valid, but not
                     // linked to an index entry. Never Active, never Deleted.
-                    (forensic_core::DataState::Unindexed, forensic_core::RecoveryStatus::Recoverable)
+                    (
+                        forensic_core::DataState::Unindexed,
+                        forensic_core::RecoveryStatus::Recoverable,
+                    )
                 } else {
                     (
                         forensic_core::DataState::Corrupted,
@@ -1852,7 +1961,10 @@ pub async fn recover_gap(
 
         let ev = recovery::VideoReconstructor::classify_codec(&bytes);
         let score = ev.h264_score + ev.h265_score + ev.mjpeg_score;
-        let is_pass = matches!(ev.validation.state, forensic_core::ValidationStateKind::Pass);
+        let is_pass = matches!(
+            ev.validation.state,
+            forensic_core::ValidationStateKind::Pass
+        );
         let has_start = has_annexb_start(&bytes);
         // Where the meaningful stream data actually begins inside this slot. The slot
         // start is frequently zero padding, so point the Hex inspector at the first
@@ -1999,7 +2111,8 @@ pub async fn get_timeline(
         _ => timeline::TimelineOrdering::Normalized,
     };
 
-    let unified = timeline::TimelineEngine::build_timeline(parsing_result.timeline_events, ordering);
+    let unified =
+        timeline::TimelineEngine::build_timeline(parsing_result.timeline_events, ordering);
 
     let mut value = serde_json::to_value(&unified).unwrap_or_default();
     if let Some(obj) = value.as_object_mut() {
@@ -2035,8 +2148,14 @@ pub async fn run_full_pipeline(
     let config = ConfidenceConfig::provisional_default();
     let options = PipelineOptions::default();
 
-    let run: PipelineRun = run_pipeline(evidence_id, reader.as_ref(), &state.profile_registry, &config, &options)
-        .map_err(map_err)?;
+    let run: PipelineRun = run_pipeline(
+        evidence_id,
+        reader.as_ref(),
+        &state.profile_registry,
+        &config,
+        &options,
+    )
+    .map_err(map_err)?;
 
     // Persist parser runs + recordings when the flow actually parsed something, so the
     // report and reconstruction stages can reference persisted rows.
@@ -2119,7 +2238,10 @@ fn recover_gap_region(
 
         let ev = recovery::VideoReconstructor::classify_codec(&bytes);
         let score = ev.h264_score + ev.h265_score + ev.mjpeg_score;
-        let is_pass = matches!(ev.validation.state, forensic_core::ValidationStateKind::Pass);
+        let is_pass = matches!(
+            ev.validation.state,
+            forensic_core::ValidationStateKind::Pass
+        );
         let has_start = has_annexb_start(&bytes);
         let data_offset = first_annexb_start(&bytes)
             .map(|rel| off + rel as u64)
@@ -2128,7 +2250,10 @@ fn recover_gap_region(
         let (level, reason) = if is_pass {
             (
                 Some("L1".to_string()),
-                format!("L1 indexed: clean {:?} stream with valid parameter sets", ev.codec),
+                format!(
+                    "L1 indexed: clean {:?} stream with valid parameter sets",
+                    ev.codec
+                ),
             )
         } else if score > 0 {
             (
@@ -2138,7 +2263,8 @@ fn recover_gap_region(
         } else if has_start {
             (
                 Some("L3".to_string()),
-                "L3 raw carve: Annex-B start code(s) found but no decodable NAL structure".to_string(),
+                "L3 raw carve: Annex-B start code(s) found but no decodable NAL structure"
+                    .to_string(),
             )
         } else {
             (
@@ -2202,7 +2328,9 @@ pub async fn get_report(
     Query(query): Query<ReportQuery>,
 ) -> Result<Response, ApiError> {
     use reporting::model::*;
-    use reporting::{CsvReportExporter, FormattedReportExporter, JsonReportExporter, ReportAuditor};
+    use reporting::{
+        CsvReportExporter, FormattedReportExporter, JsonReportExporter, ReportAuditor,
+    };
 
     let evidence_id = EvidenceId(id);
     let reader = get_or_open_reader(&state, &evidence_id).await?;
@@ -2218,8 +2346,14 @@ pub async fn get_report(
 
     // Run the pipeline to obtain real attribution, parsing, recovery, and timeline.
     let config = ConfidenceConfig::provisional_default();
-    let run = run_pipeline(evidence_id, reader.as_ref(), &state.profile_registry, &config, &PipelineOptions::default())
-        .map_err(map_err)?;
+    let run = run_pipeline(
+        evidence_id,
+        reader.as_ref(),
+        &state.profile_registry,
+        &config,
+        &PipelineOptions::default(),
+    )
+    .map_err(map_err)?;
 
     // Real SHA-256 of the evidence image (bounded, chunked read).
     let sha_hex = recovery::hash_file_sha256(std::path::Path::new(&evidence.path))
@@ -2282,10 +2416,14 @@ pub async fn get_report(
     // path the evidence took through the flow.
     for gate in &run.gates {
         let (operation, reason) = match gate {
-            pipeline::GateRecord::Threshold { reason, .. } => ("gate:score_above_threshold", reason.clone()),
+            pipeline::GateRecord::Threshold { reason, .. } => {
+                ("gate:score_above_threshold", reason.clone())
+            }
             pipeline::GateRecord::Parsed { reason, .. } => ("gate:is_parsed", reason.clone()),
             pipeline::GateRecord::Gaps { reason, .. } => ("gate:gaps_present", reason.clone()),
-            pipeline::GateRecord::Recovery { reason, .. } => ("gate:recovery_outcome", reason.clone()),
+            pipeline::GateRecord::Recovery { reason, .. } => {
+                ("gate:recovery_outcome", reason.clone())
+            }
         };
         validation_summary.push(ValidationRecord {
             operation: operation.to_string(),
@@ -2304,7 +2442,14 @@ pub async fn get_report(
                 .iter()
                 .enumerate()
                 .map(|(i, rec)| {
-                    let region = rec.source_offsets.first().cloned().unwrap_or(forensic_core::Region { offset: 0, length: 0 });
+                    let region =
+                        rec.source_offsets
+                            .first()
+                            .cloned()
+                            .unwrap_or(forensic_core::Region {
+                                offset: 0,
+                                length: 0,
+                            });
                     RecordingReportItem {
                         recording_id: format!("rec-{}-ch{}", i + 1, rec.channel),
                         channel: rec.channel,
@@ -2336,50 +2481,59 @@ pub async fn get_report(
         })
         .unwrap_or_default();
 
-    let (recovery_items, recovery_run_bounds) = match &run.recovery {
-        Some(r) => {
-            let items = r
-                .candidates
-                .iter()
-                .enumerate()
-                .map(|(i, c)| {
-                    let region = c.source_offsets.first().cloned().unwrap_or(forensic_core::Region { offset: 0, length: 0 });
-                    // Channel comes from the fragment, which only has one when an index
-                    // entry supplied it. Carved video reports `None`, not channel 0.
-                    let frag = r.fragments.get(i);
-                    RecoveryReportItem {
-                        candidate_id: format!("cand-{}", i + 1),
-                        channel: frag.and_then(|f| f.camera_id.value().copied()),
-                        recovery_level: format!("{:?}", c.recovery_level),
-                        data_state: format!("{:?}", c.data_state),
-                        recovery_status: format!("{:?}", c.recovery_status),
-                        source_offset: region.offset,
-                        source_length: region.length,
-                        validation_state: format!("{:?}", c.validation.structure.state),
-                        validation_reason: c.validation.structure.reason.clone(),
-                        discovery_method: frag
-                            .map(|f| f.discovery_method.label().to_string())
-                            .unwrap_or_default(),
-                        state_reason: c.provenance.validation_state.reason.clone(),
-                    }
-                })
-                .collect();
-            let bounds = RecoveryRunBoundsReport {
-                searched_bytes: r.run.searched_bytes,
-                total_bytes: reader.len(),
-                truncated: r.run.truncated,
-                cancelled: r.run.cancelled,
-                candidate_count: r.run.candidate_count,
-                accepted_count: r.run.accepted,
-                rejected_count: r.run.rejected,
-            };
-            (items, Some(bounds))
-        }
-        None => (vec![], None),
-    };
+    let (recovery_items, recovery_run_bounds) =
+        match &run.recovery {
+            Some(r) => {
+                let items =
+                    r.candidates
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            let region = c.source_offsets.first().cloned().unwrap_or(
+                                forensic_core::Region {
+                                    offset: 0,
+                                    length: 0,
+                                },
+                            );
+                            // Channel comes from the fragment, which only has one when an index
+                            // entry supplied it. Carved video reports `None`, not channel 0.
+                            let frag = r.fragments.get(i);
+                            RecoveryReportItem {
+                                candidate_id: format!("cand-{}", i + 1),
+                                channel: frag.and_then(|f| f.camera_id.value().copied()),
+                                recovery_level: format!("{:?}", c.recovery_level),
+                                data_state: format!("{:?}", c.data_state),
+                                recovery_status: format!("{:?}", c.recovery_status),
+                                source_offset: region.offset,
+                                source_length: region.length,
+                                validation_state: format!("{:?}", c.validation.structure.state),
+                                validation_reason: c.validation.structure.reason.clone(),
+                                discovery_method: frag
+                                    .map(|f| f.discovery_method.label().to_string())
+                                    .unwrap_or_default(),
+                                state_reason: c.provenance.validation_state.reason.clone(),
+                            }
+                        })
+                        .collect();
+                let bounds = RecoveryRunBoundsReport {
+                    searched_bytes: r.run.searched_bytes,
+                    total_bytes: reader.len(),
+                    truncated: r.run.truncated,
+                    cancelled: r.run.cancelled,
+                    candidate_count: r.run.candidate_count,
+                    accepted_count: r.run.accepted,
+                    rejected_count: r.run.rejected,
+                };
+                (items, Some(bounds))
+            }
+            None => (vec![], None),
+        };
 
     // ---- Section 5: Timeline -----------------------------------------------
-    let timeline_source = run.final_timeline.as_ref().or(run.preliminary_timeline.as_ref());
+    let timeline_source = run
+        .final_timeline
+        .as_ref()
+        .or(run.preliminary_timeline.as_ref());
     let timeline_events: Vec<TimelineReportItem> = timeline_source
         .map(|t| {
             t.events
@@ -2406,17 +2560,24 @@ pub async fn get_report(
         .unwrap_or_default();
 
     // ---- Section 6: Artifacts ----------------------------------------------
-    let artifacts = repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
-        .await
-        .unwrap_or_default();
+    let artifacts =
+        repositories::artifacts::list_artifacts_for_evidence(&state.db_pool, &evidence_id)
+            .await
+            .unwrap_or_default();
     let mut native_artifacts = Vec::new();
     let mut derived_artifacts = Vec::new();
     for a in artifacts {
         let item = ArtifactReportItem {
             artifact_id: a.id.to_string(),
-            classification: if a.kind.contains("elementary") { "Native".into() } else { "Derived".into() },
+            classification: if a.kind.contains("elementary") {
+                "Native".into()
+            } else {
+                "Derived".into()
+            },
             description: a.description.clone(),
-            sha256: forensic_core::Hash::sha256(hex::decode(&a.sha256).unwrap_or_else(|_| vec![0; 32])),
+            sha256: forensic_core::Hash::sha256(
+                hex::decode(&a.sha256).unwrap_or_else(|_| vec![0; 32]),
+            ),
             producing_component: a.producing_component.clone(),
         };
         if item.classification == "Native" {
@@ -2427,9 +2588,10 @@ pub async fn get_report(
     }
 
     // ---- Section 7: Chain of custody ---------------------------------------
-    let chain_of_custody = repositories::custody::get_custody_log(&state.db_pool, &evidence.case_id)
-        .await
-        .unwrap_or_default();
+    let chain_of_custody =
+        repositories::custody::get_custody_log(&state.db_pool, &evidence.case_id)
+            .await
+            .unwrap_or_default();
 
     // ---- Section 3 (capabilities) ------------------------------------------
     let caps_map = capability_service::get_all_capabilities(&state.profile_registry);
@@ -2524,11 +2686,19 @@ pub async fn get_report(
                 .source_offsets
                 .first()
                 .cloned()
-                .unwrap_or(forensic_core::Region { offset: 0, length: 0 });
+                .unwrap_or(forensic_core::Region {
+                    offset: 0,
+                    length: 0,
+                });
             let sample_len = region.length.min(256 * 1024) as usize;
-            let bytes = reader.read_exact_at(region.offset, sample_len).unwrap_or_default();
+            let bytes = reader
+                .read_exact_at(region.offset, sample_len)
+                .unwrap_or_default();
             let ev = recovery::VideoReconstructor::classify_codec(&bytes);
-            let confirmed = matches!(ev.validation.state, forensic_core::ValidationStateKind::Pass);
+            let confirmed = matches!(
+                ev.validation.state,
+                forensic_core::ValidationStateKind::Pass
+            );
             frames.push(ParsedFrameReport {
                 channel: rec.channel,
                 recorder_native_time: rec
@@ -2569,8 +2739,14 @@ pub async fn get_report(
             .iter()
             .map(|s| SessionReport {
                 channel: s.channel,
-                start: s.start_native.clone().unwrap_or_else(|| s.start_normalized.clone()),
-                end: s.end_native.clone().unwrap_or_else(|| s.end_normalized.clone()),
+                start: s
+                    .start_native
+                    .clone()
+                    .unwrap_or_else(|| s.start_normalized.clone()),
+                end: s
+                    .end_native
+                    .clone()
+                    .unwrap_or_else(|| s.end_normalized.clone()),
                 timezone: s.timezone.clone(),
                 span_seconds: s.span_seconds,
                 covered_seconds: s.covered_seconds,
@@ -2664,7 +2840,11 @@ pub async fn get_report(
 
     // ---- Final timeline summary --------------------------------------------
     let final_timeline_summary = {
-        let recorded_events = run.preliminary_timeline.as_ref().map(|t| t.events.len()).unwrap_or(0);
+        let recorded_events = run
+            .preliminary_timeline
+            .as_ref()
+            .map(|t| t.events.len())
+            .unwrap_or(0);
         let total_events = run
             .final_timeline
             .as_ref()
@@ -2705,8 +2885,14 @@ pub async fn get_report(
 
     let format = query.format.as_deref().unwrap_or("json").to_lowercase();
     let (body, content_type) = match format.as_str() {
-        "markdown" | "md" => (FormattedReportExporter::render_markdown_report(&report), "text/markdown; charset=utf-8"),
-        "csv" => (CsvReportExporter::export_recordings_csv(&report), "text/csv; charset=utf-8"),
+        "markdown" | "md" => (
+            FormattedReportExporter::render_markdown_report(&report),
+            "text/markdown; charset=utf-8",
+        ),
+        "csv" => (
+            CsvReportExporter::export_recordings_csv(&report),
+            "text/csv; charset=utf-8",
+        ),
         _ => (
             JsonReportExporter::export_to_json(&report).map_err(map_err)?,
             "application/json",

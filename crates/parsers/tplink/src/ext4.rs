@@ -1,8 +1,8 @@
 //! # EXT4 Superblock Reader
 //! Minimal read-only EXT4 parser for verifying boundaries.
 
-use forensic_core::ForensicError;
 use evidence_reader::EvidenceReader;
+use forensic_core::ForensicError;
 
 pub struct Ext4Superblock;
 
@@ -13,7 +13,10 @@ impl Ext4Superblock {
         if reader.read_at(sb_magic_offset, &mut buf)? == 2 {
             Ok(u16::from_le_bytes(buf))
         } else {
-            Err(ForensicError::corrupt("ext4", "Failed to read superblock magic"))
+            Err(ForensicError::corrupt(
+                "ext4",
+                "Failed to read superblock magic",
+            ))
         }
     }
 }

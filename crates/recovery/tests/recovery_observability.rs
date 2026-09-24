@@ -165,7 +165,11 @@ fn the_pipeline_emits_the_forensic_engineering_counters() {
         logged.contains("oem-container-record"),
         "the framing that bounded each fragment must be visible:\n{logged}"
     );
-    for field in ["available_claim_count", "available_bytes", "container_record_candidates"] {
+    for field in [
+        "available_claim_count",
+        "available_bytes",
+        "container_record_candidates",
+    ] {
         assert!(
             logged.contains(field),
             "the run summary is missing `{field}`.\nEmitted:\n{logged}"

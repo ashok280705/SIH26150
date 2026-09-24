@@ -2,8 +2,8 @@
 //!
 //! Multi-level recovery of recordings.
 
-use forensic_core::{ForensicError, Recording};
 use evidence_reader::EvidenceReader;
+use forensic_core::{ForensicError, Recording};
 
 pub struct RecoveryAnalyzer;
 

@@ -15,14 +15,14 @@
 //!
 #![forbid(unsafe_code)]
 
-pub mod model;
-pub mod json;
 pub mod csv;
 pub mod formatted;
+pub mod json;
+pub mod model;
 pub mod provenance;
 
-pub use model::ForensicReport;
-pub use json::JsonReportExporter;
 pub use csv::CsvReportExporter;
 pub use formatted::FormattedReportExporter;
+pub use json::JsonReportExporter;
+pub use model::ForensicReport;
 pub use provenance::ReportAuditor;

@@ -29,7 +29,9 @@ pub fn detect_wrap_boundary(
     wrap_offset: u64,
     has_overwrite_evidence: bool,
 ) -> Option<WrapBoundary> {
-    if wrap_offset <= total_region.offset || wrap_offset >= total_region.offset + total_region.length {
+    if wrap_offset <= total_region.offset
+        || wrap_offset >= total_region.offset + total_region.length
+    {
         return None; // Wrap point is outside the region
     }
 
@@ -43,11 +45,21 @@ pub fn detect_wrap_boundary(
     };
 
     let validation = if has_overwrite_evidence {
-        ValidationState::new(ValidationStateKind::Review, "detect_wrap_boundary",
-            "Wrap boundary detected with physical overwrite evidence", "WrapStorage").unwrap()
+        ValidationState::new(
+            ValidationStateKind::Review,
+            "detect_wrap_boundary",
+            "Wrap boundary detected with physical overwrite evidence",
+            "WrapStorage",
+        )
+        .unwrap()
     } else {
-        ValidationState::new(ValidationStateKind::Pass, "detect_wrap_boundary",
-            "Wrap boundary detected; no overwrite evidence at boundary", "WrapStorage").unwrap()
+        ValidationState::new(
+            ValidationStateKind::Pass,
+            "detect_wrap_boundary",
+            "Wrap boundary detected; no overwrite evidence at boundary",
+            "WrapStorage",
+        )
+        .unwrap()
     };
 
     Some(WrapBoundary {
@@ -65,7 +77,10 @@ mod tests {
 
     #[test]
     fn test_wrap_without_overwrite_evidence() {
-        let region = Region { offset: 0, length: 1000 };
+        let region = Region {
+            offset: 0,
+            length: 1000,
+        };
         let boundary = detect_wrap_boundary(&region, 600, false).unwrap();
         assert!(!boundary.has_overwrite_evidence);
         assert_eq!(boundary.validation.state, ValidationStateKind::Pass);
@@ -75,7 +90,10 @@ mod tests {
 
     #[test]
     fn test_wrap_with_overwrite_evidence() {
-        let region = Region { offset: 0, length: 1000 };
+        let region = Region {
+            offset: 0,
+            length: 1000,
+        };
         let boundary = detect_wrap_boundary(&region, 600, true).unwrap();
         assert!(boundary.has_overwrite_evidence);
         assert_eq!(boundary.validation.state, ValidationStateKind::Review);
@@ -83,7 +101,10 @@ mod tests {
 
     #[test]
     fn test_wrap_outside_region_returns_none() {
-        let region = Region { offset: 100, length: 500 };
+        let region = Region {
+            offset: 100,
+            length: 500,
+        };
         assert!(detect_wrap_boundary(&region, 50, false).is_none());
         assert!(detect_wrap_boundary(&region, 700, false).is_none());
     }

@@ -2,13 +2,13 @@
 //!
 //! Tracks provenance, validation states, and unrun stage tracking (Req 5.4, 5.8, 22.1–22.3).
 //!
-//! A parser stage that did not run is `UNKNOWN`, never `PASS`. A partially interpreted 
+//! A parser stage that did not run is `UNKNOWN`, never `PASS`. A partially interpreted
 //! structure is `REVIEW` with a reason.
 
 use serde::{Deserialize, Serialize};
 
-use crate::identifiers::ProfileId;
 use crate::hash::Hash;
+use crate::identifiers::ProfileId;
 use crate::validation::ValidationState;
 
 /// Tracks a discrete parser operation's validation state and provenance.

@@ -3,14 +3,14 @@
 //! Production-quality, read-only storage analyzer for TP-Link VIGI NVR.
 //! Implements forensic architecture matching the system topology guidelines.
 
-pub mod parser;
-pub mod types;
-pub mod ext4;
-pub mod raw_layout;
-pub mod sqlite_reader;
-pub mod zone;
-pub mod recording_index;
 pub mod encryption;
+pub mod ext4;
+pub mod parser;
+pub mod raw_layout;
+pub mod recording_index;
 pub mod recovery;
+pub mod sqlite_reader;
+pub mod types;
+pub mod zone;
 
 pub use parser::TplinkParser;

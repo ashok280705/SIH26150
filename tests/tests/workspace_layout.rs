@@ -39,8 +39,14 @@ const SUPPORTED_OEM_PARSERS: &[(&str, &str)] = &[
 ];
 
 /// Profile data directories for the currently supported OEMs.
-const SUPPORTED_PROFILE_DIRS: &[&str] =
-    &["dahua", "hikvision", "honeywell", "cpplus", "uniview", "tplink"];
+const SUPPORTED_PROFILE_DIRS: &[&str] = &[
+    "dahua",
+    "hikvision",
+    "honeywell",
+    "cpplus",
+    "uniview",
+    "tplink",
+];
 
 /// Future OEMs: directories exist as extension points but are NOT implemented.
 const FUTURE_PROFILE_DIRS: &[&str] = &["godrej", "matrix"];
@@ -96,7 +102,10 @@ fn assert_crate_at(rel: &str, package: &str) {
     assert!(dir.is_dir(), "missing crate directory: {rel}");
 
     let manifest_path = dir.join("Cargo.toml");
-    assert!(manifest_path.is_file(), "missing manifest: {rel}/Cargo.toml");
+    assert!(
+        manifest_path.is_file(),
+        "missing manifest: {rel}/Cargo.toml"
+    );
 
     let manifest = read_to_string(&manifest_path);
     assert!(
@@ -200,7 +209,9 @@ fn all_five_supported_oem_parser_crates_exist_including_uniview() {
 
     // Uniview is a first-class supported OEM, not future work (Req 25.1).
     assert!(
-        SUPPORTED_OEM_PARSERS.iter().any(|(dir, _)| *dir == "uniview"),
+        SUPPORTED_OEM_PARSERS
+            .iter()
+            .any(|(dir, _)| *dir == "uniview"),
         "uniview must be one of the currently supported OEM parser crates"
     );
 
@@ -366,7 +377,10 @@ mod dependency_extraction {
         let deps = declared_dependencies(
             "[dependencies.sqlx]\nversion = \"0.7\"\n\n[dev-dependencies]\nproptest = \"1\"\n\n[build-dependencies]\ncc = \"1\"\n",
         );
-        assert!(deps.contains("sqlx"), "[dependencies.<name>] form must be detected");
+        assert!(
+            deps.contains("sqlx"),
+            "[dependencies.<name>] form must be detected"
+        );
         assert!(deps.contains("proptest"));
         assert!(deps.contains("cc"));
         assert!(
