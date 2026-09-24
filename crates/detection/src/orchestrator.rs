@@ -11,7 +11,10 @@ use evidence_reader::EvidenceReader;
 use forensic_core::{ForensicError, ProfileRegistry};
 
 use crate::detector::Detector;
-use crate::detectors::{CpPlusUbsDetector, DahuaDetector, HikvisionDetector, HoneywellDetector, UniviewDetector, TplinkDetector};
+use crate::detectors::{
+    CpPlusUbsDetector, DahuaDetector, HikvisionDetector, HoneywellDetector, TplinkDetector,
+    UniviewDetector,
+};
 use crate::output::DetectorOutput;
 
 pub struct DetectionOrchestrator {
@@ -71,23 +74,35 @@ mod tests {
     }
 
     impl EvidenceReader for MockReader {
-        fn len(&self) -> u64 { self.data.len() as u64 }
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
             if offset >= self.len() {
-                return Err(ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.len()));
+                return Err(ForensicError::out_of_bounds(
+                    "test",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let start = offset as usize;
             let n = (self.data.len() - start).min(buf.len());
             buf[..n].copy_from_slice(&self.data[start..start + n]);
             Ok(n)
         }
-        fn source_kind(&self) -> evidence_reader::SourceKind { evidence_reader::SourceKind::Raw }
-        fn source_path(&self) -> &str { "mock://orchestrator" }
+        fn source_kind(&self) -> evidence_reader::SourceKind {
+            evidence_reader::SourceKind::Raw
+        }
+        fn source_path(&self) -> &str {
+            "mock://orchestrator"
+        }
     }
 
     #[test]
     fn orchestrator_runs_and_sorts_outputs() {
-        let dahua_profile = OemProfile::from_toml_str(r#"
+        let dahua_profile = OemProfile::from_toml_str(
+            r#"
 profile_id = "dahua-1"
 profile_version = "1.0"
 schema_version = "1.0"
@@ -101,9 +116,12 @@ evidence_status = "validated"
 weight = 0.8
 [confidence_weights]
 max_possible_score = 1.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
-        let hik_profile = OemProfile::from_toml_str(r#"
+        let hik_profile = OemProfile::from_toml_str(
+            r#"
 profile_id = "hik-1"
 profile_version = "1.0"
 schema_version = "1.0"
@@ -111,16 +129,20 @@ oem = "hikvision"
 storage_family = "HIKVISION_FS"
 [applicability]
 [[signatures]]
-name = "hik_magic"
-pattern_hex = "48 49 4B 5F"
+name = "hikvision_boot_identifier"
+pattern_hex = "48 49 4B 56 49 53 49 4F 4E 40 48 41 4E 47 5A 48 4F 55"
 evidence_status = "validated"
 weight = 0.8
 [confidence_weights]
 max_possible_score = 1.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let registry = ProfileRegistry::from_profiles(vec![dahua_profile, hik_profile]);
-        let reader = MockReader { data: b"DHFS\x00\x00\x00\x00".to_vec() };
+        let reader = MockReader {
+            data: b"DHFS\x00\x00\x00\x00".to_vec(),
+        };
 
         let orchestrator = DetectionOrchestrator::new();
         let outputs = orchestrator.run(&reader, &registry).unwrap();
@@ -128,8 +150,7 @@ max_possible_score = 1.0
         assert!(!outputs.is_empty());
         // Verify deterministic sorting: oem_key ascending
         for i in 1..outputs.len() {
-            assert!(outputs[i-1].oem_key <= outputs[i].oem_key);
+            assert!(outputs[i - 1].oem_key <= outputs[i].oem_key);
         }
     }
 }
-

@@ -81,7 +81,10 @@ impl StorageTopologyProfiler {
     ) -> Result<StorageTopology, ForensicError> {
         let sector_size = sector_size_override.unwrap_or(512);
         if sector_size == 0 {
-            return Err(ForensicError::corrupt("topology", "sector size cannot be zero"));
+            return Err(ForensicError::corrupt(
+                "topology",
+                "sector size cannot be zero",
+            ));
         }
 
         // Additive forensic findings gathered during MBR analysis. Collected at function
@@ -265,18 +268,29 @@ mod tests {
     }
 
     impl EvidenceReader for MockReader {
-        fn len(&self) -> u64 { self.data.len() as u64 }
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
             if offset >= self.len() {
-                return Err(ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.len()));
+                return Err(ForensicError::out_of_bounds(
+                    "test",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let start = offset as usize;
             let n = (self.data.len() - start).min(buf.len());
             buf[..n].copy_from_slice(&self.data[start..start + n]);
             Ok(n)
         }
-        fn source_kind(&self) -> evidence_reader::SourceKind { evidence_reader::SourceKind::Raw }
-        fn source_path(&self) -> &str { "mock://topology" }
+        fn source_kind(&self) -> evidence_reader::SourceKind {
+            evidence_reader::SourceKind::Raw
+        }
+        fn source_path(&self) -> &str {
+            "mock://topology"
+        }
     }
 
     #[test]
@@ -292,12 +306,12 @@ mod tests {
     #[test]
     fn mbr_parsing_valid_partition() {
         let mut data = vec![0x00; 1024 * 1024]; // 1 MiB
-        // MBR signature
+                                                // MBR signature
         data[510] = 0x55;
         data[511] = 0xAA;
         // Partition 1 at 446
         data[446 + 4] = 0x83; // Linux / Raw type
-        // start LBA: 2048 (sector 2048 * 512 = 1MB) -> let's set start LBA = 1, sectors = 100
+                              // start LBA: 2048 (sector 2048 * 512 = 1MB) -> let's set start LBA = 1, sectors = 100
         data[446 + 8] = 1;
         data[446 + 12] = 100;
 
@@ -358,10 +372,12 @@ mod tests {
         // A finding preserves the malformed declaration and a safe clamped region.
         let f = find_code(&topo, "mbr.partition.out_of_bounds")
             .expect("expected an out_of_bounds finding");
-        let declared = f.declared_region.expect("declared region must be preserved");
+        let declared = f
+            .declared_region
+            .expect("declared region must be preserved");
         assert_eq!(declared.offset, 512_000);
         assert_eq!(declared.length, 51_200_000); // original declaration, not clamped
-                                                  // Safe region is clamped to the image and is readable.
+                                                 // Safe region is clamped to the image and is readable.
         assert_eq!(f.region.offset, 512_000);
         assert_eq!(f.region.end().unwrap(), total_len as u64);
     }

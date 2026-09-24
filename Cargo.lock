@@ -455,6 +455,7 @@ dependencies = [
  "hashing",
  "hex",
  "parser-dahua",
+ "parser-hikvision",
  "parsing",
  "pipeline",
  "recovery",
@@ -1221,11 +1222,14 @@ dependencies = [
 name = "parser-hikvision"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "evidence-reader",
  "forensic-core",
  "forensic-tests",
  "hex",
  "parsers-core",
+ "serde",
+ "sha2",
  "tempfile",
  "uuid",
 ]

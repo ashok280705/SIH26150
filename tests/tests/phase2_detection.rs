@@ -84,11 +84,11 @@ fn property_6_margin_respecting_ambiguity_preserved() {
         DetectionStatus::Confirmed,
         vec![EvidenceItem::new(
             EvidenceId::new(),
-            "sig",
-            0,
-            4,
-            b"HIK_",
-            b"HIK_",
+            "hikvision_boot_identifier",
+            528,
+            18,
+            b"HIKVISION@HANGZHOU",
+            b"HIKVISION@HANGZHOU",
             RuleMatchStatus::Match,
             EvidenceStatus::Validated,
             0.80, // Very close score! (diff = 0.05 < 0.20 margin)

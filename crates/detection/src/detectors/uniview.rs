@@ -20,8 +20,15 @@ impl Detector for UniviewDetector {
         "uniview"
     }
 
-    fn detect(&self, reader: &dyn EvidenceReader, profile: &OemProfile) -> Result<DetectorOutput, ForensicError> {
-        let profile_hash = profile.profile_hash.clone().unwrap_or_else(|| Hash::sha256(vec![0; 32]));
+    fn detect(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+    ) -> Result<DetectorOutput, ForensicError> {
+        let profile_hash = profile
+            .profile_hash
+            .clone()
+            .unwrap_or_else(|| Hash::sha256(vec![0; 32]));
         let profile_version = &profile.profile_version;
         let mut evidence_items = Vec::new();
         let mut warnings = Vec::new();
@@ -81,7 +88,10 @@ impl Detector for UniviewDetector {
                 let scan_limit = reader.len().min(65536);
                 let mut chunk = vec![0u8; scan_limit as usize];
                 if let Ok(read_len) = reader.read_at(0, &mut chunk) {
-                    if let Some(pos) = chunk[..read_len].windows(pattern.len()).position(|w| w == pattern.as_slice()) {
+                    if let Some(pos) = chunk[..read_len]
+                        .windows(pattern.len())
+                        .position(|w| w == pattern.as_slice())
+                    {
                         ec_port_matched = true;
                         evidence_items.push(EvidenceItem::new(
                             forensic_core::EvidenceId::new(),

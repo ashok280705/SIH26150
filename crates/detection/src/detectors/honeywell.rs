@@ -11,7 +11,6 @@
 use evidence_reader::EvidenceReader;
 use forensic_core::{EvidenceItem, ForensicError, Hash, OemProfile, RuleMatchStatus};
 
-
 use crate::detector::Detector;
 use crate::output::{DetectionStatus, DetectorOutput};
 use crate::topology::StorageTopologyProfiler;
@@ -23,8 +22,15 @@ impl Detector for HoneywellDetector {
         "honeywell"
     }
 
-    fn detect(&self, reader: &dyn EvidenceReader, profile: &OemProfile) -> Result<DetectorOutput, ForensicError> {
-        let profile_hash = profile.profile_hash.clone().unwrap_or_else(|| Hash::sha256(vec![0; 32]));
+    fn detect(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+    ) -> Result<DetectorOutput, ForensicError> {
+        let profile_hash = profile
+            .profile_hash
+            .clone()
+            .unwrap_or_else(|| Hash::sha256(vec![0; 32]));
         let profile_version = &profile.profile_version;
         let mut evidence_items = Vec::new();
         let mut warnings = Vec::new();
@@ -77,7 +83,10 @@ impl Detector for HoneywellDetector {
                 let scan_limit = reader.len().min(1048576); // 1 MiB scan
                 let mut chunk = vec![0u8; scan_limit as usize];
                 if let Ok(read_len) = reader.read_at(0, &mut chunk) {
-                    if let Some(pos) = chunk[..read_len].windows(pattern.len()).position(|w| w == pattern.as_slice()) {
+                    if let Some(pos) = chunk[..read_len]
+                        .windows(pattern.len())
+                        .position(|w| w == pattern.as_slice())
+                    {
                         stream_marker_matched = true;
                         evidence_items.push(EvidenceItem::new(
                             forensic_core::EvidenceId::new(),

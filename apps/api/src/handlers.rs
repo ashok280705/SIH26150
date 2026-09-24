@@ -521,16 +521,17 @@ pub struct ReconstructPayload {
     pub recording_chain_id: Option<String>,
 }
 
-/// Reconstruct an OEM recording chain into its frame-accurate payload ranges.
+/// Reconstruct an OEM recording into its frame-accurate payload ranges.
 ///
 /// Returns `(ordered payload regions, channel, description)`, or `None` when the OEM has no
-/// chain reconstruction or the id does not resolve. The ranges are the parser's own: block-chain
-/// order first, then the DHII frame index inside each block. Nothing is inserted between them,
-/// so concatenating those exact evidence bytes reproduces the elementary stream.
+/// reconstruction path or the id does not resolve. The ranges are the parser's own — for Dahua,
+/// block-chain order then the DHII frame index; for Hikvision, B-tree/clip-index order then the
+/// MPEG-PS part order inside each clip. Nothing is inserted between them, so concatenating those
+/// exact evidence bytes reproduces the elementary stream.
 ///
 /// This is the smallest interface that lets an **engine-discovered** recording be exported.
-/// Previously the export layer could only take one contiguous range, so a multi-block Dahua
-/// recording was not exportable at all without fabricating a recording row for it.
+/// Without it the export layer could only take one contiguous range, so a multi-block recording
+/// was not exportable at all without fabricating a recording row for it.
 #[allow(clippy::type_complexity)]
 fn reconstruct_oem_chain(
     state: &AppState,
@@ -538,41 +539,80 @@ fn reconstruct_oem_chain(
     oem_key: &str,
     chain_id: &str,
 ) -> Result<Option<(Vec<forensic_core::Region>, u32, String)>, ApiError> {
-    if !oem_key.eq_ignore_ascii_case("dahua") {
-        return Ok(None);
-    }
     let profile = match state.profile_registry.find_applicable(oem_key, None, None, None) {
         Some(p) => p,
         None => return Ok(None),
     };
-    let volume = parser_dahua::volume::read_volume(reader, profile).map_err(map_err)?;
-    let Some(classified) = parser_dahua::find_chain(&volume, chain_id) else {
-        return Ok(None);
-    };
-    let reconstruction =
-        parser_dahua::reconstruct_recording(reader, profile, &classified.chain).map_err(map_err)?;
-    if reconstruction.payload_regions.is_empty() {
-        return Err(ApiError {
-            error: format!(
-                "Dahua chain '{chain_id}' was located but no frame payload could be established in \
-                 its blocks"
-            ),
-            details: Some(reconstruction.evidence.reason.clone()),
-        });
+
+    if oem_key.eq_ignore_ascii_case("dahua") {
+        let volume = parser_dahua::volume::read_volume(reader, profile).map_err(map_err)?;
+        let Some(classified) = parser_dahua::find_chain(&volume, chain_id) else {
+            return Ok(None);
+        };
+        let reconstruction = parser_dahua::reconstruct_recording(reader, profile, &classified.chain)
+            .map_err(map_err)?;
+        if reconstruction.payload_regions.is_empty() {
+            return Err(ApiError {
+                error: format!(
+                    "Dahua chain '{chain_id}' was located but no frame payload could be established \
+                     in its blocks"
+                ),
+                details: Some(reconstruction.evidence.reason.clone()),
+            });
+        }
+        let description = format!(
+            "{chain_id}: {} block(s), {} frame(s), {} payload range(s), ordered by {}; {}",
+            reconstruction.block_regions.len(),
+            reconstruction.frames.len(),
+            reconstruction.payload_regions.len(),
+            reconstruction.ordering.label(),
+            reconstruction.evidence.reason
+        );
+        return Ok(Some((
+            reconstruction.payload_regions.clone(),
+            reconstruction.channel.normalized,
+            description,
+        )));
     }
-    let description = format!(
-        "{chain_id}: {} block(s), {} frame(s), {} payload range(s), ordered by {}; {}",
-        reconstruction.block_regions.len(),
-        reconstruction.frames.len(),
-        reconstruction.payload_regions.len(),
-        reconstruction.ordering.label(),
-        reconstruction.evidence.reason
-    );
-    Ok(Some((
-        reconstruction.payload_regions.clone(),
-        reconstruction.channel.normalized,
-        description,
-    )))
+
+    if oem_key.eq_ignore_ascii_case("hikvision") {
+        // `chain_id` here is the recording id the Hikvision index assigned — a clip id of the
+        // form `hikclip:b<block>:s<slot>:<offset>`. It is used as given and never regenerated,
+        // so the exported artifact traces back to the exact discovery the engine reported.
+        let volume = parser_hikvision::volume::read_volume(reader, profile).map_err(map_err)?;
+        let Some(reconstruction) =
+            parser_hikvision::reconstruct_recording(reader, profile, &volume, chain_id)
+                .map_err(map_err)?
+        else {
+            return Ok(None);
+        };
+        if reconstruction.payload_regions.is_empty() {
+            return Err(ApiError {
+                error: format!(
+                    "Hikvision recording '{chain_id}' was located but no MPEG-PS video payload \
+                     could be established in its clip(s)"
+                ),
+                details: Some(reconstruction.evidence.reason.clone()),
+            });
+        }
+        let description = format!(
+            "{}; {}",
+            reconstruction.description(),
+            reconstruction.evidence.reason
+        );
+        return Ok(Some((
+            reconstruction.payload_regions.clone(),
+            // A recording whose clips disagree about the channel, or establish none, must not be
+            // exported as channel 0 silently — the description and the parser evidence carry the
+            // disagreement, and channel 0 is the platform's "unknown channel" value.
+            reconstruction.channel.unwrap_or(0),
+            description,
+        )));
+    }
+
+    // Every other OEM has no reconstruction path yet. Returning `None` lets the caller fall
+    // through to an explicit range list rather than silently exporting some other OEM's bytes.
+    Ok(None)
 }
 
 /// POST /api/evidence/:id/recordings/:rec_id/reconstruct
@@ -612,9 +652,11 @@ pub async fn reconstruct_recording(
     let chain_regions: Option<(Vec<forensic_core::Region>, u32, String)> =
         match payload.recording_chain_id.as_deref() {
             Some(chain_id) if !chain_id.trim().is_empty() => {
-                let oem_key = resolve_oem_key(&state, reader.as_ref(), payload.oem_key.clone())
-                    .await
-                    .unwrap_or_else(|_| "dahua".to_string());
+                // The OEM must be established, not assumed. Defaulting to a particular vendor
+                // here would reconstruct one OEM's id against another OEM's parser and export
+                // unrelated bytes under the caller's recording id.
+                let oem_key =
+                    resolve_oem_key(&state, reader.as_ref(), payload.oem_key.clone()).await?;
                 reconstruct_oem_chain(&state, reader.as_ref(), &oem_key, chain_id)?
             }
             _ => None,
@@ -656,29 +698,56 @@ pub async fn reconstruct_recording(
         region_source = "caller-supplied offset and length".to_string();
         (vec![reg], payload.channel.unwrap_or(1))
     } else {
-        // Run parser detection if OEM key provided or auto-detect
-        region_source = "parser-located recording, or a bounded head-of-image fallback".to_string();
-        let oem_key = payload.oem_key.as_deref().unwrap_or("tplink");
-        let profile = state.profile_registry.find_applicable(oem_key, None, None, None);
-        if let Some(prof) = profile {
-            let orchestrator = ParsingOrchestrator::new();
-            if let Ok(res) = orchestrator.run_parsing(oem_key, reader.as_ref(), prof) {
-                if let Some(found_rec) = res.recordings.into_iter().find(|r| r.source_offsets.iter().any(|s| s.offset > 0)) {
-                    (found_rec.source_offsets, found_rec.channel)
-                } else {
-                    let fallback_len = (reader.len().min(4 * 1024 * 1024)) as u64;
-                    let reg = forensic_core::Region::new(0, fallback_len).map_err(map_err)?;
-                    (vec![reg], 1)
-                }
-            } else {
-                let fallback_len = (reader.len().min(4 * 1024 * 1024)) as u64;
-                let reg = forensic_core::Region::new(0, fallback_len).map_err(map_err)?;
-                (vec![reg], 1)
+        // Nothing identified the bytes to export: no OEM recording id, no explicit ranges, no
+        // persisted recording row, no offset/length. The remaining option is to ask the attributed
+        // OEM's parser what it found.
+        //
+        // What this deliberately no longer does: fall back to the first 4 MiB of the image under a
+        // default OEM key. That produced an artifact that looked like a recording, carried a real
+        // hash and real provenance, and was actually an arbitrary head-of-image range attributed to
+        // whichever vendor happened to be the default. An export with nothing to export is an
+        // error, not a 4 MiB guess.
+        let oem_key = resolve_oem_key(&state, reader.as_ref(), payload.oem_key.clone()).await?;
+        let profile = state
+            .profile_registry
+            .find_applicable(&oem_key, None, None, None)
+            .ok_or_else(|| ApiError {
+                error: format!("no profile is registered for OEM '{oem_key}'"),
+                details: Some(
+                    "an export needs the OEM's own structures to locate the recording; no range was \
+                     substituted"
+                        .into(),
+                ),
+            })?;
+
+        let orchestrator = ParsingOrchestrator::new();
+        let parsed = orchestrator
+            .run_parsing(&oem_key, reader.as_ref(), profile)
+            .map_err(map_err)?;
+        let located = parsed
+            .recordings
+            .into_iter()
+            .find(|r| r.source_offsets.iter().any(|s| !s.is_empty()));
+
+        match located {
+            Some(found) => {
+                region_source = format!("recording located by the {oem_key} parser");
+                (found.source_offsets, found.channel)
             }
-        } else {
-            let fallback_len = (reader.len().min(4 * 1024 * 1024)) as u64;
-            let reg = forensic_core::Region::new(0, fallback_len).map_err(map_err)?;
-            (vec![reg], 1)
+            None => {
+                return Err(ApiError {
+                    error: format!(
+                        "no source range could be established for recording '{rec_id_raw}'"
+                    ),
+                    details: Some(format!(
+                        "the {oem_key} parser located no recording in this evidence, and the request \
+                         supplied no recording_chain_id, no explicit regions and no \
+                         offset_start/length. Supply one of those, or run recovery first and post \
+                         back the recording id or fragment id it reported. No arbitrary range was \
+                         exported in their place"
+                    )),
+                });
+            }
         }
     };
 

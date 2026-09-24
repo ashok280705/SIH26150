@@ -18,4 +18,5 @@
 pub mod corpus;
 pub mod dahua_fixtures;
 pub mod fixtures;
+pub mod hikvision_fixtures;
 pub mod recording_reader;

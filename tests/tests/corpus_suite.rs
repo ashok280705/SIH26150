@@ -58,24 +58,50 @@ fn dummy_profile(oem: &str) -> OemProfile {
     }
 }
 
+/// Declare the signature rules each OEM's parser resolves by name.
+///
+/// The rule **names** must be the ones the parser actually looks up, and the patterns must be
+/// the OEM's real identifier bytes at their real offsets. A name the parser never asks for
+/// leaves the structure unverifiable, and the case then measures nothing.
 fn populate_signatures(profile: &mut OemProfile, oem: &str) {
-    use forensic_core::{SignatureRule, OffsetConstraint, EvidenceStatus};
-    let (name, magic, offset) = match oem {
-        "dahua" => ("dhfs_superblock", "44 48 46 53", 0),
-        "hikvision" => ("hikvision_master_sector", "48 49 4B 5F", 0),
-        "honeywell" => ("honeywell_master_sector", "48 4F 4E 45 59 57 45 4C 4C", 0),
-        "cpplus_ubs" => ("ubs_partition_marker", "55 42 53 5F", 0),
-        "uniview" => ("uniview_super_magic", "55 4E 49 56", 0),
-        _ => ("", "", 0),
+    use forensic_core::{EvidenceStatus, OffsetConstraint, SignatureRule};
+
+    // (rule name, pattern hex, exact offset)
+    let rules: Vec<(&str, &str, u64)> = match oem {
+        "dahua" => vec![("dhfs_superblock", "44 48 46 53", 0)],
+        // The Hikvision identifier is a field at boot + 16, i.e. absolute 528 for the boot
+        // position at 0x200 — not a magic at offset 0. The corroborating HIKBTREE magic is
+        // located through the boot structure's own pointer, so it carries no offset constraint.
+        "hikvision" => vec![
+            (
+                "hikvision_boot_identifier",
+                "48 49 4B 56 49 53 49 4F 4E 40 48 41 4E 47 5A 48 4F 55",
+                528,
+            ),
+            ("hikbtree_magic", "48 49 4B 42 54 52 45 45", 0),
+            ("hikvision_ofni_part", "4F 46 4E 49", 0),
+            ("ps_pack_header", "00 00 01 BA", 0),
+            ("ps_video_stream_0", "00 00 01 E0", 0),
+            ("hikvision_carve_sentinel", "FF FF FF FB", 0),
+        ],
+        "honeywell" => vec![(
+            "honeywell_master_sector",
+            "48 4F 4E 45 59 57 45 4C 4C",
+            0,
+        )],
+        "cpplus_ubs" => vec![("ubs_partition_marker", "55 42 53 5F", 0)],
+        "uniview" => vec![("uniview_super_magic", "55 4E 49 56", 0)],
+        _ => Vec::new(),
     };
-    if !name.is_empty() {
+
+    for (name, magic, offset) in rules {
         profile.signatures.push(SignatureRule {
             name: name.to_string(),
             pattern_hex: magic.to_string(),
             evidence_status: EvidenceStatus::Validated,
             weight: 1.0,
             is_exclusive: true,
-            explanation: "".to_string(),
+            explanation: String::new(),
             offset_constraints: vec![OffsetConstraint::Exact { offset }],
         });
     }

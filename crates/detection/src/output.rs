@@ -79,7 +79,6 @@ impl DetectorOutput {
             profile_version: profile_version.into(),
             profile_hash,
         }
-
     }
 }
 
