@@ -95,7 +95,7 @@ fn test_uniview_parser_adversarial_suite() {
         let meta_runs = parser.parse_metadata(&reader, &profile).unwrap();
         if meta_runs[0].validation_state.state == ValidationStateKind::Review { any_review_or_error = true; }
         
-        if let Err(_) = rec_res {
+        if rec_res.is_err() {
             any_review_or_error = true; // e.g. OutOfBounds error
         } else if let Ok((_, runs)) = rec_res {
             if runs[0].validation_state.state == ValidationStateKind::Review { any_review_or_error = true; }

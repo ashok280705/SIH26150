@@ -79,10 +79,10 @@ pub fn validate_and_order_frames(mut frames: Vec<VideoFrame>) -> FrameOrderingRe
 
     let validation = if !rejected.is_empty() {
         ValidationState::new(ValidationStateKind::Review, "validate_and_order_frames",
-            &format!("{} frame(s) rejected with reasons", rejected.len()), "Frames").unwrap()
+            format!("{} frame(s) rejected with reasons", rejected.len()), "Frames").unwrap()
     } else if !gaps.is_empty() {
         ValidationState::new(ValidationStateKind::Review, "validate_and_order_frames",
-            &format!("{} gap(s) detected", gaps.len()), "Frames").unwrap()
+            format!("{} gap(s) detected", gaps.len()), "Frames").unwrap()
     } else {
         ValidationState::new(ValidationStateKind::Pass, "validate_and_order_frames",
             "All frames valid and ordered", "Frames").unwrap()

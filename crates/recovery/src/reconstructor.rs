@@ -334,7 +334,7 @@ impl VideoReconstructor {
         let native_art = NativeArtifact {
             id: ArtifactId::new(),
             evidence_id,
-            region: source_region.clone(),
+            region: source_region,
             hash: native_hash.clone(),
             description: "Native video stream payload".to_string(),
             identified_at: Utc::now(),
@@ -372,7 +372,7 @@ impl VideoReconstructor {
         let es_prov = Provenance::new(
             evidence_id,
             native_hash.clone(),
-            vec![SourceRegion::new(evidence_id, source_region.clone())],
+            vec![SourceRegion::new(evidence_id, source_region)],
             "VideoReconstructor",
             "1.0.0",
             es_hash.clone(),
@@ -398,7 +398,7 @@ impl VideoReconstructor {
             let mut remux_prov = Provenance::new(
                 evidence_id,
                 native_hash.clone(),
-                vec![SourceRegion::new(evidence_id, source_region.clone())],
+                vec![SourceRegion::new(evidence_id, source_region)],
                 "VideoReconstructor",
                 "1.0.0",
                 remux_hash.clone(),
@@ -522,7 +522,7 @@ mod tests {
         let region = Region { offset: 1024, length: 2048 };
         let payload = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E];
 
-        let out = VideoReconstructor::reconstruct(ev_id, region.clone(), payload, true, true);
+        let out = VideoReconstructor::reconstruct(ev_id, region, payload, true, true);
         assert_eq!(out.native_artifact.region, region);
         assert!(!out.derived_artifacts.is_empty());
         assert_ne!(out.native_artifact.hash, out.derived_artifacts.iter().find(|d| d.kind == DerivedKind::Remux).unwrap().provenance.output_hash);

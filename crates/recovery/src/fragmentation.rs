@@ -103,8 +103,8 @@ pub fn reassemble_fragments(
             // Circular buffer wrap (offset went backwards)
             is_physically_contiguous = false;
             physical_discontinuities.push(PhysicalDiscontinuity {
-                previous_region: prev.region.clone(),
-                current_region: curr.region.clone(),
+                previous_region: prev.region,
+                current_region: curr.region,
                 continuity: PhysicalContinuity::CircularWrap { wrap_offset: curr_start },
             });
         } else {
@@ -112,8 +112,8 @@ pub fn reassemble_fragments(
             is_physically_contiguous = false;
             let distance = curr_start.saturating_sub(prev_end);
             physical_discontinuities.push(PhysicalDiscontinuity {
-                previous_region: prev.region.clone(),
-                current_region: curr.region.clone(),
+                previous_region: prev.region,
+                current_region: curr.region,
                 continuity: PhysicalContinuity::Fragmented { physical_distance: distance },
             });
         }

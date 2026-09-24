@@ -127,7 +127,7 @@ pub async fn register_evidence(
         case_id: case_id.clone(),
         source_device: input.source_device,
         acquisition_time: input.acquisition_time,
-        capacity: reader_arc.len() as u64,
+        capacity: reader_arc.len(),
         image_format: input.image_format,
         responsible_examiner: input.responsible_examiner.clone(),
         acquisition_tool: input.acquisition_tool,

@@ -128,7 +128,7 @@ impl EvidenceReader for RawReader {
         let mut file = self.file.lock().map_err(|_| {
             ForensicError::io(
                 "locking file handle",
-                std::io::Error::new(std::io::ErrorKind::Other, "mutex poisoned"),
+                std::io::Error::other("mutex poisoned"),
             )
         })?;
 

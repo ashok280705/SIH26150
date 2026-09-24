@@ -216,9 +216,8 @@ impl FfmpegService {
         }
 
         // Calculate SHA-256 of the generated MP4 bitstream
-        let output_sha256 = hash_file_sha256(&partial_path).map_err(|e| {
+        let output_sha256 = hash_file_sha256(&partial_path).inspect_err(|_| {
             let _ = std::fs::remove_file(&partial_path);
-            e
         })?;
 
         // Run ffprobe QC if available

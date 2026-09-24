@@ -136,8 +136,7 @@ impl CrossCameraCorrelator {
         }
 
         // Final group
-        if current_group_channels.len() > 1 && current_window_start.is_some() {
-            let start = current_window_start.unwrap();
+        if let (true, Some(start)) = (current_group_channels.len() > 1, current_window_start) {
             groups.push(Self::finalize_group(
                 groups.len() + 1,
                 start,

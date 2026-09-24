@@ -8,7 +8,7 @@
 //! - Emits `DetectorOutput` without claiming attribution.
 
 use evidence_reader::EvidenceReader;
-use forensic_core::{EvidenceItem, ForensicError, Hash, OemProfile, Region, RuleMatchStatus};
+use forensic_core::{EvidenceItem, ForensicError, Hash, OemProfile, RuleMatchStatus};
 
 use crate::detector::Detector;
 use crate::output::{DetectionStatus, DetectorOutput};

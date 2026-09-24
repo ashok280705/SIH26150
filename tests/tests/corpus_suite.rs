@@ -160,7 +160,7 @@ fn test_corpus_parsers_suite() {
     let mut success_count = 0;
     
     for case in &cases {
-        let (oem, shape) = extract_shape_from_case(&case);
+        let (oem, shape) = extract_shape_from_case(case);
         
         let parser: &dyn Parser = match oem {
             OemShape::Dahua => &dahua,

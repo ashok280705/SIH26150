@@ -858,7 +858,8 @@ pub fn run_pipeline(
     let final_timeline = TimelineEngine::build_timeline(final_events, options.ordering);
     run.record_stage(
         PipelineStage::FinalTimeline,
-        if run.requires_analyst { StageStatus::Completed } else { StageStatus::Completed },
+        // Built either way; whether an analyst is needed is recorded on the run itself.
+        StageStatus::Completed,
         format!("Final timeline built with {} event(s)", final_timeline.events.len()),
     );
 

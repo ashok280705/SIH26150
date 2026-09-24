@@ -29,8 +29,6 @@ impl EvidenceReader for SyntheticTpLinkDisk {
             return Err(ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.size));
         }
         
-        let start = offset as usize;
-        let mut bytes_written = 0;
 
         // Mock MBR (sector 0)
         if offset == 0 && buf.len() >= 512 {
@@ -47,7 +45,6 @@ impl EvidenceReader for SyntheticTpLinkDisk {
             buf[462 + 8] = 101; // start sector
             buf[462 + 12] = 0xFF; // mock size
             
-            bytes_written = 512.min(buf.len());
         }
 
         // Mock EXT4 Superblock
@@ -56,7 +53,6 @@ impl EvidenceReader for SyntheticTpLinkDisk {
             if relative + 2 <= buf.len() {
                 buf[relative] = 0x53;
                 buf[relative + 1] = 0xEF;
-                bytes_written = bytes_written.max(relative + 2);
             }
         }
 
@@ -66,7 +62,6 @@ impl EvidenceReader for SyntheticTpLinkDisk {
             if relative + 2 <= buf.len() {
                 buf[relative] = 0x54;
                 buf[relative + 1] = 0x50;
-                bytes_written = bytes_written.max(relative + 2);
             }
         }
 
@@ -77,7 +72,6 @@ impl EvidenceReader for SyntheticTpLinkDisk {
             let relative = (meta_offset - offset) as usize;
             if relative + metadata.len() <= buf.len() {
                 buf[relative..relative + metadata.len()].copy_from_slice(metadata);
-                bytes_written = bytes_written.max(relative + metadata.len());
             }
         }
 
@@ -88,7 +82,6 @@ impl EvidenceReader for SyntheticTpLinkDisk {
             let relative = (sqlite_offset - offset) as usize;
             if relative + sqlite.len() <= buf.len() {
                 buf[relative..relative + sqlite.len()].copy_from_slice(sqlite);
-                bytes_written = bytes_written.max(relative + sqlite.len());
             }
         }
 

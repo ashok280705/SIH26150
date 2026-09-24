@@ -27,6 +27,12 @@ pub struct ParsingOrchestrator {
     parsers: std::collections::HashMap<String, Box<dyn Parser>>,
 }
 
+impl Default for ParsingOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParsingOrchestrator {
     pub fn new() -> Self {
         let mut parsers: std::collections::HashMap<String, Box<dyn Parser>> = std::collections::HashMap::new();

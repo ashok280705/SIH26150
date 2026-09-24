@@ -51,7 +51,7 @@ impl Parser for UniviewParser {
                         if let Ok(magic_bytes) = hex::decode(&hex) {
                             if buf.starts_with(&magic_bytes) {
                                 validation_state = ValidationState::pass("UNIV Superblock Found", "parse_filesystem", "superblock").unwrap();
-                            } else if buf[0] == 0xE5 && buf.len() >= 4 && &buf[1..4] == &magic_bytes[1..4] {
+                            } else if buf[0] == 0xE5 && buf.len() >= 4 && buf[1..4] == magic_bytes[1..4] {
                                 // Deleted marker candidate (0xE5 + "NIV"): validate surrounding superblock layout
                                 let has_valid_cluster_hint = buf.len() >= 8 && (buf[4] != 0 || buf[5] != 0);
                                 if has_valid_cluster_hint {
