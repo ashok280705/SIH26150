@@ -40,7 +40,10 @@ impl ReadOnlyMmap {
         validate_region_bounds(&region, total_len)?;
 
         if region.length == 0 {
-            return Err(ForensicError::corrupt("mmap_region", "cannot mmap zero-length region"));
+            return Err(ForensicError::corrupt(
+                "mmap_region",
+                "cannot mmap zero-length region",
+            ));
         }
 
         #[cfg(unix)]
@@ -67,7 +70,11 @@ impl ReadOnlyMmap {
 
             if ptr == libc::MAP_FAILED {
                 return Err(ForensicError::io(
-                    format!("mmap region [0x{:X}..0x{:X})", region.offset, region.offset + region.length),
+                    format!(
+                        "mmap region [0x{:X}..0x{:X})",
+                        region.offset,
+                        region.offset + region.length
+                    ),
                     std::io::Error::last_os_error(),
                 ));
             }

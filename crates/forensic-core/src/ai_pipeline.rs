@@ -20,9 +20,7 @@ pub struct AiPipeline;
 impl AiPipeline {
     /// Evaluates whether an input recording is eligible for AI analysis.
     /// Rejects inputs with ValidationState == FAIL or UNKNOWN (Req 16.1).
-    pub fn validate_ai_input(
-        input_validation: &ValidationState,
-    ) -> Result<(), ForensicError> {
+    pub fn validate_ai_input(input_validation: &ValidationState) -> Result<(), ForensicError> {
         match input_validation.state {
             ValidationStateKind::Pass => Ok(()),
             ValidationStateKind::Review => Ok(()), // Eligible for AI assistance during review
@@ -48,7 +46,8 @@ impl AiPipeline {
             "AI finding registered as probabilistic derived artifact",
             "ai_analytics",
             "AiAnalyticsPipeline",
-        ).unwrap();
+        )
+        .unwrap();
 
         let prov = Provenance::new(
             evidence_id,
@@ -65,7 +64,10 @@ impl AiPipeline {
             kind: DerivedKind::AiOutput,
             provenance: prov,
             output_path: format!("artifacts/ai/{}_{}.json", evidence_id, finding.id),
-            description: format!("AI Finding: {} (confidence: {:.2})", finding.finding_type, finding.confidence),
+            description: format!(
+                "AI Finding: {} (confidence: {:.2})",
+                finding.finding_type, finding.confidence
+            ),
             produced_at: Utc::now(),
         }
     }
@@ -79,7 +81,8 @@ impl AiPipeline {
                 "AI analytics service is disabled by examiner configuration (Req 16.5)",
                 "ai_analytics",
                 "AiAnalytics",
-            ).unwrap()
+            )
+            .unwrap()
         } else if !service_reachable {
             ValidationState::new(
                 ValidationStateKind::Unknown,
@@ -93,7 +96,8 @@ impl AiPipeline {
                 "AI analytics executed successfully",
                 "ai_analytics",
                 "AiAnalytics",
-            ).unwrap()
+            )
+            .unwrap()
         }
     }
 }
@@ -107,10 +111,12 @@ mod tests {
         let pass_state = ValidationState::pass("valid", "test", "test").unwrap();
         assert!(AiPipeline::validate_ai_input(&pass_state).is_ok());
 
-        let fail_state = ValidationState::new(ValidationStateKind::Fail, "corrupt", "test", "test").unwrap();
+        let fail_state =
+            ValidationState::new(ValidationStateKind::Fail, "corrupt", "test", "test").unwrap();
         assert!(AiPipeline::validate_ai_input(&fail_state).is_err());
 
-        let unknown_state = ValidationState::new(ValidationStateKind::Unknown, "unrun", "test", "test").unwrap();
+        let unknown_state =
+            ValidationState::new(ValidationStateKind::Unknown, "unrun", "test", "test").unwrap();
         assert!(AiPipeline::validate_ai_input(&unknown_state).is_err());
     }
 

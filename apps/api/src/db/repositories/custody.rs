@@ -1,11 +1,8 @@
 use forensic_core::chain_of_custody::{CustodyAction, CustodyEvent};
 use forensic_core::{CaseId, ExaminerId, ForensicError};
-use sqlx::{SqlitePool, Row};
+use sqlx::{Row, SqlitePool};
 
-pub async fn insert_event(
-    pool: &SqlitePool,
-    event: &CustodyEvent,
-) -> Result<(), ForensicError> {
+pub async fn insert_event(pool: &SqlitePool, event: &CustodyEvent) -> Result<(), ForensicError> {
     let action_str = event.action.to_string();
     let id = uuid::Uuid::new_v4();
 
@@ -14,7 +11,7 @@ pub async fn insert_event(
         INSERT INTO chain_of_custody (
             id, case_id, timestamp, examiner, action, artifact_id, result
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        "#
+        "#,
     )
     .bind(id)
     .bind(event.case_id.0)
@@ -25,7 +22,12 @@ pub async fn insert_event(
     .bind(&event.result)
     .execute(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("insert_event_db", format!("Failed to insert custody event: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "insert_event_db",
+            format!("Failed to insert custody event: {e}"),
+        )
+    })?;
 
     Ok(())
 }
@@ -56,12 +58,17 @@ pub async fn get_custody_log(
         FROM chain_of_custody
         WHERE case_id = ?1
         ORDER BY timestamp ASC
-        "#
+        "#,
     )
     .bind(case_id.0)
     .fetch_all(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("get_custody_log_db", format!("Failed to fetch custody log: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "get_custody_log_db",
+            format!("Failed to fetch custody log: {e}"),
+        )
+    })?;
 
     let mut events = Vec::new();
     for r in rows {

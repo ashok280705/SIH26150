@@ -208,9 +208,7 @@ pub fn plan_recovery(
                                     "authoritative".to_string(),
                             }
                         ),
-                        None => {
-                            "this OEM path supplied no recording index reader".to_string()
-                        }
+                        None => "this OEM path supplied no recording index reader".to_string(),
                     },
                 },
                 if has_index {

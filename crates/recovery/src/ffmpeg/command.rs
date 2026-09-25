@@ -7,9 +7,9 @@
 //! - No mandatory +faststart in primary forensic path
 //! - No `-y` overwrite flag (protecting against accidental file overwrites)
 
-use std::path::Path;
-use forensic_core::ForensicError;
 use crate::reconstructor::VideoCodec;
+use forensic_core::ForensicError;
+use std::path::Path;
 
 /// Structured specification of an external FFmpeg command invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,13 +47,15 @@ pub fn build_file_remux_command(
         VideoCodec::Mjpeg => {
             return Err(ForensicError::UnsupportedFormat {
                 format: "mjpeg".into(),
-                reason: "MJPEG stream-copy containerization is not supported in Phase 1 pipeline".into(),
+                reason: "MJPEG stream-copy containerization is not supported in Phase 1 pipeline"
+                    .into(),
             });
         }
         VideoCodec::Mpeg4 => {
             return Err(ForensicError::UnsupportedFormat {
                 format: "mpeg4".into(),
-                reason: "MPEG-4 elementary stream remuxing is not supported in Phase 1 pipeline".into(),
+                reason: "MPEG-4 elementary stream remuxing is not supported in Phase 1 pipeline"
+                    .into(),
             });
         }
         VideoCodec::Unknown => {
@@ -93,10 +95,7 @@ pub fn build_file_remux_command(
 }
 
 /// Builds the argument list for ffprobe machine-readable JSON inspection.
-pub fn build_probe_command(
-    ffprobe_bin: &str,
-    media_path: &Path,
-) -> CommandSpec {
+pub fn build_probe_command(ffprobe_bin: &str, media_path: &Path) -> CommandSpec {
     let args = vec![
         "-v".to_string(),
         "error".to_string(),
@@ -178,7 +177,8 @@ mod tests {
         // Path with shell injection characters must remain a single literal string argument
         let malicious_input = PathBuf::from("/tmp/stream; rm -rf /; $(whoami).h264");
         let output = PathBuf::from("/tmp/output.mp4");
-        let spec = build_file_remux_command("ffmpeg", VideoCodec::H264, &malicious_input, &output).unwrap();
+        let spec = build_file_remux_command("ffmpeg", VideoCodec::H264, &malicious_input, &output)
+            .unwrap();
 
         assert_eq!(spec.args[6], "/tmp/stream; rm -rf /; $(whoami).h264");
         // Ensure no shell command wrapper exists
@@ -195,7 +195,15 @@ mod tests {
         assert_eq!(spec.program, "ffprobe");
         assert_eq!(
             spec.args,
-            vec!["-v", "error", "-show_streams", "-show_format", "-of", "json", "/tmp/recording.mp4"]
+            vec![
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                "/tmp/recording.mp4"
+            ]
         );
     }
 }

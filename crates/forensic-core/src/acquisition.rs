@@ -135,11 +135,7 @@ impl Acquisition {
     }
 
     /// Set the acquisition map/receipt reference and compute its hash.
-    pub fn with_map(
-        mut self,
-        reference: impl Into<String>,
-        hash: Option<Hash>,
-    ) -> Self {
+    pub fn with_map(mut self, reference: impl Into<String>, hash: Option<Hash>) -> Self {
         self.map_reference = Some(reference.into());
         self.map_hash = hash;
         self

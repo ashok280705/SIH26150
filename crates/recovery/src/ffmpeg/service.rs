@@ -1,15 +1,15 @@
 //! FFmpeg execution engine, executable discovery, and atomic artifact materialization.
 
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use chrono::Utc;
-use sha2::{Digest, Sha256};
-use forensic_core::{CancelToken, ForensicError, ValidationState, ValidationStateKind};
+use super::command::build_file_remux_command;
+use super::probe::{probe_media_file, validate_codec_consistency};
 use super::types::{
     ArtifactVerificationResult, FfmpegInfo, FfmpegSource, ProbeResult, RemuxOptions, RemuxResult,
 };
-use super::command::build_file_remux_command;
-use super::probe::{probe_media_file, validate_codec_consistency};
+use chrono::Utc;
+use forensic_core::{CancelToken, ForensicError, ValidationState, ValidationStateKind};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Service managing external FFmpeg and ffprobe discovery and execution.
 #[derive(Debug, Clone)]
@@ -33,7 +33,8 @@ impl FfmpegService {
     /// 3. Application-bundled runtime binary
     /// 4. System PATH
     pub fn discover(configured_path: Option<&Path>) -> Self {
-        let (ffmpeg_path, ffmpeg_source) = resolve_binary("ffmpeg", configured_path, "FORENSIC_FFMPEG_PATH");
+        let (ffmpeg_path, ffmpeg_source) =
+            resolve_binary("ffmpeg", configured_path, "FORENSIC_FFMPEG_PATH");
         let (ffprobe_path, _) = resolve_binary("ffprobe", None, "FORENSIC_FFPROBE_PATH");
 
         let version_string = if let Some(ref path) = ffmpeg_path {
@@ -97,8 +98,14 @@ impl FfmpegService {
 
         if !input_es_path.exists() {
             return Err(ForensicError::io(
-                format!("Input elementary stream '{}' not found", input_es_path.display()),
-                std::io::Error::new(std::io::ErrorKind::NotFound, "Elementary stream artifact missing"),
+                format!(
+                    "Input elementary stream '{}' not found",
+                    input_es_path.display()
+                ),
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Elementary stream artifact missing",
+                ),
             ));
         }
 
@@ -114,7 +121,10 @@ impl FfmpegService {
         let output_dir = output_final_path.parent().unwrap_or_else(|| Path::new("."));
         let tmp_dir = output_dir.join(".tmp");
         std::fs::create_dir_all(&tmp_dir).map_err(|e| {
-            ForensicError::io(format!("Creating temporary artifact dir '{}'", tmp_dir.display()), e)
+            ForensicError::io(
+                format!("Creating temporary artifact dir '{}'", tmp_dir.display()),
+                e,
+            )
         })?;
 
         // Generate isolated .partial file path
@@ -196,7 +206,11 @@ impl FfmpegService {
             let _ = std::fs::remove_file(&partial_path);
             return Err(ForensicError::DecodeFailed {
                 context: "remux_elementary_stream_file".into(),
-                reason: format!("FFmpeg remux exited with code {}: {}", exit_code, stderr_str.trim()),
+                reason: format!(
+                    "FFmpeg remux exited with code {}: {}",
+                    exit_code,
+                    stderr_str.trim()
+                ),
             });
         }
 
@@ -229,22 +243,25 @@ impl FfmpegService {
                     probe_result = pr;
                     val
                 }
-                Err(e) => {
-                    ValidationState::new(
-                        ValidationStateKind::Review,
-                        format!("MP4 generated; ffprobe QC check inconclusive: {e}"),
-                        "remux_elementary_stream_file",
-                        "DerivedMp4",
-                    ).unwrap()
-                }
+                Err(e) => ValidationState::new(
+                    ValidationStateKind::Review,
+                    format!("MP4 generated; ffprobe QC check inconclusive: {e}"),
+                    "remux_elementary_stream_file",
+                    "DerivedMp4",
+                )
+                .unwrap(),
             }
         } else {
             ValidationState::new(
                 ValidationStateKind::Pass,
-                format!("Stream-copy remux completed successfully ({:?})", options.codec),
+                format!(
+                    "Stream-copy remux completed successfully ({:?})",
+                    options.codec
+                ),
                 "remux_elementary_stream_file",
                 "DerivedMp4",
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         // Two-domain atomicity: filesystem atomic rename to finalized artifact path
@@ -258,7 +275,11 @@ impl FfmpegService {
         std::fs::rename(&partial_path, output_final_path).map_err(|e| {
             let _ = std::fs::remove_file(&partial_path);
             ForensicError::io(
-                format!("Atomically renaming '{}' to '{}'", partial_path.display(), output_final_path.display()),
+                format!(
+                    "Atomically renaming '{}' to '{}'",
+                    partial_path.display(),
+                    output_final_path.display()
+                ),
                 e,
             )
         })?;
@@ -270,7 +291,10 @@ impl FfmpegService {
             output_size_bytes: output_size,
             output_sha256,
             duration_ms,
-            ffmpeg_version: self.version_string.clone().unwrap_or_else(|| "unknown".into()),
+            ffmpeg_version: self
+                .version_string
+                .clone()
+                .unwrap_or_else(|| "unknown".into()),
             arguments: cmd_spec.args,
             exit_code,
             validation_state,
@@ -287,13 +311,19 @@ pub fn reverify_artifact_sha256(
 ) -> Result<ArtifactVerificationResult, ForensicError> {
     if !target_path.exists() {
         return Err(ForensicError::io(
-            format!("Artifact file '{}' not found for verification", target_path.display()),
+            format!(
+                "Artifact file '{}' not found for verification",
+                target_path.display()
+            ),
             std::io::Error::new(std::io::ErrorKind::NotFound, "Target artifact missing"),
         ));
     }
 
     let meta = std::fs::metadata(target_path).map_err(|e| {
-        ForensicError::io(format!("Reading metadata for '{}'", target_path.display()), e)
+        ForensicError::io(
+            format!("Reading metadata for '{}'", target_path.display()),
+            e,
+        )
     })?;
 
     let computed = hash_file_sha256(target_path)?;
@@ -303,7 +333,11 @@ pub fn reverify_artifact_sha256(
         artifact_id: artifact_id.to_string(),
         stored_sha256: stored_sha256.to_string(),
         computed_sha256: computed,
-        status: if is_match { "MATCH".to_string() } else { "MISMATCH".to_string() },
+        status: if is_match {
+            "MATCH".to_string()
+        } else {
+            "MISMATCH".to_string()
+        },
         verified_at: Utc::now().to_rfc3339(),
         size_bytes: meta.len(),
     })
@@ -319,9 +353,9 @@ pub fn hash_file_sha256(path: &Path) -> Result<String, ForensicError> {
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024]; // 64 KiB chunks
     loop {
-        let n = file.read(&mut buffer).map_err(|e| {
-            ForensicError::io("Reading chunk for SHA-256", e)
-        })?;
+        let n = file
+            .read(&mut buffer)
+            .map_err(|e| ForensicError::io("Reading chunk for SHA-256", e))?;
         if n == 0 {
             break;
         }
@@ -331,10 +365,17 @@ pub fn hash_file_sha256(path: &Path) -> Result<String, ForensicError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn resolve_binary(name: &str, configured: Option<&Path>, env_var: &str) -> (Option<PathBuf>, FfmpegSource) {
+fn resolve_binary(
+    name: &str,
+    configured: Option<&Path>,
+    env_var: &str,
+) -> (Option<PathBuf>, FfmpegSource) {
     if let Some(cfg) = configured {
         if cfg.exists() {
-            return (Some(cfg.to_path_buf()), FfmpegSource::Configured(cfg.to_path_buf()));
+            return (
+                Some(cfg.to_path_buf()),
+                FfmpegSource::Configured(cfg.to_path_buf()),
+            );
         }
     }
 
@@ -355,14 +396,20 @@ fn resolve_binary(name: &str, configured: Option<&Path>, env_var: &str) -> (Opti
 
     for candidate in &bundled_candidates {
         if candidate.exists() {
-            return (Some(candidate.clone()), FfmpegSource::Bundled(candidate.clone()));
+            return (
+                Some(candidate.clone()),
+                FfmpegSource::Bundled(candidate.clone()),
+            );
         }
     }
 
     // Check system PATH
     if let Ok(output) = std::process::Command::new(name).arg("-version").output() {
         if output.status.success() {
-            return (Some(PathBuf::from(name)), FfmpegSource::Path(PathBuf::from(name)));
+            return (
+                Some(PathBuf::from(name)),
+                FfmpegSource::Path(PathBuf::from(name)),
+            );
         }
     }
 
@@ -402,7 +449,12 @@ mod tests {
         let reverify = reverify_artifact_sha256("test-art-1", &test_file, &hash).unwrap();
         assert_eq!(reverify.status, "MATCH");
 
-        let mismatch = reverify_artifact_sha256("test-art-1", &test_file, "0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let mismatch = reverify_artifact_sha256(
+            "test-art-1",
+            &test_file,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
         assert_eq!(mismatch.status, "MISMATCH");
 
         let _ = std::fs::remove_dir_all(&temp_dir);

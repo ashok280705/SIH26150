@@ -243,7 +243,10 @@ impl DeterministicRng {
     }
 
     fn next_u8(&mut self) -> u8 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.state >> 33) as u8
     }
 
@@ -332,7 +335,6 @@ fn generate_normal(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     buf
 }
 
-
 fn generate_sparse(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE * 4]; // Larger, mostly zeros.
     place_primary_magic(&mut buf, oem);
@@ -417,7 +419,7 @@ fn generate_known_negative(rng: &mut DeterministicRng, _oem: OemShape) -> Vec<u8
     let mut buf = vec![0u8; FIXTURE_SIZE];
     rng.fill(&mut buf);
     // Put FAT32 magic instead
-    buf[82..82+8].copy_from_slice(b"FAT32   ");
+    buf[82..82 + 8].copy_from_slice(b"FAT32   ");
     buf
 }
 
@@ -474,14 +476,14 @@ fn generate_unknown_model(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> 
     let mut buf = generate_normal(rng, oem);
     // Overwrite the corroborating tag with a valid but unknown tag
     let tag = synthetic_corroborating_tag(oem);
-    buf[512..512+tag.len()].copy_from_slice(&vec![b'X'; tag.len()]);
+    buf[512..512 + tag.len()].copy_from_slice(&vec![b'X'; tag.len()]);
     buf
 }
 
 fn generate_unknown_firmware(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = generate_normal(rng, oem);
     // Alter firmware version strings (dummy)
-    buf[1024..1024+4].copy_from_slice(b"V9.9");
+    buf[1024..1024 + 4].copy_from_slice(b"V9.9");
     buf
 }
 

@@ -35,7 +35,6 @@ impl WriteGuard {
         &self.artifacts_dir
     }
 
-
     /// Check if a proposed write path is permitted.
     ///
     /// Returns `Ok(())` if the path is safely outside the evidence directory and inside
@@ -62,7 +61,10 @@ impl WriteGuard {
             }
         };
 
-        let evidence_canon = self.evidence_dir.canonicalize().unwrap_or_else(|_| self.evidence_dir.clone());
+        let evidence_canon = self
+            .evidence_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.evidence_dir.clone());
 
         if canonical_target.starts_with(&evidence_canon) {
             return Err(ForensicError::WriteDenied {
@@ -128,13 +130,9 @@ mod tests {
         let case_id = CaseId::new();
         let examiner = ExaminerId::new("auditor");
 
-        let result = guard.guard_write(
-            &forbidden_target,
-            case_id,
-            examiner,
-            &mut log,
-            |_path| Ok("written"),
-        );
+        let result = guard.guard_write(&forbidden_target, case_id, examiner, &mut log, |_path| {
+            Ok("written")
+        });
 
         assert!(result.is_err());
         assert_eq!(log.len(), 1);
@@ -159,13 +157,9 @@ mod tests {
         let case_id = CaseId::new();
         let examiner = ExaminerId::new("auditor");
 
-        let result = guard.guard_write(
-            &allowed_target,
-            case_id,
-            examiner,
-            &mut log,
-            |_path| Ok("written"),
-        );
+        let result = guard.guard_write(&allowed_target, case_id, examiner, &mut log, |_path| {
+            Ok("written")
+        });
 
         assert!(result.is_ok());
         assert_eq!(log.len(), 0); // No write-denied event

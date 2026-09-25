@@ -22,20 +22,20 @@
 // This crate deliberately does not `forbid(unsafe_code)`: read-only memory maps may
 // require `unsafe`.
 
-pub mod reader;
-pub mod config;
-pub mod raw;
-pub mod source_safety;
-pub mod progress;
-pub mod scanner;
-pub mod mmap;
 pub mod bounded;
+pub mod config;
+pub mod mmap;
+pub mod progress;
+pub mod raw;
+pub mod reader;
+pub mod scanner;
+pub mod source_safety;
 
-pub use reader::{EvidenceReader, SourceKind};
-pub use config::ReaderConfig;
-pub use raw::RawReader;
-pub use source_safety::{SafetyDecision, SourceSafetyReport, inspect_source};
-pub use progress::{CancellationToken, ProgressCallback, ProgressInfo};
-pub use scanner::{RegionScanner, ScanOptions, ScanReport, TerminationReason};
-pub use mmap::ReadOnlyMmap;
 pub use bounded::BoundedReader;
+pub use config::ReaderConfig;
+pub use mmap::ReadOnlyMmap;
+pub use progress::{CancellationToken, ProgressCallback, ProgressInfo};
+pub use raw::RawReader;
+pub use reader::{EvidenceReader, SourceKind};
+pub use scanner::{RegionScanner, ScanOptions, ScanReport, TerminationReason};
+pub use source_safety::{inspect_source, SafetyDecision, SourceSafetyReport};

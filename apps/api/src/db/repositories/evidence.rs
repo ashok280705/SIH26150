@@ -1,10 +1,9 @@
-use forensic_core::{CaseId, Evidence, EvidenceId, ExaminerId, ForensicError, ImageFormat, SourceState};
-use sqlx::{SqlitePool, Row};
+use forensic_core::{
+    CaseId, Evidence, EvidenceId, ExaminerId, ForensicError, ImageFormat, SourceState,
+};
+use sqlx::{Row, SqlitePool};
 
-pub async fn create_evidence(
-    pool: &SqlitePool,
-    evidence: &Evidence,
-) -> Result<(), ForensicError> {
+pub async fn create_evidence(pool: &SqlitePool, evidence: &Evidence) -> Result<(), ForensicError> {
     let image_format_str = evidence.image_format.to_string();
     let source_state_str = evidence.source_state.to_string();
     let capacity_i64 = evidence.capacity as i64; // sqlite uses i64
@@ -16,7 +15,7 @@ pub async fn create_evidence(
             responsible_examiner, acquisition_tool, acquisition_tool_version,
             source_state, acquisition_id, path, registered_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-        "#
+        "#,
     )
     .bind(evidence.id.0)
     .bind(evidence.case_id.0)
@@ -33,7 +32,12 @@ pub async fn create_evidence(
     .bind(evidence.registered_at)
     .execute(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("create_evidence_db", format!("Failed to insert evidence: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "create_evidence_db",
+            format!("Failed to insert evidence: {e}"),
+        )
+    })?;
 
     Ok(())
 }
@@ -75,12 +79,14 @@ pub async fn get_evidence(
             source_state, acquisition_id, path, registered_at
         FROM evidence
         WHERE id = ?1
-        "#
+        "#,
     )
     .bind(id.0)
     .fetch_optional(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("get_evidence_db", format!("Failed to fetch evidence: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt("get_evidence_db", format!("Failed to fetch evidence: {e}"))
+    })?;
 
     if let Some(r) = row {
         Ok(Some(row_to_evidence(&r)?))
@@ -102,12 +108,17 @@ pub async fn get_evidence_for_case(
         FROM evidence
         WHERE case_id = ?1
         ORDER BY registered_at ASC
-        "#
+        "#,
     )
     .bind(case_id.0)
     .fetch_all(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("get_evidence_for_case_db", format!("Failed to fetch evidence: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "get_evidence_for_case_db",
+            format!("Failed to fetch evidence: {e}"),
+        )
+    })?;
 
     let mut res = Vec::new();
     for r in rows {

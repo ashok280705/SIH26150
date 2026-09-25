@@ -6,8 +6,8 @@
 use chrono::Utc;
 use forensic_core::{
     chain_of_custody::{CustodyAction, CustodyEvent},
-    ArtifactId, CaseId, DerivedArtifact, DerivedKind, EvidenceId, ExaminerId,
-    Hash, Provenance, ValidationState, ValidationStateKind,
+    ArtifactId, CaseId, DerivedArtifact, DerivedKind, EvidenceId, ExaminerId, Hash, Provenance,
+    ValidationState, ValidationStateKind,
 };
 use sha2::{Digest, Sha256};
 
@@ -33,7 +33,8 @@ impl ReportAuditor {
             "generate_report",
             "Report generated with full cryptographic provenance",
             "ReportExporter",
-        ).unwrap();
+        )
+        .unwrap();
 
         let prov = Provenance::new(
             evidence_id,
@@ -50,7 +51,10 @@ impl ReportAuditor {
             kind: DerivedKind::Other(format!("{}_report", format_name.to_lowercase())),
             provenance: prov,
             output_path: report_path.to_string(),
-            description: format!("Forensic examination report ({})", format_name.to_uppercase()),
+            description: format!(
+                "Forensic examination report ({})",
+                format_name.to_uppercase()
+            ),
             produced_at: Utc::now(),
         }
     }
@@ -65,7 +69,11 @@ impl ReportAuditor {
         CustodyEvent::new(
             examiner_id,
             CustodyAction::Export,
-            format!("Exported {} forensic report with SHA-256 hash {}", format_name.to_uppercase(), report_hash),
+            format!(
+                "Exported {} forensic report with SHA-256 hash {}",
+                format_name.to_uppercase(),
+                report_hash
+            ),
             case_id,
         )
     }
@@ -85,7 +93,12 @@ mod tests {
         let hash = ReportAuditor::hash_report(report_content);
         assert!(!hash.hex().is_empty());
 
-        let artifact = ReportAuditor::create_report_artifact(evidence_id, "/reports/case1.json", hash.clone(), "JSON");
+        let artifact = ReportAuditor::create_report_artifact(
+            evidence_id,
+            "/reports/case1.json",
+            hash.clone(),
+            "JSON",
+        );
         assert_eq!(artifact.kind, DerivedKind::Other("json_report".into()));
         assert_eq!(artifact.provenance.output_hash, hash);
 

@@ -28,8 +28,15 @@ fn real_h264_stream_is_not_misclassified_as_h265() {
         "h264 fixture -> codec={:?} h264_score={} h265_score={} ({})",
         ev.codec, ev.h264_score, ev.h265_score, ev.validation.reason
     );
-    assert_eq!(ev.codec, VideoCodec::H264, "real H.264 must classify as H264");
-    assert!(ev.h264_score > ev.h265_score, "H.264 evidence must dominate");
+    assert_eq!(
+        ev.codec,
+        VideoCodec::H264,
+        "real H.264 must classify as H264"
+    );
+    assert!(
+        ev.h264_score > ev.h265_score,
+        "H.264 evidence must dominate"
+    );
 }
 
 #[test]
@@ -43,5 +50,9 @@ fn real_hevc_stream_classifies_as_h265() {
         "hevc fixture -> codec={:?} h264_score={} h265_score={} ({})",
         ev.codec, ev.h264_score, ev.h265_score, ev.validation.reason
     );
-    assert_eq!(ev.codec, VideoCodec::H265, "real HEVC must classify as H265");
+    assert_eq!(
+        ev.codec,
+        VideoCodec::H265,
+        "real HEVC must classify as H265"
+    );
 }

@@ -218,15 +218,31 @@ pub fn build_recording_timeline(
                 continue;
             }
         };
-        let native = rec.time.recorder_native.as_ref().map(|n| n.iso_8601.clone());
-        let offset = rec.source_offsets.iter().map(|r| r.offset).min().unwrap_or(0);
+        let native = rec
+            .time
+            .recorder_native
+            .as_ref()
+            .map(|n| n.iso_8601.clone());
+        let offset = rec
+            .source_offsets
+            .iter()
+            .map(|r| r.offset)
+            .min()
+            .unwrap_or(0);
         let length: u64 = rec.source_offsets.iter().map(|r| r.length).sum();
         let tz = match &rec.time.timezone {
             TimeZoneState::Known(label) => label.clone(),
             TimeZoneState::Unknown => "Unknown".to_string(),
         };
-        let entry = per_channel.entry(rec.channel).or_insert_with(|| (Vec::new(), tz));
-        entry.0.push(Point { instant, native, offset, length });
+        let entry = per_channel
+            .entry(rec.channel)
+            .or_insert_with(|| (Vec::new(), tz));
+        entry.0.push(Point {
+            instant,
+            native,
+            offset,
+            length,
+        });
     }
 
     let mut sessions: Vec<RecordingSession> = Vec::new();
@@ -258,7 +274,8 @@ pub fn build_recording_timeline(
             }
             current.push(point);
         }
-        if let Some(session) = build_session(channel, &timezone, &current, nominal, min_gap_seconds) {
+        if let Some(session) = build_session(channel, &timezone, &current, nominal, min_gap_seconds)
+        {
             sessions.push(session);
         }
     }
@@ -316,10 +333,7 @@ fn build_session(
             // The gap opens one cadence after the earlier segment started (i.e. when its
             // footage runs out) and closes when the later segment begins.
             let gap_open = prev.instant + chrono::Duration::seconds(nominal);
-            let gap_open_native = prev
-                .native
-                .as_ref()
-                .and_then(|n| native_plus(n, nominal));
+            let gap_open_native = prev.native.as_ref().and_then(|n| native_plus(n, nominal));
             gaps.push(SessionGap {
                 starts_after_native: gap_open_native,
                 ends_before_native: next.native.clone(),
@@ -345,10 +359,7 @@ fn build_session(
         (covered_seconds as f64 / span_seconds as f64).clamp(0.0, 1.0)
     };
 
-    let end_native = last
-        .native
-        .as_ref()
-        .and_then(|n| native_plus(n, nominal));
+    let end_native = last.native.as_ref().and_then(|n| native_plus(n, nominal));
 
     let segments = group
         .iter()
@@ -387,7 +398,13 @@ mod tests {
         Hash, NormalizedTime, ProfileId, Provenance, RawTimestamp, RecorderNativeTime, Region,
     };
 
-    fn recording(channel: u32, offset: u64, native: &str, norm: &str, tz: TimeZoneState) -> Recording {
+    fn recording(
+        channel: u32,
+        offset: u64,
+        native: &str,
+        norm: &str,
+        tz: TimeZoneState,
+    ) -> Recording {
         let prov = Provenance::new(
             forensic_core::EvidenceId::new(),
             Hash::sha256(vec![0; 32]),
@@ -400,15 +417,27 @@ mod tests {
         Recording {
             channel,
             time: TimeEvidence {
-                raw: RawTimestamp { value: 0, format: "UNIX".into(), source: prov },
-                recorder_native: Some(RecorderNativeTime { iso_8601: native.into() }),
-                normalized: Some(NormalizedTime { iso_8601: norm.into(), method: "test".into() }),
+                raw: RawTimestamp {
+                    value: 0,
+                    format: "UNIX".into(),
+                    source: prov,
+                },
+                recorder_native: Some(RecorderNativeTime {
+                    iso_8601: native.into(),
+                }),
+                normalized: Some(NormalizedTime {
+                    iso_8601: norm.into(),
+                    method: "test".into(),
+                }),
                 reference: None,
                 timezone: tz,
                 correction: None,
             },
             source_image: "img.raw".into(),
-            source_offsets: vec![Region { offset, length: 1000 }],
+            source_offsets: vec![Region {
+                offset,
+                length: 1000,
+            }],
             parser_id: "p".into(),
             parser_version: "1".into(),
             profile_id: ProfileId("prof".into()),
@@ -419,7 +448,13 @@ mod tests {
     }
 
     fn ist(channel: u32, offset: u64, native: &str, norm: &str) -> Recording {
-        recording(channel, offset, native, norm, TimeZoneState::Known("UTC+05:30".into()))
+        recording(
+            channel,
+            offset,
+            native,
+            norm,
+            TimeZoneState::Known("UTC+05:30".into()),
+        )
     }
 
     #[test]
@@ -453,8 +488,14 @@ mod tests {
         let s = &tl.sessions[0];
         assert_eq!(s.gaps.len(), 1);
         assert_eq!(s.gaps[0].missing_seconds, 300);
-        assert_eq!(s.gaps[0].starts_after_native.as_deref(), Some("2026-09-20T10:10:00"));
-        assert_eq!(s.gaps[0].ends_before_native.as_deref(), Some("2026-09-20T10:15:00"));
+        assert_eq!(
+            s.gaps[0].starts_after_native.as_deref(),
+            Some("2026-09-20T10:10:00")
+        );
+        assert_eq!(
+            s.gaps[0].ends_before_native.as_deref(),
+            Some("2026-09-20T10:15:00")
+        );
         assert_eq!(s.missing_seconds, 300);
         assert!(s.coverage_ratio < 1.0);
     }
@@ -485,9 +526,13 @@ mod tests {
 
     #[test]
     fn unknown_timezone_recordings_are_counted_but_excluded() {
-        let recs = vec![
-            recording(1, 0, "2026-09-20T10:00:00", "2026-09-20T04:30:00Z", TimeZoneState::Unknown),
-        ];
+        let recs = vec![recording(
+            1,
+            0,
+            "2026-09-20T10:00:00",
+            "2026-09-20T04:30:00Z",
+            TimeZoneState::Unknown,
+        )];
         let tl = build_recording_timeline(&recs, 30, 3600);
         assert_eq!(tl.recordings_without_time, 1);
         assert_eq!(tl.total_recordings, 0);

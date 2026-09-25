@@ -1,10 +1,8 @@
 //! Database repository for forensic artifacts, provenance chains, and hash records.
 
-use sqlx::{SqlitePool, Row};
 use chrono::Utc;
-use forensic_core::{
-    DerivedArtifact, DerivedKind, EvidenceId, ForensicError, ValidationStateKind,
-};
+use forensic_core::{DerivedArtifact, DerivedKind, EvidenceId, ForensicError, ValidationStateKind};
+use sqlx::{Row, SqlitePool};
 
 /// DTO representing an artifact record stored in SQLite along with its provenance details.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -40,7 +38,10 @@ pub async fn save_derived_artifact(
     duration_ms: u64,
 ) -> Result<uuid::Uuid, ForensicError> {
     let mut tx = pool.begin().await.map_err(|e| {
-        ForensicError::corrupt("save_derived_artifact", format!("Starting SQLite transaction: {e}"))
+        ForensicError::corrupt(
+            "save_derived_artifact",
+            format!("Starting SQLite transaction: {e}"),
+        )
     })?;
 
     let now = Utc::now();
@@ -63,7 +64,7 @@ pub async fn save_derived_artifact(
         INSERT INTO validation_states (
             id, state, reason, operation, subject, recorded_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-        "#
+        "#,
     )
     .bind(val_id)
     .bind(val_state_str)
@@ -73,12 +74,19 @@ pub async fn save_derived_artifact(
     .bind(now)
     .execute(&mut *tx)
     .await
-    .map_err(|e| ForensicError::corrupt("save_derived_artifact", format!("Inserting validation state: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "save_derived_artifact",
+            format!("Inserting validation state: {e}"),
+        )
+    })?;
 
     // 2. Insert provenance row
-    let trans_json = serde_json::to_string(&artifact.provenance.transformation_history).unwrap_or_else(|_| "[]".into());
+    let trans_json = serde_json::to_string(&artifact.provenance.transformation_history)
+        .unwrap_or_else(|_| "[]".into());
     let source_hash_bytes = artifact.provenance.source_hash.value.clone();
-    let output_hash_bytes = hex::decode(raw_sha256_hex).unwrap_or_else(|_| artifact.provenance.output_hash.value.clone());
+    let output_hash_bytes = hex::decode(raw_sha256_hex)
+        .unwrap_or_else(|_| artifact.provenance.output_hash.value.clone());
 
     sqlx::query(
         r#"
@@ -91,7 +99,7 @@ pub async fn save_derived_artifact(
             ?6, ?7, ?8, ?9,
             ?10, ?11, ?12, ?13
         )
-        "#
+        "#,
     )
     .bind(prov_id)
     .bind(evidence_id.0)
@@ -99,7 +107,13 @@ pub async fn save_derived_artifact(
     .bind(&artifact.provenance.producing_component)
     .bind(&artifact.provenance.component_version)
     .bind(artifact.provenance.profile_version.as_deref())
-    .bind(artifact.provenance.profile_hash.as_ref().map(|h| h.value.clone()))
+    .bind(
+        artifact
+            .provenance
+            .profile_hash
+            .as_ref()
+            .map(|h| h.value.clone()),
+    )
     .bind(artifact.provenance.parser_version.as_deref())
     .bind(artifact.provenance.recovery_level.as_deref())
     .bind(&output_hash_bytes)
@@ -108,7 +122,12 @@ pub async fn save_derived_artifact(
     .bind(now)
     .execute(&mut *tx)
     .await
-    .map_err(|e| ForensicError::corrupt("save_derived_artifact", format!("Inserting provenance: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "save_derived_artifact",
+            format!("Inserting provenance: {e}"),
+        )
+    })?;
 
     // 3. Insert source_regions
     for sr in &artifact.provenance.source_regions {
@@ -118,7 +137,7 @@ pub async fn save_derived_artifact(
             INSERT INTO source_regions (
                 id, provenance_id, evidence_id, offset_bytes, length_bytes, description
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            "#
+            "#,
         )
         .bind(sr_id)
         .bind(prov_id)
@@ -128,7 +147,12 @@ pub async fn save_derived_artifact(
         .bind(sr.description.as_deref())
         .execute(&mut *tx)
         .await
-        .map_err(|e| ForensicError::corrupt("save_derived_artifact", format!("Inserting source region: {e}")))?;
+        .map_err(|e| {
+            ForensicError::corrupt(
+                "save_derived_artifact",
+                format!("Inserting source region: {e}"),
+            )
+        })?;
     }
 
     // 4. Insert hash record
@@ -165,7 +189,7 @@ pub async fn save_derived_artifact(
         INSERT INTO artifacts (
             id, kind, evidence_id, provenance_id, output_path, description, created_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        "#
+        "#,
     )
     .bind(art_id)
     .bind(kind_str)
@@ -176,10 +200,18 @@ pub async fn save_derived_artifact(
     .bind(now)
     .execute(&mut *tx)
     .await
-    .map_err(|e| ForensicError::corrupt("save_derived_artifact", format!("Inserting artifact record: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "save_derived_artifact",
+            format!("Inserting artifact record: {e}"),
+        )
+    })?;
 
     tx.commit().await.map_err(|e| {
-        ForensicError::corrupt("save_derived_artifact", format!("Committing artifact transaction: {e}"))
+        ForensicError::corrupt(
+            "save_derived_artifact",
+            format!("Committing artifact transaction: {e}"),
+        )
     })?;
 
     Ok(art_id)
@@ -200,7 +232,7 @@ pub async fn get_artifact(
         LEFT JOIN provenance p ON a.provenance_id = p.id
         LEFT JOIN validation_states v ON p.validation_state_id = v.id
         WHERE a.id = ?1
-        "#
+        "#,
     )
     .bind(artifact_id)
     .fetch_optional(pool)
@@ -231,7 +263,7 @@ pub async fn get_artifact(
             SELECT offset_bytes, length_bytes, description
             FROM source_regions
             WHERE provenance_id = ?1
-            "#
+            "#,
         )
         .bind(p_id)
         .fetch_all(pool)
@@ -282,12 +314,17 @@ pub async fn list_artifacts_for_evidence(
         LEFT JOIN validation_states v ON p.validation_state_id = v.id
         WHERE a.evidence_id = ?1
         ORDER BY a.created_at DESC
-        "#
+        "#,
     )
     .bind(evidence_id.0)
     .fetch_all(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("list_artifacts_for_evidence", format!("Fetching artifacts: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "list_artifacts_for_evidence",
+            format!("Fetching artifacts: {e}"),
+        )
+    })?;
 
     let mut records = Vec::new();
     for r in rows {

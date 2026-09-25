@@ -48,9 +48,8 @@ impl RawReader {
         }
 
         // Open read-only (File::open = O_RDONLY on Unix, GENERIC_READ on Windows).
-        let file = File::open(path).map_err(|e| {
-            ForensicError::io(format!("opening evidence at {}", path.display()), e)
-        })?;
+        let file = File::open(path)
+            .map_err(|e| ForensicError::io(format!("opening evidence at {}", path.display()), e))?;
 
         let metadata = file.metadata().map_err(|e| {
             ForensicError::io(format!("reading metadata for {}", path.display()), e)
@@ -83,9 +82,8 @@ impl RawReader {
     #[cfg(unix)]
     pub fn open_device(path: impl AsRef<Path>) -> Result<Self, ForensicError> {
         let path = path.as_ref();
-        let file = File::open(path).map_err(|e| {
-            ForensicError::io(format!("opening device at {}", path.display()), e)
-        })?;
+        let file = File::open(path)
+            .map_err(|e| ForensicError::io(format!("opening device at {}", path.display()), e))?;
 
         // Get device size via seek to end.
         let mut f = file;
@@ -132,17 +130,15 @@ impl EvidenceReader for RawReader {
             )
         })?;
 
-        file.seek(SeekFrom::Start(offset)).map_err(|e| {
-            ForensicError::io(format!("seeking to offset {offset}"), e)
-        })?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| ForensicError::io(format!("seeking to offset {offset}"), e))?;
 
         // Limit read to remaining bytes.
         let remaining = (self.len - offset) as usize;
         let to_read = buf.len().min(remaining);
 
-        file.read(&mut buf[..to_read]).map_err(|e| {
-            ForensicError::io(format!("reading at offset {offset}"), e)
-        })
+        file.read(&mut buf[..to_read])
+            .map_err(|e| ForensicError::io(format!("reading at offset {offset}"), e))
     }
 
     fn source_kind(&self) -> SourceKind {

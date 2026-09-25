@@ -36,19 +36,36 @@ pub struct Applicability {
 
 impl Applicability {
     /// Check if this profile applies to the given model/firmware query.
-    pub fn matches(&self, model: Option<&str>, firmware: Option<&str>, variant: Option<&str>) -> bool {
+    pub fn matches(
+        &self,
+        model: Option<&str>,
+        firmware: Option<&str>,
+        variant: Option<&str>,
+    ) -> bool {
         if let Some(m) = model {
-            if !self.models.is_empty() && !self.models.iter().any(|item| item.eq_ignore_ascii_case(m)) {
+            if !self.models.is_empty()
+                && !self.models.iter().any(|item| item.eq_ignore_ascii_case(m))
+            {
                 return false;
             }
         }
         if let Some(f) = firmware {
-            if !self.firmwares.is_empty() && !self.firmwares.iter().any(|item| item.eq_ignore_ascii_case(f)) {
+            if !self.firmwares.is_empty()
+                && !self
+                    .firmwares
+                    .iter()
+                    .any(|item| item.eq_ignore_ascii_case(f))
+            {
                 return false;
             }
         }
         if let Some(v) = variant {
-            if !self.storage_variants.is_empty() && !self.storage_variants.iter().any(|item| item.eq_ignore_ascii_case(v)) {
+            if !self.storage_variants.is_empty()
+                && !self
+                    .storage_variants
+                    .iter()
+                    .any(|item| item.eq_ignore_ascii_case(v))
+            {
                 return false;
             }
         }
@@ -63,7 +80,11 @@ pub enum OffsetConstraint {
     /// Pattern must be located at exact byte offset.
     Exact { offset: u64 },
     /// Pattern must be aligned to sector/block boundaries within a range.
-    AlignedRange { start: u64, end: u64, alignment: u64 },
+    AlignedRange {
+        start: u64,
+        end: u64,
+        alignment: u64,
+    },
     /// Anywhere within initial header extent.
     HeaderWindow { max_offset: u64 },
 }
@@ -95,7 +116,10 @@ impl SignatureRule {
     pub fn pattern_bytes(&self) -> Result<Vec<u8>, ForensicError> {
         let clean = self.pattern_hex.replace(' ', "").replace("0x", "");
         hex::decode(&clean).map_err(|e| {
-            ForensicError::corrupt("signature_rule", format!("invalid hex in rule '{}': {e}", self.name))
+            ForensicError::corrupt(
+                "signature_rule",
+                format!("invalid hex in rule '{}': {e}", self.name),
+            )
         })
     }
 }
@@ -145,20 +169,32 @@ impl OemProfile {
     /// Validate profile structure and rule integrity.
     pub fn validate(&self) -> Result<(), ForensicError> {
         if self.profile_id.trim().is_empty() {
-            return Err(ForensicError::corrupt("profile_validate", "missing profile_id"));
+            return Err(ForensicError::corrupt(
+                "profile_validate",
+                "missing profile_id",
+            ));
         }
         if self.profile_version.trim().is_empty() {
-            return Err(ForensicError::corrupt("profile_validate", "missing profile_version"));
+            return Err(ForensicError::corrupt(
+                "profile_validate",
+                "missing profile_version",
+            ));
         }
         if self.signatures.is_empty() {
-            return Err(ForensicError::corrupt("profile_validate", "profile must declare at least one signature"));
+            return Err(ForensicError::corrupt(
+                "profile_validate",
+                "profile must declare at least one signature",
+            ));
         }
 
         // Verify each signature pattern decodes properly
         for sig in &self.signatures {
             sig.pattern_bytes()?;
             if sig.weight <= 0.0 {
-                return Err(ForensicError::corrupt("profile_validate", format!("signature '{}' weight must be positive", sig.name)));
+                return Err(ForensicError::corrupt(
+                    "profile_validate",
+                    format!("signature '{}' weight must be positive", sig.name),
+                ));
             }
         }
 
@@ -168,7 +204,10 @@ impl OemProfile {
     /// Load and validate a profile from a TOML string, computing its SHA-256 hash.
     pub fn from_toml_str(content: &str) -> Result<Self, ForensicError> {
         let mut profile: Self = toml::from_str(content).map_err(|e| {
-            ForensicError::corrupt("profile_loader", format!("failed to parse profile TOML: {e}"))
+            ForensicError::corrupt(
+                "profile_loader",
+                format!("failed to parse profile TOML: {e}"),
+            )
         })?;
 
         profile.validate()?;
@@ -182,9 +221,8 @@ impl OemProfile {
 
     /// Load a profile from a TOML file on disk.
     pub fn from_file(path: &Path) -> Result<Self, ForensicError> {
-        let content = fs::read_to_string(path).map_err(|e| {
-            ForensicError::io(format!("reading profile at {}", path.display()), e)
-        })?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| ForensicError::io(format!("reading profile at {}", path.display()), e))?;
         Self::from_toml_str(&content)
     }
 }
@@ -214,10 +252,11 @@ impl ProfileRegistry {
             return Ok(Self { profiles });
         };
 
-
         fn walk_dir(path: &Path, acc: &mut Vec<OemProfile>) -> Result<(), ForensicError> {
             if path.is_dir() {
-                for entry in fs::read_dir(path).map_err(|e| ForensicError::io(format!("reading {}", path.display()), e))? {
+                for entry in fs::read_dir(path)
+                    .map_err(|e| ForensicError::io(format!("reading {}", path.display()), e))?
+                {
                     let entry = entry.map_err(|e| ForensicError::io("dir entry", e))?;
                     walk_dir(&entry.path(), acc)?;
                 }
@@ -232,7 +271,6 @@ impl ProfileRegistry {
         Ok(Self { profiles })
     }
 
-
     /// Find the best matching profile for an OEM and optional model/firmware.
     pub fn find_applicable(
         &self,
@@ -241,9 +279,9 @@ impl ProfileRegistry {
         firmware: Option<&str>,
         variant: Option<&str>,
     ) -> Option<&OemProfile> {
-        self.profiles
-            .iter()
-            .find(|p| p.oem.eq_ignore_ascii_case(oem) && p.applicability.matches(model, firmware, variant))
+        self.profiles.iter().find(|p| {
+            p.oem.eq_ignore_ascii_case(oem) && p.applicability.matches(model, firmware, variant)
+        })
     }
 
     /// All loaded profiles.
@@ -291,7 +329,10 @@ min_threshold = 0.70
         let profile = OemProfile::from_toml_str(SAMPLE_TOML).unwrap();
         assert_eq!(profile.oem, "dahua");
         assert_eq!(profile.signatures.len(), 1);
-        assert_eq!(profile.signatures[0].evidence_status, EvidenceStatus::Validated);
+        assert_eq!(
+            profile.signatures[0].evidence_status,
+            EvidenceStatus::Validated
+        );
         assert!(profile.profile_hash.is_some());
         assert_eq!(profile.signatures[0].pattern_bytes().unwrap(), b"DHFS");
     }

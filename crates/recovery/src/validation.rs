@@ -45,8 +45,10 @@ pub fn validate_candidate(
 
     // Structure reflects what the parser actually concluded. No runs means the check did
     // not execute, which is Unknown.
-    let structure = match parser_runs.iter().map(|r| r.validation_state.state).reduce(
-        |a, b| {
+    let structure = match parser_runs
+        .iter()
+        .map(|r| r.validation_state.state)
+        .reduce(|a, b| {
             // The weakest outcome wins: one failing check cannot be averaged away.
             use ValidationStateKind::*;
             match (a, b) {
@@ -55,8 +57,7 @@ pub fn validate_candidate(
                 (Unknown, _) | (_, Unknown) => Unknown,
                 _ => Pass,
             }
-        },
-    ) {
+        }) {
         Some(state) => {
             let reasons = parser_runs
                 .iter()
@@ -249,7 +250,10 @@ max_possible_score = 0.5
         let (accepted, report) =
             validate_candidate(&EmptyReader, &profile(), &StubParser { structural: None }).unwrap();
 
-        assert!(!accepted, "recognising a format must not accept a candidate");
+        assert!(
+            !accepted,
+            "recognising a format must not accept a candidate"
+        );
         assert_ne!(
             report.signatures.state,
             ValidationStateKind::Pass,

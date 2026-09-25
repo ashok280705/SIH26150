@@ -3,15 +3,15 @@
 //! Core interface for all OEM-specific storage and recording parsers (Req 3.2, 3.3, 3.4, 3.5, 6.3, 12.1, 12.5).
 //!
 //! The `Parser` NEVER makes or overrides final OEM attribution (Req 3.5, 12.5).
-//! It does NOT build the unified timeline (Req 15.5) or own the recovery-level 
+//! It does NOT build the unified timeline (Req 15.5) or own the recovery-level
 //! state machine. It interprets structures for the storage family and profile version
 //! passed in from detection.
 
 use forensic_core::ForensicError;
+use forensic_core::OemProfile;
+use forensic_core::ParserRun;
 use forensic_core::Recording;
 use forensic_core::TimelineEvent;
-use forensic_core::ParserRun;
-use forensic_core::OemProfile;
 
 use evidence_reader::EvidenceReader;
 
@@ -61,7 +61,7 @@ pub trait Parser: Send + Sync {
         reader: &dyn EvidenceReader,
         profile: &OemProfile,
     ) -> Result<Vec<ParserRun>, ForensicError>;
-    
+
     /// Whether the bytes in the window handed to this method look like a structurally
     /// sound instance of *this OEM's* container/stream framing.
     ///

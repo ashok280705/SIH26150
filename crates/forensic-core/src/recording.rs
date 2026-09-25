@@ -2,16 +2,16 @@
 //!
 //! Represents a unified forensic recording extracted by an OEM parser (Req 12.2, 12.4).
 //!
-//! A recording ties together a channel, time evidence, the structural byte offsets where 
-//! the video/audio data is located, and integrity flags indicating whether the parser 
+//! A recording ties together a channel, time evidence, the structural byte offsets where
+//! the video/audio data is located, and integrity flags indicating whether the parser
 //! encountered profile-inconsistent structures.
 
 use serde::{Deserialize, Serialize};
 
-use crate::time_evidence::TimeEvidence;
+use crate::hash::Hash;
 use crate::identifiers::ProfileId;
 use crate::region::Region;
-use crate::hash::Hash;
+use crate::time_evidence::TimeEvidence;
 
 /// Known integrity flags indicating inconsistent or anomalous structure data (Req 12.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub struct Recording {
     pub time: TimeEvidence,
     pub source_image: String,
     pub source_offsets: Vec<Region>,
-    
+
     // Provenance (Req 5.8)
     pub parser_id: String,
     pub parser_version: String,
@@ -45,7 +45,7 @@ pub struct Recording {
 
     /// Set of integrity flags populated if the parser encountered inconsistencies (Req 12.4).
     pub integrity: Vec<IntegrityFlag>,
-    
+
     /// Path to the extracted video file, populated later during the recovery phase (Req 12.2).
     /// Parsers must NOT require this field during initial structure parsing.
     pub exported_video_path: Option<String>,

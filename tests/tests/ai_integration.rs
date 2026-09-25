@@ -17,22 +17,47 @@ use forensic_core::{
 #[test]
 fn test_ai_validated_evidence_boundary() {
     // 1. Validated (Pass) input is accepted
-    let pass_state = ValidationState::pass("structural check pass", "parse_recording", "Recording 1").unwrap();
+    let pass_state =
+        ValidationState::pass("structural check pass", "parse_recording", "Recording 1").unwrap();
     assert!(AiPipeline::validate_ai_input(&pass_state).is_ok());
 
     // 2. Review input is accepted (eligible for AI assisted review)
-    let review_state = ValidationState::new(ValidationStateKind::Review, "truncated clip", "parse_recording", "Recording 2").unwrap();
+    let review_state = ValidationState::new(
+        ValidationStateKind::Review,
+        "truncated clip",
+        "parse_recording",
+        "Recording 2",
+    )
+    .unwrap();
     assert!(AiPipeline::validate_ai_input(&review_state).is_ok());
 
     // 3. Corrupt/Fail input is rejected (Req 16.1)
-    let fail_state = ValidationState::new(ValidationStateKind::Fail, "corrupted GOP headers", "parse_recording", "Recording 3").unwrap();
+    let fail_state = ValidationState::new(
+        ValidationStateKind::Fail,
+        "corrupted GOP headers",
+        "parse_recording",
+        "Recording 3",
+    )
+    .unwrap();
     let err = AiPipeline::validate_ai_input(&fail_state);
-    assert!(err.is_err(), "Failed validation inputs must be rejected by AI boundary");
+    assert!(
+        err.is_err(),
+        "Failed validation inputs must be rejected by AI boundary"
+    );
 
     // 4. Unvalidated (Unknown) input is rejected (Req 16.1)
-    let unknown_state = ValidationState::new(ValidationStateKind::Unknown, "unrun parser validation", "parse_recording", "Recording 4").unwrap();
+    let unknown_state = ValidationState::new(
+        ValidationStateKind::Unknown,
+        "unrun parser validation",
+        "parse_recording",
+        "Recording 4",
+    )
+    .unwrap();
     let err2 = AiPipeline::validate_ai_input(&unknown_state);
-    assert!(err2.is_err(), "Unvalidated inputs must be rejected by AI boundary");
+    assert!(
+        err2.is_err(),
+        "Unvalidated inputs must be rejected by AI boundary"
+    );
 }
 
 #[test]
@@ -55,8 +80,16 @@ fn test_ai_finding_provenance_and_derived_artifact() {
         "2026-09-01T12:00:00Z".into(),
         "PersonDetected".into(),
         0.92,
-        Some(BoundingBox { x: 0.2, y: 0.3, width: 0.1, height: 0.4 }),
-        Region { offset: 0x1000, length: 1024 },
+        Some(BoundingBox {
+            x: 0.2,
+            y: 0.3,
+            width: 0.1,
+            height: 0.4,
+        }),
+        Region {
+            offset: 0x1000,
+            length: 1024,
+        },
         prov,
     );
 

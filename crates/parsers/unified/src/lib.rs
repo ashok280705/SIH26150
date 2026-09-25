@@ -19,4 +19,4 @@
 
 pub mod parser;
 
-pub use parser::{UnifiedParser, CarvedRegion, CarvedCodec};
+pub use parser::{CarvedCodec, CarvedRegion, UnifiedParser};

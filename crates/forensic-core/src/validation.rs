@@ -118,10 +118,7 @@ impl ValidationState {
     ///
     /// This is the canonical way to record that an operation was not executed.
     /// The resulting state is `UNKNOWN`, never `PASS`.
-    pub fn not_run(
-        operation: impl Into<String>,
-        subject: impl Into<String>,
-    ) -> Self {
+    pub fn not_run(operation: impl Into<String>, subject: impl Into<String>) -> Self {
         // This constructor does not go through `new()` validation because the reason
         // is always well-formed.
         let operation = operation.into();

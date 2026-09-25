@@ -1,9 +1,9 @@
 //! Database repository for recordings and recording source regions.
 
-use sqlx::{SqlitePool, Row};
 use chrono::Utc;
-use forensic_core::{EvidenceId, ForensicError, Recording, Region, TimeEvidence, Provenance};
 use forensic_core::identifiers::ProfileId;
+use forensic_core::{EvidenceId, ForensicError, Provenance, Recording, Region, TimeEvidence};
+use sqlx::{Row, SqlitePool};
 
 /// Inserts a recording and its source regions into SQLite.
 pub async fn insert_recording(
@@ -17,8 +17,9 @@ pub async fn insert_recording(
     let rec_id = uuid::Uuid::new_v4();
     let now = Utc::now();
 
-    let raw_ts_json = serde_json::to_value(&recording.time.raw)
-        .map_err(|e| ForensicError::corrupt("insert_recording", format!("Serializing raw_ts: {e}")))?;
+    let raw_ts_json = serde_json::to_value(&recording.time.raw).map_err(|e| {
+        ForensicError::corrupt("insert_recording", format!("Serializing raw_ts: {e}"))
+    })?;
     let integrity_json = serde_json::json!({
         "parser_id": recording.parser_id,
         "parser_version": recording.parser_version,
@@ -27,7 +28,10 @@ pub async fn insert_recording(
     });
 
     let mut tx = pool.begin().await.map_err(|e| {
-        ForensicError::corrupt("insert_recording", format!("Beginning SQLite transaction: {e}"))
+        ForensicError::corrupt(
+            "insert_recording",
+            format!("Beginning SQLite transaction: {e}"),
+        )
     })?;
 
     let tz_str = match &recording.time.timezone {
@@ -48,19 +52,43 @@ pub async fn insert_recording(
             ?9, ?10, ?11,
             ?12, ?13, ?14, ?15, ?16
         )
-        "#
+        "#,
     )
     .bind(rec_id)
     .bind(evidence_id.0)
     .bind(parser_run_id)
     .bind(recording.channel as i32)
     .bind(raw_ts_json.to_string())
-    .bind(recording.time.recorder_native.as_ref().map(|t| t.iso_8601.clone()))
-    .bind(recording.time.normalized.as_ref().map(|t| t.iso_8601.clone()))
-    .bind(recording.time.reference.as_ref().map(|t| t.iso_8601.clone()))
+    .bind(
+        recording
+            .time
+            .recorder_native
+            .as_ref()
+            .map(|t| t.iso_8601.clone()),
+    )
+    .bind(
+        recording
+            .time
+            .normalized
+            .as_ref()
+            .map(|t| t.iso_8601.clone()),
+    )
+    .bind(
+        recording
+            .time
+            .reference
+            .as_ref()
+            .map(|t| t.iso_8601.clone()),
+    )
     .bind(tz_str)
     .bind(recording.time.normalized.as_ref().map(|t| t.method.clone()))
-    .bind(recording.time.correction.as_ref().map(|c| serde_json::to_string(c).unwrap_or_default()))
+    .bind(
+        recording
+            .time
+            .correction
+            .as_ref()
+            .map(|c| serde_json::to_string(c).unwrap_or_default()),
+    )
     .bind(&recording.source_image)
     .bind(integrity_json.to_string())
     .bind(exported_video_path)
@@ -68,7 +96,9 @@ pub async fn insert_recording(
     .bind(now)
     .execute(&mut *tx)
     .await
-    .map_err(|e| ForensicError::corrupt("insert_recording", format!("Inserting recording row: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt("insert_recording", format!("Inserting recording row: {e}"))
+    })?;
 
     for region in &recording.source_offsets {
         let region_id = uuid::Uuid::new_v4();
@@ -77,7 +107,7 @@ pub async fn insert_recording(
             INSERT INTO recording_source_regions (
                 id, recording_id, offset_start, length
             ) VALUES (?1, ?2, ?3, ?4)
-            "#
+            "#,
         )
         .bind(region_id)
         .bind(rec_id)
@@ -85,11 +115,19 @@ pub async fn insert_recording(
         .bind(region.length as i64)
         .execute(&mut *tx)
         .await
-        .map_err(|e| ForensicError::corrupt("insert_recording_region", format!("Inserting recording region: {e}")))?;
+        .map_err(|e| {
+            ForensicError::corrupt(
+                "insert_recording_region",
+                format!("Inserting recording region: {e}"),
+            )
+        })?;
     }
 
     tx.commit().await.map_err(|e| {
-        ForensicError::corrupt("insert_recording", format!("Committing SQLite transaction: {e}"))
+        ForensicError::corrupt(
+            "insert_recording",
+            format!("Committing SQLite transaction: {e}"),
+        )
     })?;
 
     Ok(rec_id)
@@ -107,7 +145,7 @@ pub async fn get_recording(
             timezone_state, source_image, integrity, exported_video_path, sha256
         FROM recordings
         WHERE id = ?1
-        "#
+        "#,
     )
     .bind(recording_id)
     .fetch_optional(pool)
@@ -134,12 +172,17 @@ pub async fn get_recording(
         FROM recording_source_regions
         WHERE recording_id = ?1
         ORDER BY offset_start ASC
-        "#
+        "#,
     )
     .bind(recording_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("get_recording_regions", format!("Fetching recording regions: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "get_recording_regions",
+            format!("Fetching recording regions: {e}"),
+        )
+    })?;
 
     let mut source_offsets = Vec::new();
     for reg_row in region_rows {

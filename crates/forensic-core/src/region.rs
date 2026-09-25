@@ -84,7 +84,11 @@ impl Region {
 impl std::fmt::Display for Region {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.end() {
-            Some(end) => write!(f, "[0x{:X}..0x{:X}) ({} bytes)", self.offset, end, self.length),
+            Some(end) => write!(
+                f,
+                "[0x{:X}..0x{:X}) ({} bytes)",
+                self.offset, end, self.length
+            ),
             None => write!(f, "[0x{:X}..overflow) ({} bytes)", self.offset, self.length),
         }
     }

@@ -24,31 +24,78 @@ impl FormattedReportExporter {
         // ── 1. Case & Examiner ───────────────────────────────────────────────
         doc.push_str("## 1. Case & Examiner\n");
         doc.push_str(&format!("* **Report ID**: {}\n", report.report_id));
-        doc.push_str(&format!("* **Generated At**: {}\n", report.generated_at.to_rfc3339()));
+        doc.push_str(&format!(
+            "* **Generated At**: {}\n",
+            report.generated_at.to_rfc3339()
+        ));
         doc.push_str(&format!("* **Examiner ID**: {}\n", report.examiner_id));
         doc.push_str(&format!("* **Case ID**: {}\n", report.case_id));
         doc.push_str(&format!("* **Evidence ID**: {}\n\n", report.evidence_id));
 
         // ── 2. Selected evidence & integrity ─────────────────────────────────
         doc.push_str("## 2. Selected Evidence & Integrity\n");
-        doc.push_str(&format!("* **Source Path**: {}\n", report.evidence_summary.source_path));
-        doc.push_str(&format!("* **Image Format**: {}\n", report.evidence_summary.image_format));
-        doc.push_str(&format!("* **Size**: {} bytes\n", report.evidence_summary.size_bytes));
-        doc.push_str(&format!("* **SHA-256**: `{}`\n", report.evidence_summary.sha256));
-        doc.push_str(&format!("* **Acquisition**: {}\n", report.evidence_summary.acquisition_status));
-        doc.push_str(&format!("* **Source Safety**: {}\n\n", report.evidence_summary.source_safety_decision));
+        doc.push_str(&format!(
+            "* **Source Path**: {}\n",
+            report.evidence_summary.source_path
+        ));
+        doc.push_str(&format!(
+            "* **Image Format**: {}\n",
+            report.evidence_summary.image_format
+        ));
+        doc.push_str(&format!(
+            "* **Size**: {} bytes\n",
+            report.evidence_summary.size_bytes
+        ));
+        doc.push_str(&format!(
+            "* **SHA-256**: `{}`\n",
+            report.evidence_summary.sha256
+        ));
+        doc.push_str(&format!(
+            "* **Acquisition**: {}\n",
+            report.evidence_summary.acquisition_status
+        ));
+        doc.push_str(&format!(
+            "* **Source Safety**: {}\n\n",
+            report.evidence_summary.source_safety_decision
+        ));
 
         // ── 3. Detection — where the format was found ────────────────────────
         doc.push_str("## 3. Detection — Where the Format Was Found\n");
-        doc.push_str(&format!("* **Detection Status**: {}\n", report.detection_summary.detection_status));
-        doc.push_str(&format!("* **Identified OEM**: {}\n", report.detection_summary.primary_oem.as_deref().unwrap_or("None")));
-        doc.push_str(&format!("* **Attribution Status**: {}\n", report.detection_summary.attribution_status));
-        doc.push_str(&format!("* **Confidence**: {:.1}%\n", report.detection_summary.confidence_score * 100.0));
+        doc.push_str(&format!(
+            "* **Detection Status**: {}\n",
+            report.detection_summary.detection_status
+        ));
+        doc.push_str(&format!(
+            "* **Identified OEM**: {}\n",
+            report
+                .detection_summary
+                .primary_oem
+                .as_deref()
+                .unwrap_or("None")
+        ));
+        doc.push_str(&format!(
+            "* **Attribution Status**: {}\n",
+            report.detection_summary.attribution_status
+        ));
+        doc.push_str(&format!(
+            "* **Confidence**: {:.1}%\n",
+            report.detection_summary.confidence_score * 100.0
+        ));
         if let Some(dd) = &report.detection_depth {
             doc.push_str(&format!("* **Storage Family**: {}\n", dd.storage_family));
-            let runner = dd.runner_up.as_ref().map(|r| format!(" (vs {r})")).unwrap_or_default();
-            doc.push_str(&format!("* **Margin over runner-up**: {:.3}{}\n", dd.margin, runner));
-            doc.push_str(&format!("* **Evidence Quality**: {:.2}\n", dd.evidence_quality));
+            let runner = dd
+                .runner_up
+                .as_ref()
+                .map(|r| format!(" (vs {r})"))
+                .unwrap_or_default();
+            doc.push_str(&format!(
+                "* **Margin over runner-up**: {:.3}{}\n",
+                dd.margin, runner
+            ));
+            doc.push_str(&format!(
+                "* **Evidence Quality**: {:.2}\n",
+                dd.evidence_quality
+            ));
             doc.push_str(&format!(
                 "* **Search reach**: probed up to offset `0x{:X}` within a {}-byte image; {} bytes structurally examined.\n",
                 dd.highest_offset_examined, dd.image_size_bytes, dd.bytes_examined
@@ -56,14 +103,19 @@ impl FormattedReportExporter {
             doc.push_str(&format!("* **Method**: {}\n\n", dd.method));
             if !dd.matched_indicators.is_empty() {
                 doc.push_str("**Signature indicators (where each was found):**\n\n");
-                doc.push_str("| Indicator | Offset | Len | Matched | Status | Weight | Exclusive |\n");
+                doc.push_str(
+                    "| Indicator | Offset | Len | Matched | Status | Weight | Exclusive |\n",
+                );
                 doc.push_str("|---|---|---|---|---|---|---|\n");
                 for m in &dd.matched_indicators {
                     doc.push_str(&format!(
                         "| {} | `0x{:X}` | {} | {} | {} | {:.2} | {} |\n",
-                        m.kind, m.offset, m.length,
+                        m.kind,
+                        m.offset,
+                        m.length,
                         if m.matched { "yes" } else { "no" },
-                        m.evidence_status, m.weight,
+                        m.evidence_status,
+                        m.weight,
                         if m.exclusive { "yes" } else { "no" }
                     ));
                 }
@@ -73,9 +125,18 @@ impl FormattedReportExporter {
                 let regions: Vec<String> = dd
                     .candidate_regions
                     .iter()
-                    .map(|r| format!("`0x{:X}..0x{:X}`", r.offset, r.offset.saturating_add(r.length)))
+                    .map(|r| {
+                        format!(
+                            "`0x{:X}..0x{:X}`",
+                            r.offset,
+                            r.offset.saturating_add(r.length)
+                        )
+                    })
                     .collect();
-                doc.push_str(&format!("**Candidate storage regions considered:** {}\n\n", regions.join(", ")));
+                doc.push_str(&format!(
+                    "**Candidate storage regions considered:** {}\n\n",
+                    regions.join(", ")
+                ));
             }
         } else {
             doc.push('\n');
@@ -85,12 +146,18 @@ impl FormattedReportExporter {
         doc.push_str("## 4. Parsing — Where Frames Were Found and How They Were Confirmed\n");
         if let Some(pd) = &report.parsing_depth {
             doc.push_str(&format!("* **Parser**: {}\n", pd.parser_id));
-            doc.push_str(&format!("* **Recordings located**: {}\n\n", pd.total_recordings));
+            doc.push_str(&format!(
+                "* **Recordings located**: {}\n\n",
+                pd.total_recordings
+            ));
             if !pd.stages.is_empty() {
                 doc.push_str("**Parser stages:**\n\n");
                 doc.push_str("| Stage | Subject | Outcome | Reason |\n|---|---|---|---|\n");
                 for s in &pd.stages {
-                    doc.push_str(&format!("| {} | {} | {} | {} |\n", s.operation, s.subject, s.state, s.reason));
+                    doc.push_str(&format!(
+                        "| {} | {} | {} | {} |\n",
+                        s.operation, s.subject, s.state, s.reason
+                    ));
                 }
                 doc.push('\n');
             }
@@ -99,12 +166,21 @@ impl FormattedReportExporter {
                 doc.push_str("| Ch | Native Time | Offset | Length | Codec | NAL Units | Confirmed | Integrity |\n");
                 doc.push_str("|---|---|---|---|---|---|---|---|\n");
                 for f in &pd.frames {
-                    let integ = if f.integrity_flags.is_empty() { "clean".to_string() } else { f.integrity_flags.join(", ") };
+                    let integ = if f.integrity_flags.is_empty() {
+                        "clean".to_string()
+                    } else {
+                        f.integrity_flags.join(", ")
+                    };
                     doc.push_str(&format!(
                         "| {} | {} | `0x{:X}` | {} | {} | {} | {} | {} |\n",
-                        f.channel, f.recorder_native_time, f.source_offset, f.source_length,
-                        f.codec, f.nal_unit_count,
-                        if f.confirmed { "yes" } else { "review" }, integ
+                        f.channel,
+                        f.recorder_native_time,
+                        f.source_offset,
+                        f.source_length,
+                        f.codec,
+                        f.nal_unit_count,
+                        if f.confirmed { "yes" } else { "review" },
+                        integ
                     ));
                 }
                 doc.push('\n');
@@ -127,12 +203,22 @@ impl FormattedReportExporter {
             for s in &pt.sessions {
                 doc.push_str(&format!(
                     "* **Channel {}** {} → {} ({}): {:.1}% covered · {}s recorded · {}s missing\n",
-                    s.channel, s.start, s.end, s.timezone, s.coverage_ratio * 100.0, s.covered_seconds, s.missing_seconds
+                    s.channel,
+                    s.start,
+                    s.end,
+                    s.timezone,
+                    s.coverage_ratio * 100.0,
+                    s.covered_seconds,
+                    s.missing_seconds
                 ));
                 for g in &s.gaps {
                     doc.push_str(&format!(
                         "    * gap {} → {}: {}s missing, bytes `0x{:X}..0x{:X}`\n",
-                        g.starts_after, g.ends_before, g.missing_seconds, g.previous_offset, g.next_offset
+                        g.starts_after,
+                        g.ends_before,
+                        g.missing_seconds,
+                        g.previous_offset,
+                        g.next_offset
                     ));
                 }
             }
@@ -146,7 +232,10 @@ impl FormattedReportExporter {
         if let Some(rd) = &report.recovery_depth {
             doc.push_str(&format!("* **Algorithm**: {}\n", rd.algorithm));
             doc.push_str(&format!("* **Gaps processed**: {}\n", rd.gaps_processed));
-            doc.push_str(&format!("* **Bytes searched**: {} of {}\n", rd.searched_bytes, rd.total_bytes));
+            doc.push_str(&format!(
+                "* **Bytes searched**: {} of {}\n",
+                rd.searched_bytes, rd.total_bytes
+            ));
             doc.push_str(&format!(
                 "* **Recovered**: {}s · **Not recovered**: {}s\n\n",
                 rd.total_recovered_seconds, rd.total_unrecovered_seconds
@@ -156,8 +245,13 @@ impl FormattedReportExporter {
             for gap in &rd.per_gap {
                 doc.push_str(&format!(
                     "| {} | `0x{:X}..0x{:X}` | {} | {}s | {}s | {} |\n",
-                    gap.channel, gap.scan_start, gap.scan_end, gap.attempts,
-                    gap.recovered_seconds, gap.unrecovered_seconds, gap.decision
+                    gap.channel,
+                    gap.scan_start,
+                    gap.scan_end,
+                    gap.attempts,
+                    gap.recovered_seconds,
+                    gap.unrecovered_seconds,
+                    gap.decision
                 ));
             }
             doc.push('\n');
@@ -183,14 +277,20 @@ impl FormattedReportExporter {
             doc.push_str("_None._\n");
         }
         for a in &report.native_artifacts {
-            doc.push_str(&format!("* **{}**: {} | SHA-256: `{}`\n", a.artifact_id, a.description, a.sha256));
+            doc.push_str(&format!(
+                "* **{}**: {} | SHA-256: `{}`\n",
+                a.artifact_id, a.description, a.sha256
+            ));
         }
         doc.push_str("\n### Derived Transform Artifacts\n");
         if report.derived_artifacts.is_empty() {
             doc.push_str("_None._\n");
         }
         for a in &report.derived_artifacts {
-            doc.push_str(&format!("* **{}**: {} | SHA-256: `{}` (Produced by: {})\n", a.artifact_id, a.description, a.sha256, a.producing_component));
+            doc.push_str(&format!(
+                "* **{}**: {} | SHA-256: `{}` (Produced by: {})\n",
+                a.artifact_id, a.description, a.sha256, a.producing_component
+            ));
         }
         doc.push('\n');
 

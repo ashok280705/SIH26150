@@ -150,7 +150,6 @@ impl<'a> RegionScanner<'a> {
         let skipped_ranges = Vec::new();
         let mut termination_reason = TerminationReason::Completed;
 
-
         let end_target = checked_end_offset(start_offset, total_target_len)?;
 
         while current_offset < end_target {
@@ -190,7 +189,7 @@ impl<'a> RegionScanner<'a> {
 
             let chunk = &buffer[..bytes_read];
             let should_continue = visitor(current_offset, chunk)?;
-            
+
             searched_bytes = checked_add(searched_bytes, bytes_read as u64)?;
             current_offset = checked_add(current_offset, bytes_read as u64)?;
 
@@ -236,7 +235,12 @@ mod tests {
         }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
             if offset >= self.len() {
-                return Err(ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.len()));
+                return Err(ForensicError::out_of_bounds(
+                    "test",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let start = offset as usize;
             let available = (self.data.len() - start).min(buf.len());

@@ -14,8 +14,7 @@
 
 use chrono::{DateTime, Utc};
 use forensic_core::{
-    chain_of_custody::CustodyEvent,
-    CapabilityStages, CaseId, EvidenceId, ExaminerId, Hash,
+    chain_of_custody::CustodyEvent, CapabilityStages, CaseId, EvidenceId, ExaminerId, Hash,
 };
 use serde::{Deserialize, Serialize};
 
@@ -327,7 +326,7 @@ pub struct RecoveryReportItem {
     /// them, while `Unindexed` records that no index statement covers them at all.
     /// Neither is a deletion finding.
     pub data_state: String,
-    pub recovery_status: String,// 'Recoverable', 'PartiallyRecoverable', 'Unrecoverable'
+    pub recovery_status: String, // 'Recoverable', 'PartiallyRecoverable', 'Unrecoverable'
     pub source_offset: u64,
     pub source_length: u64,
     pub validation_state: String,

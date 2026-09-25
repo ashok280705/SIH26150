@@ -212,8 +212,7 @@ mod tests {
 
     #[test]
     fn with_profile_sets_fields() {
-        let prov = sample_provenance()
-            .with_profile("dahua-xvr-v1.2", Hash::sha256(vec![0xcc; 32]));
+        let prov = sample_provenance().with_profile("dahua-xvr-v1.2", Hash::sha256(vec![0xcc; 32]));
         assert_eq!(prov.profile_version.as_deref(), Some("dahua-xvr-v1.2"));
         assert!(prov.profile_hash.is_some());
     }

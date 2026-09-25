@@ -8,13 +8,19 @@
 //! - Throughput / memory scalability
 
 use forensic_core::{
-    Hash, ProfileId, Provenance, RawTimestamp, RecorderNativeTime, NormalizedTime,
-    Region, TimeEvidence, TimelineEvent, TimeZoneState, ValidationState,
+    Hash, NormalizedTime, ProfileId, Provenance, RawTimestamp, RecorderNativeTime, Region,
+    TimeEvidence, TimeZoneState, TimelineEvent, ValidationState,
 };
-use timeline::{CrossCameraCorrelator, TimelineEngine, TimelineOrdering};
 use std::time::Instant;
+use timeline::{CrossCameraCorrelator, TimelineEngine, TimelineOrdering};
 
-fn make_event(channel: u32, offset: u64, native_time: &str, norm_time: &str, tz: TimeZoneState) -> TimelineEvent {
+fn make_event(
+    channel: u32,
+    offset: u64,
+    native_time: &str,
+    norm_time: &str,
+    tz: TimeZoneState,
+) -> TimelineEvent {
     let raw_prov = Provenance::new(
         forensic_core::EvidenceId::new(),
         Hash::sha256(vec![0; 32]),
@@ -26,9 +32,18 @@ fn make_event(channel: u32, offset: u64, native_time: &str, norm_time: &str, tz:
     );
 
     let time = TimeEvidence {
-        raw: RawTimestamp { value: 123456, format: "BCD".into(), source: raw_prov },
-        recorder_native: Some(RecorderNativeTime { iso_8601: native_time.into() }),
-        normalized: Some(NormalizedTime { iso_8601: norm_time.into(), method: "UTC offset".into() }),
+        raw: RawTimestamp {
+            value: 123456,
+            format: "BCD".into(),
+            source: raw_prov,
+        },
+        recorder_native: Some(RecorderNativeTime {
+            iso_8601: native_time.into(),
+        }),
+        normalized: Some(NormalizedTime {
+            iso_8601: norm_time.into(),
+            method: "UTC offset".into(),
+        }),
         reference: None,
         timezone: tz,
         correction: None,
@@ -38,7 +53,10 @@ fn make_event(channel: u32, offset: u64, native_time: &str, norm_time: &str, tz:
         channel,
         time,
         description: format!("Motion on CH {}", channel),
-        source_offsets: vec![Region { offset, length: 512 }],
+        source_offsets: vec![Region {
+            offset,
+            length: 512,
+        }],
         parser_id: "test_parser".into(),
         parser_version: "1.0.0".into(),
         profile_id: ProfileId("test-prof".into()),
@@ -88,14 +106,36 @@ fn test_timeline_construction_throughput() {
 
     assert_eq!(timeline.events.len(), 10_000);
     // 10,000 events must be processed in under 100ms
-    assert!(elapsed.as_millis() < 100, "Timeline construction took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_millis() < 100,
+        "Timeline construction took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
 fn test_cross_camera_correlation_multi_camera() {
-    let e1 = make_event(1, 1000, "2026-09-01T12:00:00", "2026-09-01T12:00:00Z", TimeZoneState::Known("UTC".into()));
-    let e2 = make_event(2, 2000, "2026-09-01T12:00:10", "2026-09-01T12:00:10Z", TimeZoneState::Known("UTC".into()));
-    let e3 = make_event(3, 3000, "2026-09-01T12:00:20", "2026-09-01T12:00:20Z", TimeZoneState::Known("UTC".into()));
+    let e1 = make_event(
+        1,
+        1000,
+        "2026-09-01T12:00:00",
+        "2026-09-01T12:00:00Z",
+        TimeZoneState::Known("UTC".into()),
+    );
+    let e2 = make_event(
+        2,
+        2000,
+        "2026-09-01T12:00:10",
+        "2026-09-01T12:00:10Z",
+        TimeZoneState::Known("UTC".into()),
+    );
+    let e3 = make_event(
+        3,
+        3000,
+        "2026-09-01T12:00:20",
+        "2026-09-01T12:00:20Z",
+        TimeZoneState::Known("UTC".into()),
+    );
 
     let groups = CrossCameraCorrelator::correlate_events(&[e1, e2, e3], 30);
     assert_eq!(groups.len(), 1);

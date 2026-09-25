@@ -100,8 +100,9 @@ impl RegionClaim {
                     }
                 } else {
                     RegionClaim::NoIndexEvidence {
-                        reason: "no authoritative recording index was established for this evidence"
-                            .to_string(),
+                        reason:
+                            "no authoritative recording index was established for this evidence"
+                                .to_string(),
                     }
                 }
             }
@@ -236,10 +237,7 @@ pub struct StateAssessment {
 ///   only with an authoritative index behind it, and otherwise stays `Unindexed`.
 /// * Recognising the OEM cannot produce `Active`. `Active` requires an `Indexed` claim,
 ///   which only [`RecordingIndex`](parsers_core::storage::RecordingIndex) evidence builds.
-pub fn classify_region_state(
-    claim: &RegionClaim,
-    video: VideoEvidence,
-) -> Option<StateAssessment> {
+pub fn classify_region_state(claim: &RegionClaim, video: VideoEvidence) -> Option<StateAssessment> {
     if !video.physically_present || !video.signature_found {
         return None;
     }
@@ -449,7 +447,10 @@ mod tests {
         assert_eq!(a.data_state, DataState::Active);
         assert_eq!(a.recovery_status, RecoveryStatus::Recoverable);
         assert_eq!(a.recovery_level, RecoveryLevel::L1);
-        assert!(a.reason.contains("didx#2"), "reason must cite the index entry");
+        assert!(
+            a.reason.contains("didx#2"),
+            "reason must cite the index entry"
+        );
     }
 
     #[test]
@@ -497,7 +498,11 @@ mod tests {
     fn available_metadata_plus_valid_video_is_orphaned_never_deleted() {
         for allocation in [AllocationEvidence::Unknown, AllocationEvidence::Allocated] {
             let a = classify_region_state(&available(allocation), VALID).unwrap();
-            assert_eq!(a.data_state, DataState::Orphaned, "allocation {allocation:?}");
+            assert_eq!(
+                a.data_state,
+                DataState::Orphaned,
+                "allocation {allocation:?}"
+            );
             assert_ne!(a.data_state, DataState::Deleted);
             assert_ne!(a.data_state, DataState::Active, "available is not active");
             assert_eq!(a.recovery_level, RecoveryLevel::L2);
@@ -507,7 +512,10 @@ mod tests {
                 "the finding must say so: {}",
                 a.reason
             );
-            assert!(a.reason.contains("dahua:p0:blk7"), "cite the metadata entry");
+            assert!(
+                a.reason.contains("dahua:p0:blk7"),
+                "cite the metadata entry"
+            );
             assert!(a.reason.contains("partition 0"));
         }
     }
@@ -524,8 +532,8 @@ mod tests {
 
     #[test]
     fn available_metadata_with_only_a_signature_is_corrupted_at_l2() {
-        let a = classify_region_state(&available(AllocationEvidence::Unknown), SIGNATURE_ONLY)
-            .unwrap();
+        let a =
+            classify_region_state(&available(AllocationEvidence::Unknown), SIGNATURE_ONLY).unwrap();
         assert_eq!(a.data_state, DataState::Corrupted);
         assert_eq!(a.recovery_level, RecoveryLevel::L2);
         assert_eq!(a.recovery_status, RecoveryStatus::PartiallyRecoverable);
@@ -546,11 +554,9 @@ mod tests {
         }
         .recorder_metadata()
         .is_none());
-        assert!(RegionClaim::NoIndexEvidence {
-            reason: "x".into()
-        }
-        .recorder_metadata()
-        .is_none());
+        assert!(RegionClaim::NoIndexEvidence { reason: "x".into() }
+            .recorder_metadata()
+            .is_none());
     }
 
     #[test]
@@ -565,8 +571,12 @@ mod tests {
     fn signature_without_passing_validation_is_corrupted_never_active() {
         for claim in [
             indexed(AllocationEvidence::Allocated),
-            RegionClaim::UnclaimedWithinIndexScope { index_entry_count: 3 },
-            RegionClaim::NoIndexEvidence { reason: "none".into() },
+            RegionClaim::UnclaimedWithinIndexScope {
+                index_entry_count: 3,
+            },
+            RegionClaim::NoIndexEvidence {
+                reason: "none".into(),
+            },
         ] {
             let a = classify_region_state(&claim, SIGNATURE_ONLY).unwrap();
             assert_eq!(
@@ -583,7 +593,9 @@ mod tests {
     fn no_codec_evidence_is_not_a_recovered_candidate() {
         assert!(classify_region_state(&indexed(AllocationEvidence::Allocated), NO_VIDEO).is_none());
         assert!(classify_region_state(
-            &RegionClaim::UnclaimedWithinIndexScope { index_entry_count: 1 },
+            &RegionClaim::UnclaimedWithinIndexScope {
+                index_entry_count: 1
+            },
             NO_VIDEO
         )
         .is_none());
@@ -604,7 +616,9 @@ mod tests {
         for claim in [
             available(AllocationEvidence::Unknown),
             available(AllocationEvidence::FreeMarked),
-            RegionClaim::UnclaimedWithinIndexScope { index_entry_count: 2 },
+            RegionClaim::UnclaimedWithinIndexScope {
+                index_entry_count: 2,
+            },
             RegionClaim::OutsideIndexScope { reason: "x".into() },
             RegionClaim::NoIndexEvidence { reason: "x".into() },
         ] {
@@ -646,7 +660,10 @@ mod tests {
         // Req 13.7: Corrupted != Unrecoverable
         let assessment = classify_recovery(true, true, false, false);
         assert_eq!(assessment.data_state, DataState::Corrupted);
-        assert_eq!(assessment.recovery_status, RecoveryStatus::PartiallyRecoverable);
+        assert_eq!(
+            assessment.recovery_status,
+            RecoveryStatus::PartiallyRecoverable
+        );
     }
 
     #[test]

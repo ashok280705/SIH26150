@@ -1,9 +1,9 @@
 //! Domain and configuration types for FFmpeg & ffprobe operations.
 
-use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
-use forensic_core::ValidationState;
 use crate::reconstructor::VideoCodec;
+use forensic_core::ValidationState;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// The discovery source of the resolved FFmpeg executable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

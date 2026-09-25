@@ -87,19 +87,10 @@ pub fn validate_region_bounds(region: &Region, source_len: u64) -> Result<(), Fo
 ///
 /// Convenience wrapper around [`validate_region_bounds`] for callers that don't already
 /// have a `Region`.
-pub fn validate_bounds(
-    offset: u64,
-    length: u64,
-    source_len: u64,
-) -> Result<(), ForensicError> {
+pub fn validate_bounds(offset: u64, length: u64, source_len: u64) -> Result<(), ForensicError> {
     // Construct a Region just for validation; Region::new already checks overflow.
     let region = Region::new(offset, length).map_err(|_| {
-        ForensicError::out_of_bounds(
-            "offset + length overflows",
-            offset,
-            length,
-            source_len,
-        )
+        ForensicError::out_of_bounds("offset + length overflows", offset, length, source_len)
     })?;
     validate_region_bounds(&region, source_len)
 }

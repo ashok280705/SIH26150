@@ -58,8 +58,14 @@ pub fn compute_correction(
         _ => {
             // Least-squares fit reference = a + b·recorder.
             let n = anchors.len() as f64;
-            let xs: Vec<f64> = anchors.iter().map(|a| a.recorder_epoch_seconds as f64).collect();
-            let ys: Vec<f64> = anchors.iter().map(|a| a.reference_epoch_seconds as f64).collect();
+            let xs: Vec<f64> = anchors
+                .iter()
+                .map(|a| a.recorder_epoch_seconds as f64)
+                .collect();
+            let ys: Vec<f64> = anchors
+                .iter()
+                .map(|a| a.reference_epoch_seconds as f64)
+                .collect();
             let mean_x = xs.iter().sum::<f64>() / n;
             let mean_y = ys.iter().sum::<f64>() / n;
 
@@ -76,7 +82,9 @@ pub fn compute_correction(
             if sxx.abs() < f64::EPSILON {
                 let offset = (mean_y - mean_x).round() as i64;
                 return Some(ClockCorrection {
-                    method: "multi-anchor average offset (recorder times coincident; drift unresolved)".into(),
+                    method:
+                        "multi-anchor average offset (recorder times coincident; drift unresolved)"
+                            .into(),
                     anchor_evidence,
                     offset_seconds: offset,
                     drift_rate: None,
@@ -98,7 +106,10 @@ pub fn compute_correction(
             }
 
             Some(ClockCorrection {
-                method: format!("least-squares offset+drift fit over {} anchors", anchors.len()),
+                method: format!(
+                    "least-squares offset+drift fit over {} anchors",
+                    anchors.len()
+                ),
                 anchor_evidence,
                 offset_seconds: a.round() as i64,
                 drift_rate: Some(b - 1.0),
@@ -159,8 +170,16 @@ mod tests {
         // Recorder gains 1s per 100s: reference = recorder * 0.99 ... construct cleanly.
         // At recorder=0, real=100 (offset 100). At recorder=1000, real=1090 (drift -0.01/s).
         let anchors = vec![
-            ClockAnchor { recorder_epoch_seconds: 0, reference_epoch_seconds: 100, source: "a".into() },
-            ClockAnchor { recorder_epoch_seconds: 1000, reference_epoch_seconds: 1090, source: "b".into() },
+            ClockAnchor {
+                recorder_epoch_seconds: 0,
+                reference_epoch_seconds: 100,
+                source: "a".into(),
+            },
+            ClockAnchor {
+                recorder_epoch_seconds: 1000,
+                reference_epoch_seconds: 1090,
+                source: "b".into(),
+            },
         ];
         let c = compute_correction(&anchors, prov()).unwrap();
         assert_eq!(c.offset_seconds, 100);
@@ -175,8 +194,16 @@ mod tests {
     #[test]
     fn perfect_clock_has_zero_offset_and_drift() {
         let anchors = vec![
-            ClockAnchor { recorder_epoch_seconds: 1000, reference_epoch_seconds: 1000, source: "a".into() },
-            ClockAnchor { recorder_epoch_seconds: 2000, reference_epoch_seconds: 2000, source: "b".into() },
+            ClockAnchor {
+                recorder_epoch_seconds: 1000,
+                reference_epoch_seconds: 1000,
+                source: "a".into(),
+            },
+            ClockAnchor {
+                recorder_epoch_seconds: 2000,
+                reference_epoch_seconds: 2000,
+                source: "b".into(),
+            },
         ];
         let c = compute_correction(&anchors, prov()).unwrap();
         assert_eq!(c.offset_seconds, 0);
@@ -188,9 +215,21 @@ mod tests {
     fn noisy_anchors_report_residual() {
         // Three roughly-linear points with noise -> non-zero residual reported.
         let anchors = vec![
-            ClockAnchor { recorder_epoch_seconds: 0, reference_epoch_seconds: 10, source: "a".into() },
-            ClockAnchor { recorder_epoch_seconds: 100, reference_epoch_seconds: 115, source: "b".into() },
-            ClockAnchor { recorder_epoch_seconds: 200, reference_epoch_seconds: 209, source: "c".into() },
+            ClockAnchor {
+                recorder_epoch_seconds: 0,
+                reference_epoch_seconds: 10,
+                source: "a".into(),
+            },
+            ClockAnchor {
+                recorder_epoch_seconds: 100,
+                reference_epoch_seconds: 115,
+                source: "b".into(),
+            },
+            ClockAnchor {
+                recorder_epoch_seconds: 200,
+                reference_epoch_seconds: 209,
+                source: "c".into(),
+            },
         ];
         let c = compute_correction(&anchors, prov()).unwrap();
         assert!(c.drift_rate.is_some());

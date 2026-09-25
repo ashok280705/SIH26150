@@ -3,8 +3,8 @@
 use evidence_reader::EvidenceReader;
 use forensic_core::identifiers::ProfileId;
 use forensic_core::{
-    ForensicError, Hash, OemProfile, ParserRun, Provenance, RawTimestamp,
-    Recording, Region, TimeEvidence, TimeZoneState, TimelineEvent, ValidationState,
+    ForensicError, Hash, OemProfile, ParserRun, Provenance, RawTimestamp, Recording, Region,
+    TimeEvidence, TimeZoneState, TimelineEvent, ValidationState,
 };
 use parsers_core::Parser;
 
@@ -206,7 +206,10 @@ impl Parser for UnifiedParser {
             ));
         }
 
-        Ok((recordings, vec![self.run(profile, "parse_recordings", state)]))
+        Ok((
+            recordings,
+            vec![self.run(profile, "parse_recordings", state)],
+        ))
     }
 
     fn extract_timeline_events(
@@ -257,7 +260,10 @@ impl Parser for UnifiedParser {
             ));
         }
 
-        Ok((events, vec![self.run(profile, "extract_timeline_events", state)]))
+        Ok((
+            events,
+            vec![self.run(profile, "extract_timeline_events", state)],
+        ))
     }
 
     fn validate_structure(
@@ -405,7 +411,9 @@ fn is_boundary(data: &[u8], header_pos: usize) -> bool {
 }
 
 /// Scan the evidence (bounded window) and group codec activity into carved regions.
-pub fn scan_carved_regions(reader: &dyn EvidenceReader) -> Result<Vec<CarvedRegion>, ForensicError> {
+pub fn scan_carved_regions(
+    reader: &dyn EvidenceReader,
+) -> Result<Vec<CarvedRegion>, ForensicError> {
     let scan_len = reader.len().min(MAX_SCAN_BYTES) as usize;
     if scan_len == 0 {
         return Ok(vec![]);
@@ -465,7 +473,14 @@ pub fn scan_carved_regions(reader: &dyn EvidenceReader) -> Result<Vec<CarvedRegi
 
         if idx > 0 && (gap > RUN_GAP_BYTES || boundary) {
             // Close the current run at the previous NAL, start a fresh run here.
-            flush(&mut regions, run_start, prev_pos, run_h264, run_h265, run_nals);
+            flush(
+                &mut regions,
+                run_start,
+                prev_pos,
+                run_h264,
+                run_h265,
+                run_nals,
+            );
             run_start = pos.saturating_sub(3);
             run_h264 = 0;
             run_h265 = 0;
@@ -482,7 +497,14 @@ pub fn scan_carved_regions(reader: &dyn EvidenceReader) -> Result<Vec<CarvedRegi
     }
 
     // Close the final run, extending to the scan end.
-    flush(&mut regions, run_start, data.len(), run_h264, run_h265, run_nals);
+    flush(
+        &mut regions,
+        run_start,
+        data.len(),
+        run_h264,
+        run_h265,
+        run_nals,
+    );
 
     Ok(regions)
 }
@@ -588,7 +610,9 @@ max_possible_score = 1.0
 
     #[test]
     fn empty_evidence_yields_no_regions() {
-        let reader = MemReader { data: vec![0u8; 4096] };
+        let reader = MemReader {
+            data: vec![0u8; 4096],
+        };
         assert!(scan_carved_regions(&reader).unwrap().is_empty());
     }
 
@@ -613,7 +637,12 @@ max_possible_score = 1.0
             .recognize_candidate(&MemReader { data: h264() }, &p)
             .unwrap());
         assert!(!up
-            .recognize_candidate(&MemReader { data: vec![0u8; 512] }, &p)
+            .recognize_candidate(
+                &MemReader {
+                    data: vec![0u8; 512]
+                },
+                &p
+            )
             .unwrap());
     }
 

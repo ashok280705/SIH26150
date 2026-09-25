@@ -17,18 +17,18 @@
 
 #![forbid(unsafe_code)]
 
-pub mod engine;
+pub mod clock;
 pub mod correlation;
+pub mod engine;
 pub mod gaps;
 pub mod sessions;
-pub mod clock;
 
+pub use clock::{apply_correction, compute_correction, ClockAnchor};
+pub use correlation::{CorrelatedEventGroup, CrossCameraCorrelator};
 pub use engine::{TimelineEngine, TimelineOrdering, UnifiedTimeline};
-pub use correlation::{CrossCameraCorrelator, CorrelatedEventGroup};
 pub use gaps::{
     analyze as analyze_gaps, CoverageEstimate, GapAnalysis, TimelineGap, UnaccountedRegion,
 };
 pub use sessions::{
     build_recording_timeline, RecordingSegment, RecordingSession, RecordingTimeline, SessionGap,
 };
-pub use clock::{apply_correction, compute_correction, ClockAnchor};

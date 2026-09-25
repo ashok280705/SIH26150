@@ -253,10 +253,7 @@ fn claims_from_entry(
                 // Pair the payload sub-range with its parent region only when it is
                 // genuinely inside the clipped span; a payload range that survived
                 // clipping differently would misdescribe the claim.
-                let payload_region = entry
-                    .payload_regions
-                    .get(i)
-                    .and_then(|p| clip(*p, clipped));
+                let payload_region = entry.payload_regions.get(i).and_then(|p| clip(*p, clipped));
                 out.push(ClaimedRegion {
                     region: clipped,
                     payload_region,
@@ -336,12 +333,8 @@ pub fn build_claim_map(
     let available = RangeSet::from_regions(available_claims.iter().map(|c| c.region))?;
     // The complement is taken against everything OEM metadata describes, accessible or not,
     // so an available recording is not also swept as unknown space and reported twice.
-    let described = RangeSet::from_regions(
-        claimed
-            .iter()
-            .copied()
-            .chain(available.iter().copied()),
-    )?;
+    let described =
+        RangeSet::from_regions(claimed.iter().copied().chain(available.iter().copied()))?;
     let unclaimed = described.complement_within(universe)?;
 
     // An authoritative index only governs the region it says it governs, intersected
@@ -643,7 +636,11 @@ mod tests {
         let index = authoritative(vec![entry("a", vec![r(900, 500)])], r(0, 1000));
         let map = build_claim_map(&index, None, r(0, 1000)).unwrap();
 
-        assert_eq!(map.claimed.ranges(), &[r(900, 100)], "clipped at the boundary");
+        assert_eq!(
+            map.claimed.ranges(),
+            &[r(900, 100)],
+            "clipped at the boundary"
+        );
         assert_eq!(map.unclaimed.ranges(), &[r(0, 900)]);
     }
 
@@ -679,12 +676,18 @@ mod tests {
         assert_eq!(
             map.unclaimed_regions,
             vec![
-                UnclaimedRegion { region: r(0, 500), kind: UnclaimedKind::OutsideIndexScope },
+                UnclaimedRegion {
+                    region: r(0, 500),
+                    kind: UnclaimedKind::OutsideIndexScope
+                },
                 UnclaimedRegion {
                     region: r(600, 300),
                     kind: UnclaimedKind::WithinAuthoritativeIndexScope
                 },
-                UnclaimedRegion { region: r(900, 100), kind: UnclaimedKind::OutsideIndexScope },
+                UnclaimedRegion {
+                    region: r(900, 100),
+                    kind: UnclaimedKind::OutsideIndexScope
+                },
             ]
         );
         assert_eq!(
@@ -773,7 +776,10 @@ mod tests {
             other => panic!("{other:?}"),
         }
         // Allocation state is untouched, so nothing downstream can call it deleted.
-        assert_eq!(map.available_claims[0].allocation, AllocationEvidence::Unknown);
+        assert_eq!(
+            map.available_claims[0].allocation,
+            AllocationEvidence::Unknown
+        );
     }
 
     #[test]
@@ -806,10 +812,19 @@ mod tests {
         );
         let map = build_claim_map(&index, None, r(0, 10_000)).unwrap();
 
-        assert_eq!(map.claim_at(1050).map(|c| c.recording_id.as_str()), Some("live"));
+        assert_eq!(
+            map.claim_at(1050).map(|c| c.recording_id.as_str()),
+            Some("live")
+        );
         assert!(map.available_at(1050).is_none());
-        assert!(map.claim_at(2100).is_none(), "an available region is not a live claim");
-        assert_eq!(map.available_at(2100).map(|c| c.recording_id.as_str()), Some("gone"));
+        assert!(
+            map.claim_at(2100).is_none(),
+            "an available region is not a live claim"
+        );
+        assert_eq!(
+            map.available_at(2100).map(|c| c.recording_id.as_str()),
+            Some("gone")
+        );
         assert_eq!(
             map.any_claim_at(2100).map(|c| c.recording_id.as_str()),
             Some("gone")
@@ -852,8 +867,14 @@ mod tests {
         );
         let map = build_claim_map(&index, None, r(0, 10_000)).unwrap();
 
-        assert_eq!(map.claim_at(1200).map(|c| c.recording_id.as_str()), Some("didx#0"));
-        assert_eq!(map.claim_at(2400).map(|c| c.recording_id.as_str()), Some("didx#1"));
+        assert_eq!(
+            map.claim_at(1200).map(|c| c.recording_id.as_str()),
+            Some("didx#0")
+        );
+        assert_eq!(
+            map.claim_at(2400).map(|c| c.recording_id.as_str()),
+            Some("didx#1")
+        );
         assert!(map.claim_at(1800).is_none());
     }
 }

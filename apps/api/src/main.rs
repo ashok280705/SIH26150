@@ -34,7 +34,11 @@ fn spawn_bundled_ollama() {
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    let bin_name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let bin_name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let vendor = root.join("vendor").join("ollama");
 
@@ -46,10 +50,14 @@ fn spawn_bundled_ollama() {
     };
 
     let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "127.0.0.1:11434".to_string());
-    let host_hostport = host.trim_start_matches("http://").trim_start_matches("https://");
-    let addr: SocketAddr = host_hostport
-        .parse()
-        .unwrap_or_else(|_| "127.0.0.1:11434".parse().expect("valid default socket addr"));
+    let host_hostport = host
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    let addr: SocketAddr = host_hostport.parse().unwrap_or_else(|_| {
+        "127.0.0.1:11434"
+            .parse()
+            .expect("valid default socket addr")
+    });
 
     // If a daemon is already up, don't start another.
     if TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok() {
