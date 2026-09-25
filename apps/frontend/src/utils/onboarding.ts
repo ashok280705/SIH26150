@@ -132,7 +132,7 @@ export const TOUR_STEPS: TourStep[] = [
     targetSelector: '[data-tour="parsing-view-panel"]',
     fallbackSelector: '[data-tour="nav-parsing"]',
     preferredPlacement: 'bottom',
-    explanation: 'After the storage format is identified, vendor-specific parsers interpret proprietary filesystem structures (e.g., DHFS, HIKVISION_FS, UBIFS) to extract recording indices and metadata.',
+    explanation: 'After the storage format is identified, vendor-specific parsers interpret proprietary filesystem structures (e.g., DHFS, HIKVISION_FS, UNIVIEW_FS) to extract recording indices and metadata.',
     importance: 'Converts low-level disk structures into structured records with channels, timestamps, and sector extents while recording validation results for each step.',
     whatNext: 'Next, examine video recovery and candidate reconstruction.',
     getStateAwareExplanation: (ctx) => {
@@ -270,7 +270,7 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
     id: 'parsing',
     label: 'Proprietary Parsing',
     tab: 'parsing',
-    whatHappens: 'Execute vendor-specific parsers (DHFS, HIKVISION_FS, UBIFS) to decode index tables and video headers.',
+    whatHappens: 'Execute vendor-specific parsers (DHFS, HIKVISION_FS, UNIVIEW_FS) to decode index tables and video headers.',
     whyItMatters: 'Extracts recording records, channels, and frame boundaries from proprietary disk structures.',
     status: 'implemented',
     details: ['Structure-aware index extraction', 'Independent validation outcomes', 'Direct offset jump links']
