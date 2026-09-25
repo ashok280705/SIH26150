@@ -11,7 +11,8 @@ use crate::field::FieldEvidence;
 use crate::layout::{Confidence, Generation};
 use crate::recovery::UniviewRecoveryReport;
 use crate::ui::{TimeIndexSummary, UiDataArea};
-use crate::volume::{UniviewVolume, PARTIAL_AUTHORITY_REASON};
+use crate::ui::TimeIndexEntry;
+use crate::volume::{UniviewVolume, VendorFlow, PARTIAL_AUTHORITY_REASON};
 
 /// One row per enumerated unit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +30,9 @@ pub struct UnitReportRow {
     pub data_regions: Vec<Region>,
     pub anomalies: Vec<String>,
     pub anomalies_suppressed: u64,
+    /// The unit's own 8-byte time-index entry, raw and decoded; lock semantics UNKNOWN.
+    pub time_index: Option<TimeIndexEntry>,
+    pub time_index_fields: Vec<FieldEvidence>,
 }
 
 /// The Uniview forensic report.
@@ -39,6 +43,8 @@ pub struct UniviewForensicReport {
     pub profile_id: String,
     pub profile_version: String,
     pub source_path: String,
+    /// Raw disk image, or a disktool `.h3crd` export (a normalized artifact).
+    pub source_kind: String,
     pub image_len: u64,
     pub generation: Option<Generation>,
     pub super_recognition: String,
@@ -50,7 +56,10 @@ pub struct UniviewForensicReport {
     pub ui_data: Option<UiDataArea>,
     pub current_unit_consistency: Option<String>,
     pub units: Vec<UnitReportRow>,
-    pub flow_total_write_bytes: u64,
+    /// FLOW as disktool computes it (refused on a rewrited disk).
+    pub vendor_flow: VendorFlow,
+    /// Filesystem-scan statistic over every unit in the image; NOT the vendor FLOW.
+    pub scan_total_write_bytes: u64,
     pub flow_note: String,
     pub index_authority: String,
     pub recovery: Option<UniviewRecoveryReport>,
@@ -61,8 +70,9 @@ pub struct UniviewForensicReport {
 /// Uniview behaviour the platform has **not** established. Reported in every report.
 pub fn known_limitations() -> Vec<String> {
     [
-        "the mapping from UI / UI-DATA time-index entries to DI entries is not established; \
-         index groups are per storage unit, not per recording",
+        "each unit's own 8-byte time-index entry is located (OLD UI + (u+1)*8, NEW UI-DATA \
+         global index u-1), but no link from a time-index entry to an individual DI entry is \
+         established; index groups are per storage unit, not per recording",
         "the meaning of the UI-DATA 26-bit lock / time-index value is unknown; it is not a \
          channel number",
         "the meaning of DI field A (10 bits) is unknown; no channel is derived from it",
@@ -73,8 +83,13 @@ pub fn known_limitations() -> Vec<String> {
         "the rewrited flag indicates a wrapped ring but not which recordings were overwritten",
         "DATA extents are inferred from adjacent SPtoI values; a unit's last entry claims only \
          the block its SPtoI selects",
-        "the OLD-generation UI entry table base (+0x08) is TENTATIVE",
-        "whether the UI current-unit index is 0- or 1-based is not established",
+        "the meaning of the UI / UI-CTL raw current-unit value beyond the vendor's written-unit \
+         arithmetic (OLD raw - 1, NEW raw + 1) is not established",
+        "the meaning of UI-CTL +0x04 beyond the entry-count arithmetic ((v >> 13) + 1) and the \
+         UI-DATA display bound is TENTATIVE",
+        "DI header bytes +0x08..+0x0F and DI entry bytes +0x08..+0x0F are UNKNOWN",
+        "the .h3crd header constant offset (+0x64) is a strong inference from the export \
+         routine's stack layout; .h3crd recognition rests on the header tag",
         "the SUPER, UI and DI structures carry no known checksum",
     ]
     .iter()
@@ -107,6 +122,12 @@ pub fn build_report(
             data_regions: u.data_regions.clone(),
             anomalies: u.anomalies.clone(),
             anomalies_suppressed: u.anomalies_suppressed,
+            time_index: u.time_index.clone(),
+            time_index_fields: u
+                .time_index
+                .as_ref()
+                .map(|t| t.fields("unit.time_index", Confidence::StrongInference))
+                .unwrap_or_default(),
         })
         .collect();
 
@@ -116,6 +137,7 @@ pub fn build_report(
         profile_id: profile.profile_id.clone(),
         profile_version: profile.profile_version.clone(),
         source_path: volume.source_path.clone(),
+        source_kind: volume.source_label().to_string(),
         image_len: volume.image_len,
         generation: volume.generation(),
         super_recognition: volume.super_block.recognition.label(),
@@ -127,9 +149,12 @@ pub fn build_report(
         ui_data: volume.ui_data.clone(),
         current_unit_consistency: volume.current_unit_consistency(),
         units,
-        flow_total_write_bytes: volume.flow_total_write_bytes(),
-        flow_note: "FLOW is calculated as the sum of every unit's DI +0x00 write-data counter; it is \
-                    not an on-disk region"
+        vendor_flow: volume.vendor_flow(),
+        scan_total_write_bytes: volume.scan_total_write_bytes(),
+        flow_note: "FLOW is not an on-disk region. vendor_flow reproduces disktool: the sum of DI \
+                    +0x00 over the UI-declared units (OLD raw - 1, NEW raw + 1), refused on a \
+                    rewrited disk. scan_total_write_bytes sums every unit found in the image and \
+                    is a filesystem-scan statistic only"
             .into(),
         index_authority: format!("PARTIAL: {PARTIAL_AUTHORITY_REASON}"),
         recovery,

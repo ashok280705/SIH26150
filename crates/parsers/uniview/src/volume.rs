@@ -33,7 +33,22 @@
 //! ## FLOW is calculated, not read
 //!
 //! There is no on-disk FLOW region. The vendor tooling derives FLOW by summing every unit's
-//! DI `+0x00` write-data counter; [`UniviewVolume::flow_total_write_bytes`] is exactly that.
+//! DI `+0x00` write-data counter over units `1..=N`, where `N` comes from UI / UI-CTL
+//! (`OLD raw - 1`, `NEW raw + 1`), and refuses when the rewrited flag is non-zero.
+//! [`UniviewVolume::vendor_flow`] reproduces exactly that. The separate
+//! [`UniviewVolume::scan_total_write_bytes`] sums every unit found in the image; it is a
+//! filesystem-scan statistic, not the vendor FLOW result.
+//!
+//! ## Per-unit time index
+//!
+//! Every unit carries its own 8-byte time-index entry (OLD `UI + (u+1)*8`, NEW UI-DATA global
+//! index `u - 1`), attached as [`UnitRecord::time_index`]. Its lock value stays UNKNOWN.
+//!
+//! ## `.h3crd` exports
+//!
+//! A disktool export is read through the same path as an OLD disk with one unit. Its DI count
+//! is the number of copied entries rather than a record count, and its DATA ends where
+//! disktool stopped copying; both are applied only when the source is an export.
 
 use std::collections::BTreeMap;
 
@@ -45,11 +60,11 @@ use parsers_core::storage::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::di::{self, DataSpan, DiHeader, DiHeaderState, SptoiState, UnitDi};
+use crate::di::{self, CountSemantics, DataSpan, DiHeader, DiHeaderState, SptoiState, UnitDi};
 use crate::layout::{vs, Generation, UniviewLayout};
 use crate::superblock::{self, SuperRecognition, UniviewSuper};
 use crate::timestamp::{TimestampStatus, UnvTimestamp};
-use crate::ui::{self, UiDataArea, UniviewUi};
+use crate::ui::{self, TimeIndexEntry, UiDataArea, UniviewUi};
 
 /// Prefix of every Uniview recording/index-group id.
 pub const RECORDING_ID_PREFIX: &str = "unv:u";
@@ -57,8 +72,8 @@ pub const RECORDING_ID_PREFIX: &str = "unv:u";
 /// Why an index group is not a recording claim.
 pub const GROUPING_NOTE: &str =
     "storage-unit index group: the DI entries of one 256 MiB unit. This is a structural \
-     grouping, not a proven video recording boundary; the UI/UI-DATA -> DI mapping is not \
-     established";
+     grouping, not a proven video recording boundary; the unit's own time-index entry is \
+     located, but no link from a time-index entry to an individual DI entry is established";
 
 /// Why the index is never authoritative.
 pub const PARTIAL_AUTHORITY_REASON: &str =
@@ -96,6 +111,10 @@ pub struct UnitRecord {
     pub data_regions: Vec<Region>,
     pub anomalies: Vec<String>,
     pub anomalies_suppressed: u64,
+    /// The unit's own 8-byte time-index entry (OLD `UI + (u+1)*8`, NEW UI-DATA global index
+    /// `u - 1`), exactly as stored. `None` when the geometry has no slot for the unit or the
+    /// image does not hold it.
+    pub time_index: Option<TimeIndexEntry>,
 }
 
 impl UnitRecord {
@@ -179,6 +198,7 @@ fn summarise_unit(
         data_regions: Vec::new(),
         anomalies: Vec::new(),
         anomalies_suppressed: 0,
+        time_index: None,
     };
 
     match &di.header_state {
@@ -252,6 +272,42 @@ fn summarise_unit(
     rec
 }
 
+/// FLOW as disktool computes it (`FUN_00013600`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VendorFlow {
+    /// No readable UI / UI-CTL header, so the vendor unit count is unavailable.
+    NoUiHeader,
+    /// disktool refuses: "disktool can't count flow in a rewrited disk".
+    RefusedRewrited { rewrited_raw: u16 },
+    /// disktool would stop at "read data index failed": a unit in `1..=unit_count` has no DI
+    /// header in the image. The partial sum up to that unit is kept for reference.
+    ReadFailure { unit_count: i64, first_unreadable_unit: u64, partial_total_bytes: i64 },
+    /// Sum of the sign-extended DI `+0x00` counters of units `1..=unit_count`.
+    Computed { unit_count: i64, total_bytes: i64 },
+}
+
+impl VendorFlow {
+    pub fn label(&self) -> String {
+        match self {
+            Self::NoUiHeader => "not computable: no readable UI / UI-CTL header".into(),
+            Self::RefusedRewrited { rewrited_raw } => format!(
+                "refused, as disktool does (\"can't count flow in a rewrited disk\"): rewrited \
+                 flag = {rewrited_raw}"
+            ),
+            Self::ReadFailure { unit_count, first_unreadable_unit, partial_total_bytes } => format!(
+                "incomplete, as disktool would stop (\"read data index failed\"): {unit_count} \
+                 unit(s) declared, unit {first_unreadable_unit} has no DI in the image; partial \
+                 sum {partial_total_bytes} byte(s)"
+            ),
+            Self::Computed { unit_count, total_bytes } => format!(
+                "{total_bytes} byte(s) over {unit_count} unit(s) (vendor FLOW: sum of DI +0x00 \
+                 over the UI-declared units)"
+            ),
+        }
+    }
+}
+
 /// Everything the Uniview structures establish about one evidence source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UniviewVolume {
@@ -279,7 +335,25 @@ impl UniviewVolume {
 
     /// Whether the structures were established well enough to act on.
     pub fn is_usable(&self) -> bool {
-        matches!(self.super_block.recognition, SuperRecognition::Recognized { .. })
+        matches!(
+            self.super_block.recognition,
+            SuperRecognition::Recognized { .. } | SuperRecognition::H3crdExport { .. }
+        )
+    }
+
+    /// Whether the evidence is a disktool `.h3crd` export rather than a raw disk.
+    pub fn is_h3crd_export(&self) -> bool {
+        self.super_block.is_h3crd_export()
+    }
+
+    /// What kind of Uniview source this is, for reports.
+    pub fn source_label(&self) -> &'static str {
+        if self.is_h3crd_export() {
+            "Uniview disktool .h3crd export (normalized artifact, not an original physical disk \
+             layout)"
+        } else {
+            "raw Uniview disk image"
+        }
     }
 
     pub fn indexed_units(&self) -> impl Iterator<Item = &UnitRecord> {
@@ -291,22 +365,59 @@ impl UniviewVolume {
         self.units.iter().find(|u| u.unit == n)
     }
 
-    /// FLOW: the sum of every unit's DI `+0x00` write-data counter. A calculated statistic,
-    /// not an on-disk region. Only units whose header count is usable contribute.
-    pub fn flow_total_write_bytes(&self) -> u64 {
+    /// **Filesystem-scan statistic, not the vendor FLOW.** The sum of the DI `+0x00`
+    /// counters (unsigned) of every unit found in the image whose header count is usable,
+    /// regardless of the UI unit count or the rewrited flag.
+    pub fn scan_total_write_bytes(&self) -> u64 {
         self.units
             .iter()
-            .filter(|u| matches!(u.header_state, DiHeaderState::Valid | DiHeaderState::Truncated { .. }))
+            .filter(|u| u.header_state.count_usable())
             .filter_map(|u| u.header.as_ref())
             .fold(0u64, |a, h| a.saturating_add(u64::from(h.write_bytes)))
     }
 
+    /// FLOW exactly as disktool computes it: units `1..=N` with `N` from UI / UI-CTL
+    /// (OLD `raw - 1`, NEW `raw + 1`), each DI `+0x00` sign-extended from 32 bits, refused when
+    /// the rewrited flag is non-zero.
+    pub fn vendor_flow(&self) -> VendorFlow {
+        let Some(ui) = &self.ui else { return VendorFlow::NoUiHeader };
+        let (Some(rewrited_raw), Some(unit_count)) = (ui.rewrited_raw(), ui.unit_count(&self.layout))
+        else {
+            return VendorFlow::NoUiHeader;
+        };
+        if rewrited_raw != 0 {
+            return VendorFlow::RefusedRewrited { rewrited_raw };
+        }
+        let mut total: i64 = 0;
+        let n = u64::try_from(unit_count).unwrap_or(0);
+        for u in 1..=n {
+            // Units are enumerated contiguously from 1, so unit u is at index u - 1.
+            let header = usize::try_from(u - 1)
+                .ok()
+                .and_then(|i| self.units.get(i))
+                .filter(|r| u64::from(r.unit) == u)
+                .and_then(|r| r.header.as_ref());
+            match header {
+                Some(h) => total = total.saturating_add(i64::from(h.write_bytes as i32)),
+                None => {
+                    return VendorFlow::ReadFailure {
+                        unit_count,
+                        first_unreadable_unit: u,
+                        partial_total_bytes: total,
+                    }
+                }
+            }
+        }
+        VendorFlow::Computed { unit_count, total_bytes: total }
+    }
+
+    /// Entries the usable DI headers declare (`count - 1` per raw-disk unit).
     pub fn declared_entries(&self) -> u64 {
         self.units
             .iter()
-            .filter(|u| matches!(u.header_state, DiHeaderState::Valid | DiHeaderState::Truncated { .. }))
+            .filter(|u| u.header_state.count_usable())
             .filter_map(|u| u.header.as_ref())
-            .map(|h| u64::from(h.declared_count))
+            .map(|h| h.entry_count)
             .sum()
     }
 
@@ -314,18 +425,28 @@ impl UniviewVolume {
         self.units.iter().map(|u| u.usable_entries).sum()
     }
 
-    /// The UI/UI-CTL current-unit value interpreted 1-based against the enumerated units.
-    ///
-    /// TENTATIVE: the research does not state whether the index is 0- or 1-based.
+    /// The UI / UI-CTL written-unit count (vendor numbering) against the units in the image.
     pub fn current_unit_consistency(&self) -> Option<String> {
-        let cur = self.ui.as_ref()?.current_unit()?;
-        let n = self.units.len() as u64;
-        Some(if cur >= 1 && u64::from(cur) <= n {
-            format!("current unit {cur} is within the {n} enumerated unit(s) (1-based reading, TENTATIVE)")
+        let ui = self.ui.as_ref()?;
+        let raw = ui.current_unit_raw()?;
+        let count = ui.unit_count(&self.layout)?;
+        let n = self.units.len() as i64;
+        let rule = match ui.generation {
+            Generation::Old => "OLD: raw - 1",
+            Generation::New => "NEW: raw + 1",
+        };
+        Some(if count >= 0 && count <= n {
+            format!(
+                "{} raw current-unit value {raw} declares {count} written unit(s) ({rule}); all \
+                 are within the {n} unit(s) present in the image",
+                ui.region_name()
+            )
         } else {
             format!(
-                "current unit {cur} is outside the {n} enumerated unit(s) under a 1-based reading \
-                 (TENTATIVE); the image may be truncated or the index 0-based"
+                "{} raw current-unit value {raw} declares {count} written unit(s) ({rule}), \
+                 outside the {n} unit(s) present in the image; the image may be truncated or the \
+                 header damaged",
+                ui.region_name()
             )
         })
     }
@@ -358,9 +479,10 @@ pub fn read_volume(
 
     let ui = ui::read_ui(reader, &layout, generation)?;
     let ui_data = match generation {
-        Generation::New => Some(ui::read_ui_data(reader, &layout)?),
+        Generation::New => Some(ui::read_ui_data(reader, &layout, Some(&ui))?),
         Generation::Old => None,
     };
+    let export = super_block.is_h3crd_export();
 
     let mut units = Vec::new();
     let mut units_capped = false;
@@ -376,9 +498,11 @@ pub fn read_volume(
         if base >= image_len {
             break;
         }
-        let d = di::read_unit_di(reader, &layout, generation, unit)?;
+        let d = read_unit(reader, &layout, generation, unit, export)?;
         let spans = d.spans(&layout, image_len);
-        units.push(summarise_unit(&d, &spans, &layout, image_len));
+        let mut rec = summarise_unit(&d, &spans, &layout, image_len);
+        rec.time_index = ui::unit_time_entry(reader, &layout, generation, unit)?;
+        units.push(rec);
         let Some(next) = unit.checked_add(1) else { break };
         unit = next;
     }
@@ -404,7 +528,20 @@ pub fn read_volume(
         ));
     }
 
-    let state = if !matches!(super_block.recognition, SuperRecognition::Recognized { .. })
+    if export {
+        findings.push(
+            "source is a disktool .h3crd export: an OLD-shaped single-unit normalized artifact, \
+             not an original physical disk layout; its DI count is the number of copied entries \
+             and its SPtoI values are re-based by disktool"
+                .to_string(),
+        );
+    }
+
+    let usable = matches!(
+        super_block.recognition,
+        SuperRecognition::Recognized { .. } | SuperRecognition::H3crdExport { .. }
+    );
+    let state = if !usable
         || ui.header.is_none()
         || ui.evidence.state != ValidationStateKind::Pass
         || problem_units > 0
@@ -430,6 +567,28 @@ pub fn read_volume(
     })
 }
 
+/// Read one unit's DI with the count semantics and DATA bound the source calls for.
+fn read_unit(
+    reader: &dyn EvidenceReader,
+    layout: &UniviewLayout,
+    generation: Generation,
+    unit: u32,
+    export: bool,
+) -> Result<UnitDi, ForensicError> {
+    let semantics = if export {
+        CountSemantics::EntriesOnly
+    } else {
+        CountSemantics::IncludesHeader
+    };
+    let mut d = di::read_unit_di_with(reader, layout, generation, unit, semantics)?;
+    if export && layout.data_block_size > 0 {
+        // disktool copied exactly SPtoI(end) - SPtoI(start) blocks after the DI, so the DATA
+        // in the file ends at this block index of the (re-based) unit.
+        d.data_end_block = Some(reader.len().saturating_sub(d.unit_base) / layout.data_block_size);
+    }
+    Ok(d)
+}
+
 /// Full DI detail for one unit: every declared entry and its inferred span.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitDetail {
@@ -447,7 +606,7 @@ pub fn unit_detail(
     if !volume.units.iter().any(|u| u.unit == unit) {
         return Ok(None);
     }
-    let di = di::read_unit_di(reader, &volume.layout, generation, unit)?;
+    let di = read_unit(reader, &volume.layout, generation, unit, volume.is_h3crd_export())?;
     let spans = di.spans(&volume.layout, reader.len());
     Ok(Some(UnitDetail { di, spans }))
 }
@@ -456,11 +615,12 @@ pub fn unit_detail(
 pub fn volume_summary(volume: &UniviewVolume) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     let sb = &volume.super_block;
+    m.insert("uniview.source".into(), volume.source_label().into());
     m.insert("uniview.super.recognition".into(), sb.recognition.label());
     if let Some(g) = volume.generation() {
         m.insert("uniview.generation".into(), g.label().into());
     }
-    if let Some(v) = sb.magic_raw {
+    if let Some(v) = sb.magic_raw.filter(|_| !volume.is_h3crd_export()) {
         m.insert("uniview.super.magic".into(), format!("0x{v:04X}"));
     }
     if let Some(t) = &sb.last_write_time {
@@ -474,8 +634,17 @@ pub fn volume_summary(volume: &UniviewVolume) -> BTreeMap<String, String> {
     }
     if let Some(ui) = &volume.ui {
         let name = ui.region_name().to_ascii_lowercase().replace('-', "_");
-        if let Some(c) = ui.current_unit() {
-            m.insert(format!("uniview.{name}.current_unit"), c.to_string());
+        if let Some(c) = ui.current_unit_raw() {
+            m.insert(format!("uniview.{name}.current_unit_raw"), c.to_string());
+        }
+        if let Some(c) = ui.unit_count(&volume.layout) {
+            m.insert(format!("uniview.{name}.written_unit_count"), c.to_string());
+        }
+        if let Some(r) = ui.rewrited_raw() {
+            m.insert(format!("uniview.{name}.rewrited_raw"), r.to_string());
+        }
+        if let Some(d) = ui.declared_entries {
+            m.insert(format!("uniview.{name}.declared_entries"), d.to_string());
         }
         if let Some(r) = ui.rewrited() {
             m.insert(
@@ -514,12 +683,23 @@ pub fn volume_summary(volume: &UniviewVolume) -> BTreeMap<String, String> {
     );
     m.insert("uniview.di.declared_entries".into(), volume.declared_entries().to_string());
     m.insert("uniview.di.usable_entries".into(), volume.usable_entries().to_string());
+    m.insert("uniview.flow.vendor".into(), volume.vendor_flow().label());
     m.insert(
-        "uniview.flow.total_write_bytes".into(),
+        "uniview.scan.total_write_bytes".into(),
         format!(
-            "{} (calculated: sum of DI +0x00 write-data counters; not an on-disk region)",
-            volume.flow_total_write_bytes()
+            "{} (calculated filesystem scan: sum of DI +0x00 over every unit in the image; NOT \
+             the vendor FLOW result)",
+            volume.scan_total_write_bytes()
         ),
+    );
+    m.insert(
+        "uniview.units.with_time_index".into(),
+        volume
+            .units
+            .iter()
+            .filter(|u| u.time_index.as_ref().is_some_and(|t| !t.is_blank()))
+            .count()
+            .to_string(),
     );
     m.insert(
         "uniview.data.block_size".into(),
@@ -600,12 +780,14 @@ pub fn recording_index(volume: &UniviewVolume) -> Result<Option<RecordingIndex>,
     for u in volume.indexed_units() {
         let mut md = BTreeMap::new();
         md.insert("uniview.generation".into(), generation.label().to_string());
+        md.insert("uniview.source".into(), volume.source_label().to_string());
         md.insert("uniview.unit".into(), u.unit.to_string());
         md.insert("uniview.unit_base".into(), format!("0x{:X}", u.unit_base));
         md.insert("uniview.di_offset".into(), format!("0x{:X}", u.di_offset));
         if let Some(h) = &u.header {
             md.insert("uniview.di.write_data_bytes".into(), h.write_bytes.to_string());
-            md.insert("uniview.di.declared_entries".into(), h.declared_count.to_string());
+            md.insert("uniview.di.record_count_raw".into(), h.declared_count.to_string());
+            md.insert("uniview.di.declared_entries".into(), h.entry_count.to_string());
             md.insert("uniview.di.header_08_0f_hex".into(), hex::encode(h.unknown_08_0f));
         }
         md.insert("uniview.di.header_state".into(), u.header_state.label());
@@ -620,6 +802,15 @@ pub fn recording_index(volume: &UniviewVolume) -> Result<Option<RecordingIndex>,
         }
         if let Some(t) = &u.latest {
             md.insert("uniview.latest_wall_clock".into(), t.wall_clock().unwrap_or_default());
+        }
+        if let Some(t) = &u.time_index {
+            md.insert("uniview.unit_time_index.offset".into(), format!("0x{:X}", t.offset));
+            md.insert("uniview.unit_time_index.raw_hex".into(), hex::encode(t.raw));
+            md.insert("uniview.unit_time_index.timestamp".into(), t.timestamp.label());
+            md.insert(
+                "uniview.unit_time_index.lock".into(),
+                format!("{} (semantics UNKNOWN; not a channel)", t.lock),
+            );
         }
         md.insert("uniview.timestamp_timezone".into(), "unknown; wall clock read as UTC".into());
         md.insert("uniview.grouping".into(), GROUPING_NOTE.into());

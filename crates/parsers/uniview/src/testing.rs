@@ -137,27 +137,34 @@ pub mod build {
         e
     }
 
-    /// OLD-generation UI region (`0x10000` bytes).
-    pub fn old_ui(current_unit: u32, field_04: u16, rewrited: u8, entries: &[[u8; 8]]) -> Vec<u8> {
+    /// OLD-generation UI region (`0x10000` bytes): raw `+0x00`, u16 `+0x04`, u16 rewrited
+    /// flag at `+0x06`, and `(unit, entry)` pairs placed at `UI + (unit + 1) * 8`.
+    pub fn old_ui(
+        current_unit_raw: u32,
+        field_04: u16,
+        rewrited: u16,
+        unit_entries: &[(u32, [u8; 8])],
+    ) -> Vec<u8> {
         let mut b = vec![0u8; 0x10000];
-        b[0..4].copy_from_slice(&current_unit.to_le_bytes());
+        b[0..4].copy_from_slice(&current_unit_raw.to_le_bytes());
         b[4..6].copy_from_slice(&field_04.to_le_bytes());
-        b[6] = rewrited;
-        for (i, e) in entries.iter().enumerate() {
-            let off = 8 + i * 8;
-            if off + 8 <= b.len() {
+        b[6..8].copy_from_slice(&rewrited.to_le_bytes());
+        for (unit, e) in unit_entries {
+            let off = (*unit as usize + 1) * 8;
+            if *unit >= 1 && off + 8 <= b.len() {
                 b[off..off + 8].copy_from_slice(e);
             }
         }
         b
     }
 
-    /// NEW-generation UI-CTL region (`0x10000` bytes).
-    pub fn new_ui_ctl(current_unit: u32, count: u32, rewrited: u32, entries: &[[u8; 8]]) -> Vec<u8> {
+    /// NEW-generation UI-CTL region (`0x10000` bytes): raw `+0x00`, raw count base `+0x04`,
+    /// u16 rewrited flag at `+0x0C`, entries from `+0x10`.
+    pub fn new_ui_ctl(current_unit_raw: u32, count_raw: u32, rewrited: u16, entries: &[[u8; 8]]) -> Vec<u8> {
         let mut b = vec![0u8; 0x10000];
-        b[0..4].copy_from_slice(&current_unit.to_le_bytes());
-        b[4..8].copy_from_slice(&count.to_le_bytes());
-        b[0x0C..0x10].copy_from_slice(&rewrited.to_le_bytes());
+        b[0..4].copy_from_slice(&current_unit_raw.to_le_bytes());
+        b[4..8].copy_from_slice(&count_raw.to_le_bytes());
+        b[0x0C..0x0E].copy_from_slice(&rewrited.to_le_bytes());
         for (i, e) in entries.iter().enumerate() {
             let off = 0x10 + i * 8;
             if off + 8 <= b.len() {
@@ -189,14 +196,24 @@ pub mod build {
     }
 
     /// DI header + entries, sized to hold exactly what was written (the rest of the 256 KiB
-    /// region is the sparse reader's zero background).
-    pub fn di_region(write_bytes: u32, declared_count: u32, entries: &[[u8; 16]]) -> Vec<u8> {
+    /// region is the sparse reader's zero background). `record_count` is the raw `+0x04`
+    /// value, which on a raw disk includes record 0 (the header): pass `entries + 1`.
+    pub fn di_region(write_bytes: u32, record_count: u32, entries: &[[u8; 16]]) -> Vec<u8> {
         let mut b = vec![0u8; 0x10 + entries.len() * 16];
         b[0..4].copy_from_slice(&write_bytes.to_le_bytes());
-        b[4..8].copy_from_slice(&declared_count.to_le_bytes());
+        b[4..8].copy_from_slice(&record_count.to_le_bytes());
         for (i, e) in entries.iter().enumerate() {
             b[0x10 + i * 16..0x10 + (i + 1) * 16].copy_from_slice(e);
         }
+        b
+    }
+
+    /// The disktool `.h3crd` export header (0x68 bytes): the tag `"iVS8000@huawei-3com"`
+    /// (NUL-terminated, 20 bytes) at +0x00 and the constant `0x56B4C275` at +0x64.
+    pub fn h3crd_header() -> Vec<u8> {
+        let mut b = vec![0u8; 0x68];
+        b[..19].copy_from_slice(b"iVS8000@huawei-3com");
+        b[0x64..0x68].copy_from_slice(&0x56B4_C275u32.to_le_bytes());
         b
     }
 
@@ -237,12 +254,13 @@ pub mod image {
     }
 
     impl UnitSpec {
-        /// A unit whose declared count equals the entries given.
+        /// A unit whose raw record count covers exactly the entries given (entries + 1,
+        /// because the count includes the header record).
         pub fn new(unit: u32, write_bytes: u32, entries: Vec<[u8; 16]>) -> Self {
             Self {
                 unit,
                 write_bytes,
-                declared_count: entries.len() as u32,
+                declared_count: entries.len() as u32 + 1,
                 entries,
                 blocks: Vec::new(),
             }
@@ -283,19 +301,17 @@ pub mod image {
         )
     }
 
-    /// A small OLD-generation image: SUPER, UI (current unit 1, rewrited set) and unit 1
-    /// holding three DI entries (SPtoI 16, 20, 25), each referenced block carrying a
-    /// distinct pattern, and one residual slot beyond the declared count. The image ends
-    /// 64 DATA blocks into unit 1, so it is small enough to write to disk.
+    /// A small OLD-generation image: SUPER, UI (raw current unit 2 = one written unit,
+    /// rewrited set, unit 1's time-index entry at UI + 2*8) and unit 1 holding three DI
+    /// entries (records 1..3: SPtoI 16, 20, 25; record count 4), each referenced block
+    /// carrying a distinct pattern, and one residual record (4) beyond the count. The image
+    /// ends 64 DATA blocks into unit 1, so it is small enough to write to disk.
     pub fn small_old_volume(l: &UniviewLayout) -> SparseReader {
         let base = l.unit_base(Generation::Old, 1).unwrap();
         let len = base + l.di_size + 64 * l.data_block_size;
         let mut r = SparseReader::new(len).with(0, &super_for(0x1367));
-        let ui_entries = [
-            build::time_index_entry(build::timestamp(2024, 5, 3, 10, 0, 0), 11),
-            build::time_index_entry(build::timestamp(2024, 5, 3, 10, 5, 0), 12),
-        ];
-        r.place(l.ui_offset, &build::old_ui(1, 0x0002, 1, &ui_entries));
+        let ui_entries = [(1u32, build::time_index_entry(build::timestamp(2024, 5, 3, 10, 0, 0), 11))];
+        r.place(l.ui_offset, &build::old_ui(2, 0x0002, 1, &ui_entries));
         let ts = |m: u8| build::timestamp(2024, 5, 3, 10, m, 0);
         let tail = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
         let mut entries = vec![
@@ -306,7 +322,7 @@ pub mod image {
         // Residue beyond the declared count of 3.
         entries.push(build::di_entry(build::timestamp(2024, 4, 30, 23, 59, 0), 1, 40, tail));
         let spec = UnitSpec::new(1, 9 * 0x4000, entries)
-            .with_declared_count(3)
+            .with_declared_count(4)
             .with_block(16, build::data_block(0x16))
             .with_block(20, build::data_block(0x20))
             .with_block(25, build::data_block(0x25))
@@ -316,12 +332,14 @@ pub mod image {
         r
     }
 
-    /// A NEW-generation image with UI-CTL, two populated UI-DATA units and two storage units.
+    /// A NEW-generation image: UI-CTL (raw current unit 1 = two written units, one UI-CTL
+    /// entry), UI-DATA unit 0 carrying the time-index entries of storage units 1 and 2 (global
+    /// indices 0 and 1), a populated UI-DATA unit 1, and two storage units.
     pub fn new_volume(l: &UniviewLayout) -> SparseReader {
         let len = l.unit_base(Generation::New, 2).unwrap() + l.di_size + 64 * l.data_block_size;
         let mut r = SparseReader::new(len).with(0, &super_for(0x1587));
         let ctl = [build::time_index_entry(build::timestamp(2024, 6, 1, 0, 0, 0), 5)];
-        r.place(l.ui_offset, &build::new_ui_ctl(2, 1, 0, &ctl));
+        r.place(l.ui_offset, &build::new_ui_ctl(1, 1, 0, &ctl));
         for n in [0u64, 1] {
             let unit = build::ui_data_unit(&[
                 build::time_index_entry(build::timestamp(2024, 6, 1, n as u8, 0, 0), 100 + n as u32),
@@ -347,5 +365,40 @@ pub mod image {
         place_unit(&mut r, l, Generation::New, &u1);
         place_unit(&mut r, l, Generation::New, &u2);
         r
+    }
+
+    /// A disktool `.h3crd` export, laid out as the export routine writes it:
+    ///
+    /// ```text
+    ///   0x00000  0x68-byte header (tag + constant)
+    ///   0x04000  UI copy: [+0x00] = 2, the unit's 8-byte time-index entry at +0x10
+    ///   0x14000  DI copy: [+0x04] = number of copied entries, entries from +0x10 with SPtoI
+    ///            re-based to start at 16
+    ///   0x54000  the copied DATA blocks, contiguous
+    /// ```
+    ///
+    /// `sptoi` are the original SPtoI values of the copied entries; `end_sptoi` is the SPtoI of
+    /// the end-boundary entry, so `end_sptoi - sptoi[0]` blocks of DATA are written.
+    pub fn h3crd_export(unit_entry: [u8; 8], sptoi: &[u16], end_sptoi: u16) -> SparseReader {
+        let start = sptoi[0];
+        let blocks = u64::from(end_sptoi - start);
+        let len = 0x54000 + blocks * 0x4000;
+        let mut r = SparseReader::new(len).with(0, &build::h3crd_header());
+        let mut ui = vec![0u8; 0x10000];
+        ui[0..4].copy_from_slice(&2u32.to_le_bytes());
+        ui[0x10..0x18].copy_from_slice(&unit_entry);
+        r.place(0x4000, &ui);
+        let entries: Vec<[u8; 16]> = sptoi
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                build::di_entry(build::timestamp(2024, 7, 1, 9, i as u8, 0), 2, s - start + 16, [0; 8])
+            })
+            .collect();
+        r.place(0x14000, &build::di_region(0, entries.len() as u32, &entries));
+        for b in 0..blocks {
+            r.place(0x54000 + b * 0x4000, &build::data_block(0x80 | b as u8));
+        }
+        r.with_path("mem://uniview-export.h3crd")
     }
 }

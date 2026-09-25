@@ -24,6 +24,9 @@
 //!   data::extract_regions    raw, hashed, read-only DATA extraction
 //!   recovery::*              INDEXED / STRUCTURAL / HEURISTIC recovery items
 //!   report::*                field-level forensic report with known limitations
+//!
+//!   disktool .h3crd export   recognised by its header tag (only when no SUPER magic
+//!                            matches) and read as an OLD-shaped single-unit artifact
 //! ```
 //!
 //! ## Confidence vocabulary
@@ -59,7 +62,10 @@ pub mod ui;
 pub mod volume;
 
 pub use data::{AddressError, DataBlockAddress, ExtractedData};
-pub use di::{DataSpan, DiEntry, DiHeader, DiHeaderState, SpanBasis, SptoiState, UnitDi};
+pub use di::{
+    CountSemantics, DataSpan, DiEntry, DiHeader, DiHeaderState, SpanBasis, SptoiState, UnitDi,
+    DI_HEAD_ABNORMAL,
+};
 pub use field::FieldEvidence;
 pub use layout::{Confidence, Generation, UniviewLayout};
 pub use parser::{
@@ -69,5 +75,5 @@ pub use recovery::{RecoveryBasis, RecoveryItem, RecoveryOptions, UniviewRecovery
 pub use report::{known_limitations, UniviewForensicReport};
 pub use superblock::{SuperRecognition, UniviewSuper};
 pub use timestamp::{TimestampStatus, UnvTimestamp};
-pub use ui::{TimeIndexEntry, TimeIndexSummary, UiDataArea, UiHeader, UniviewUi};
-pub use volume::{UnitDetail, UnitRecord, UniviewVolume};
+pub use ui::{unit_time_entry, TimeIndexEntry, TimeIndexSummary, UiDataArea, UiHeader, UniviewUi};
+pub use volume::{UnitDetail, UnitRecord, UniviewVolume, VendorFlow};

@@ -54,11 +54,14 @@ pub mod key {
     pub const OLD_UI_CURRENT_UNIT_OFFSET: &str = "uniview_old_ui_current_unit_offset";
     pub const OLD_UI_FIELD_04_OFFSET: &str = "uniview_old_ui_field_04_offset";
     pub const OLD_UI_REWRITED_OFFSET: &str = "uniview_old_ui_rewrited_offset";
-    pub const OLD_UI_ENTRIES_OFFSET: &str = "uniview_old_ui_entries_offset";
+    pub const OLD_UI_UNIT_ENTRY_SLOT_ADDEND: &str = "uniview_old_ui_unit_entry_slot_addend";
+    pub const OLD_UI_UNIT_COUNT_ADJUST: &str = "uniview_old_ui_unit_count_adjust";
     pub const NEW_UICTL_CURRENT_UNIT_OFFSET: &str = "uniview_new_uictl_current_unit_offset";
     pub const NEW_UICTL_COUNT_OFFSET: &str = "uniview_new_uictl_count_offset";
     pub const NEW_UICTL_REWRITED_OFFSET: &str = "uniview_new_uictl_rewrited_offset";
     pub const NEW_UICTL_ENTRIES_OFFSET: &str = "uniview_new_uictl_entries_offset";
+    pub const NEW_UICTL_COUNT_SHIFT: &str = "uniview_new_uictl_count_shift";
+    pub const NEW_UICTL_UNIT_COUNT_ADJUST: &str = "uniview_new_uictl_unit_count_adjust";
 
     // ── UI-DATA (NEW) ────────────────────────────────────────────────────────────
     pub const UI_DATA_BASE: &str = "uniview_ui_data_base";
@@ -82,6 +85,12 @@ pub mod key {
     pub const DI_HEADER_UNKNOWN_SIZE: &str = "uniview_di_header_unknown_size";
     pub const DI_ENTRIES_OFFSET: &str = "uniview_di_entries_offset";
     pub const DI_ENTRY_SIZE: &str = "uniview_di_entry_size";
+    pub const DI_COUNT_MAX: &str = "uniview_di_count_max";
+
+    // ── disktool .h3crd export ───────────────────────────────────────────────────
+    pub const H3CRD_HEADER_SIZE: &str = "uniview_h3crd_header_size";
+    pub const H3CRD_CONSTANT_OFFSET: &str = "uniview_h3crd_constant_offset";
+    pub const H3CRD_CONSTANT: &str = "uniview_h3crd_constant";
 
     // ── DATA ─────────────────────────────────────────────────────────────────────
     pub const DATA_BLOCK_SIZE: &str = "uniview_data_block_size";
@@ -97,6 +106,7 @@ pub mod key {
 pub mod sig {
     pub const SUPER_MAGIC_OLD: &str = "uniview_super_magic_old";
     pub const SUPER_MAGIC_NEW: &str = "uniview_super_magic_new";
+    pub const H3CRD_EXPORT_TAG: &str = "uniview_h3crd_export_tag";
 }
 
 /// How well a piece of Uniview interpretation is established.
@@ -173,11 +183,19 @@ pub struct UniviewLayout {
     pub old_ui_current_unit_offset: usize,
     pub old_ui_field_04_offset: usize,
     pub old_ui_rewrited_offset: usize,
-    pub old_ui_entries_offset: usize,
+    /// OLD: the 8-byte time-index entry of unit `u` is UI slot `u + addend`, i.e. at
+    /// `UI + (u + 1) * 8`. CONFIRMED from the disktool display and export paths.
+    pub old_ui_unit_entry_slot_addend: u64,
+    /// OLD: written unit count = `UI[+0x00] + adjust` (adjust = -1). CONFIRMED (FLOW).
+    pub old_ui_unit_count_adjust: i64,
     pub new_uictl_current_unit_offset: usize,
     pub new_uictl_count_offset: usize,
     pub new_uictl_rewrited_offset: usize,
     pub new_uictl_entries_offset: usize,
+    /// NEW: UI-CTL entry count = `(UI-CTL[+0x04] >> shift) + 1`. CONFIRMED arithmetic.
+    pub new_uictl_count_shift: u32,
+    /// NEW: written unit count = `UI-CTL[+0x00] + adjust` (adjust = +1). CONFIRMED (FLOW).
+    pub new_uictl_unit_count_adjust: i64,
 
     pub ui_data_base: u64,
     pub ui_data_unit_size: u64,
@@ -198,6 +216,18 @@ pub struct UniviewLayout {
     pub di_header_unknown_size: usize,
     pub di_entries_offset: usize,
     pub di_entry_size: usize,
+    /// Vendor bound on DI `+0x04`. The count includes record 0 (the header), so `0x4000`
+    /// records fill the 256 KiB DI exactly. Above it disktool prints "data index head
+    /// abnormal" and continues.
+    pub di_count_max: u64,
+
+    pub h3crd_header_size: u64,
+    /// Tag at `.h3crd` offset 0 ("iVS8000@huawei-3com"), from the profile signature.
+    pub h3crd_tag: Option<Vec<u8>>,
+    /// Offset of the u32 constant inside the `.h3crd` header. STRONG INFERENCE from the
+    /// export routine's stack-frame layout; checked only as corroboration.
+    pub h3crd_constant_offset: usize,
+    pub h3crd_constant: u32,
 
     pub data_block_size: u64,
     pub sptoi_bits: u32,
@@ -237,11 +267,14 @@ impl UniviewLayout {
             old_ui_current_unit_offset: usize_from(profile, key::OLD_UI_CURRENT_UNIT_OFFSET, 0),
             old_ui_field_04_offset: usize_from(profile, key::OLD_UI_FIELD_04_OFFSET, 4),
             old_ui_rewrited_offset: usize_from(profile, key::OLD_UI_REWRITED_OFFSET, 6),
-            old_ui_entries_offset: usize_from(profile, key::OLD_UI_ENTRIES_OFFSET, 8),
+            old_ui_unit_entry_slot_addend: u64_from(profile, key::OLD_UI_UNIT_ENTRY_SLOT_ADDEND, 1),
+            old_ui_unit_count_adjust: i64_from(profile, key::OLD_UI_UNIT_COUNT_ADJUST, -1),
             new_uictl_current_unit_offset: usize_from(profile, key::NEW_UICTL_CURRENT_UNIT_OFFSET, 0),
             new_uictl_count_offset: usize_from(profile, key::NEW_UICTL_COUNT_OFFSET, 4),
             new_uictl_rewrited_offset: usize_from(profile, key::NEW_UICTL_REWRITED_OFFSET, 0x0C),
             new_uictl_entries_offset: usize_from(profile, key::NEW_UICTL_ENTRIES_OFFSET, 0x10),
+            new_uictl_count_shift: u64_from(profile, key::NEW_UICTL_COUNT_SHIFT, 13).min(63) as u32,
+            new_uictl_unit_count_adjust: i64_from(profile, key::NEW_UICTL_UNIT_COUNT_ADJUST, 1),
 
             ui_data_base: u64_from(profile, key::UI_DATA_BASE, 0x14000),
             ui_data_unit_size: u64_from(profile, key::UI_DATA_UNIT_SIZE, 0x10000),
@@ -262,6 +295,13 @@ impl UniviewLayout {
             di_header_unknown_size: usize_from(profile, key::DI_HEADER_UNKNOWN_SIZE, 8),
             di_entries_offset: usize_from(profile, key::DI_ENTRIES_OFFSET, 0x10),
             di_entry_size: usize_from(profile, key::DI_ENTRY_SIZE, 0x10),
+            di_count_max: u64_from(profile, key::DI_COUNT_MAX, 0x4000),
+
+            h3crd_header_size: u64_from(profile, key::H3CRD_HEADER_SIZE, 0x68),
+            h3crd_tag: magic(profile, sig::H3CRD_EXPORT_TAG),
+            h3crd_constant_offset: usize_from(profile, key::H3CRD_CONSTANT_OFFSET, 0x64),
+            h3crd_constant: u64_from(profile, key::H3CRD_CONSTANT, 0x56B4_C275)
+                .min(u32::MAX as u64) as u32,
 
             data_block_size: u64_from(profile, key::DATA_BLOCK_SIZE, 0x4000),
             sptoi_bits: u64_from(profile, key::SPTOI_BITS, 14).min(32) as u32,
@@ -368,6 +408,63 @@ impl UniviewLayout {
         }
         self.new_unit_base.saturating_sub(self.ui_data_base) / self.ui_data_unit_size
     }
+
+    /// Written unit count from the raw UI / UI-CTL `+0x00` value, with the vendor's
+    /// generation-specific adjustment: OLD `raw - 1`, NEW `raw + 1` (disktool FLOW).
+    ///
+    /// Signed, because a raw OLD value of 0 yields -1: that is reported, not clamped.
+    pub fn unit_count_from_raw(&self, generation: Generation, raw: u32) -> i64 {
+        let adjust = match generation {
+            Generation::Old => self.old_ui_unit_count_adjust,
+            Generation::New => self.new_uictl_unit_count_adjust,
+        };
+        i64::from(raw).saturating_add(adjust)
+    }
+
+    /// NEW UI-CTL time-index entry count: `(raw >> shift) + 1`.
+    pub fn uictl_entry_count(&self, raw_04: u32) -> u64 {
+        u64::from(raw_04)
+            .checked_shr(self.new_uictl_count_shift)
+            .unwrap_or(0)
+            .saturating_add(1)
+    }
+
+    /// OLD: physical offset of unit `u`'s 8-byte time-index entry, `UI + (u + 1) * 8`.
+    ///
+    /// `None` for unit 0, on overflow, or when the entry would not lie inside the UI region.
+    pub fn old_ui_unit_entry_offset(&self, unit: u32) -> Option<u64> {
+        if unit == 0 {
+            return None;
+        }
+        let slot = u64::from(unit).checked_add(self.old_ui_unit_entry_slot_addend)?;
+        let rel = slot.checked_mul(self.ui_entry_size as u64)?;
+        if rel.checked_add(self.ui_entry_size as u64)? > self.ui_size {
+            return None;
+        }
+        self.ui_offset.checked_add(rel)
+    }
+
+    /// NEW: `(UI-DATA unit n, slot, physical offset)` of unit `u`'s time-index entry.
+    ///
+    /// The global UI-DATA entry index is `u - 1`, so `n = (u - 1) >> 13` and
+    /// `slot = (u - 1) & 0x1FFF` (0x2000 entries per UI-DATA unit). CONFIRMED from the
+    /// export path.
+    pub fn new_ui_data_unit_entry(&self, unit: u32) -> Option<(u64, u64, u64)> {
+        let index = u64::from(unit.checked_sub(1)?);
+        let per = self.ui_data_entries_per_unit as u64;
+        if per == 0 {
+            return None;
+        }
+        let n = index / per;
+        let slot = index % per;
+        if n >= self.ui_data_capacity() {
+            return None;
+        }
+        let off = self
+            .ui_data_offset(n)?
+            .checked_add(slot.checked_mul(self.ui_entry_size as u64)?)?;
+        Some((n, slot, off))
+    }
 }
 
 /// Read a non-negative `[layout]` value, falling back to the documented default.
@@ -376,6 +473,11 @@ pub fn u64_from(profile: &OemProfile, key: &str, fallback: u64) -> u64 {
         Some(v) if *v >= 0 => *v as u64,
         _ => fallback,
     }
+}
+
+/// Read a signed `[layout]` value, for generation adjustments that are legitimately negative.
+pub fn i64_from(profile: &OemProfile, key: &str, fallback: i64) -> i64 {
+    profile.layout.get(key).copied().unwrap_or(fallback)
 }
 
 /// [`u64_from`] narrowed to `usize` for slice indexing, saturating.
@@ -526,8 +628,51 @@ mod tests {
         );
         assert_eq!(l.data_offset(Generation::New, 1, 0x4000), None, "SPtoI is 14-bit");
         assert_eq!(l.di_max_entries(), 16_383);
+        assert_eq!(l.di_count_max, 0x4000);
+        assert_eq!(l.di_count_max * l.di_entry_size as u64, l.di_size, "0x4000 records fill DI");
         assert_eq!(l.ui_data_capacity(), 4096);
         assert_eq!(l.ui_data_offset(2), Some(0x14000 + 2 * 0x10000));
+    }
+
+    #[test]
+    fn unit_numbering_is_generation_specific() {
+        let l = UniviewLayout::from_profile(&uniview_profile());
+        assert_eq!(l.unit_count_from_raw(Generation::Old, 5), 4, "OLD: raw - 1");
+        assert_eq!(l.unit_count_from_raw(Generation::New, 5), 6, "NEW: raw + 1");
+        assert_eq!(l.unit_count_from_raw(Generation::Old, 0), -1, "reported, not clamped");
+        assert_eq!(l.unit_count_from_raw(Generation::New, u32::MAX), u32::MAX as i64 + 1);
+        assert_eq!(l.uictl_entry_count(0), 1);
+        assert_eq!(l.uictl_entry_count(0x1FFF), 1);
+        assert_eq!(l.uictl_entry_count(0x2000), 2);
+        assert_eq!(l.uictl_entry_count(u32::MAX), (u32::MAX as u64 >> 13) + 1);
+    }
+
+    #[test]
+    fn old_ui_unit_time_index_addressing() {
+        let l = UniviewLayout::from_profile(&uniview_profile());
+        assert_eq!(l.old_ui_unit_entry_offset(1), Some(0x4000 + 2 * 8));
+        assert_eq!(l.old_ui_unit_entry_offset(7), Some(0x4000 + 8 * 8));
+        assert_eq!(l.old_ui_unit_entry_offset(0), None);
+        // The last slot that fits in the 64 KiB UI region is 0x1FFF, i.e. unit 0x1FFE.
+        assert_eq!(l.old_ui_unit_entry_offset(0x1FFE), Some(0x4000 + 0x1FFF * 8));
+        assert_eq!(l.old_ui_unit_entry_offset(0x1FFF), None);
+    }
+
+    #[test]
+    fn new_ui_data_unit_slot_addressing() {
+        let l = UniviewLayout::from_profile(&uniview_profile());
+        assert_eq!(l.new_ui_data_unit_entry(1), Some((0, 0, 0x14000)));
+        assert_eq!(l.new_ui_data_unit_entry(2), Some((0, 1, 0x14008)));
+        assert_eq!(l.new_ui_data_unit_entry(0x2000), Some((0, 0x1FFF, 0x14000 + 0x1FFF * 8)));
+        assert_eq!(l.new_ui_data_unit_entry(0x2001), Some((1, 0, 0x24000)));
+        for u in [1u32, 77, 0x2001, 0x9ABC] {
+            let (n, slot, off) = l.new_ui_data_unit_entry(u).unwrap();
+            assert_eq!(n, u64::from(u - 1) >> 13);
+            assert_eq!(slot, u64::from(u - 1) & 0x1FFF);
+            assert_eq!(off, 0x14000 + u64::from(u - 1) * 8, "units are contiguous across UI-DATA");
+        }
+        assert_eq!(l.new_ui_data_unit_entry(0), None);
+        assert_eq!(l.new_ui_data_unit_entry(4096 * 0x2000 + 1), None, "beyond UI-DATA capacity");
     }
 
     #[test]

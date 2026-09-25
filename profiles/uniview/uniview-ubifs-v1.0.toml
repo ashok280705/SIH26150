@@ -1,5 +1,5 @@
 profile_id = "uniview-ubifs-v1.0"
-profile_version = "2.0.0"
+profile_version = "2.1.0"
 schema_version = "1.0"
 oem = "uniview"
 # The Uniview recorder filesystem is a proprietary SUPER / UI / DI / DATA layout, not UBIFS.
@@ -45,6 +45,22 @@ explanation = "Uniview SUPER magic 0x1587 (u32 LE at offset 0): NEW generation l
 type = "exact"
 offset = 0
 
+# disktool `-r data` export (.h3crd). Not a raw-disk signature: consulted only when neither
+# SUPER magic matches, and the evidence is then labelled a normalized export artifact. The
+# tag is the 20-byte NUL-terminated string the export routine copies into its 0x68-byte
+# header (dwords 38535669h 40303030h 77617568h 332D6965h 006D6F63h).
+[[signatures]]
+name = "uniview_h3crd_export_tag"
+pattern_hex = "69 56 53 38 30 30 30 40 68 75 61 77 65 69 2D 33 63 6F 6D" # "iVS8000@huawei-3com"
+evidence_status = "validated"
+weight = 0.85
+is_exclusive = true
+explanation = "Uniview/H3C disktool .h3crd export header tag at offset 0: an OLD-shaped single-unit exported artifact, not a physical disk."
+
+[[signatures.offset_constraints]]
+type = "exact"
+offset = 0
+
 # =================================================================================
 # Validation rules
 # =================================================================================
@@ -57,9 +73,29 @@ weight = 0.85
 
 [[validation_rules]]
 name = "di_count_within_capacity"
-description = "A DI header's declared entry count does not exceed (0x40000 - 0x10) / 0x10 = 16383."
+description = "A DI header's record count (including record 0, the header) does not exceed the vendor bound 0x4000; 0x4000 records fill the 0x40000-byte DI exactly. Above it disktool prints 'data index head abnormal' and continues."
 evidence_status = "validated"
 weight = 0.20
+
+# Structural corroboration evaluated by the detector. Never required: the SUPER magic alone
+# identifies the filesystem; a failed check is reported as a degraded filesystem warning.
+[[validation_rules]]
+name = "ui_header_plausible"
+description = "UI (OLD +0x06) / UI-CTL (NEW +0x0C) u16 rewrited flag is 0 or 1, and the raw current-unit value yields a written-unit count in 0..=max units."
+evidence_status = "provisional"
+weight = 0.10
+
+[[validation_rules]]
+name = "di_head_count_within_vendor_bound"
+description = "Unit 1's DI record count at +0x04 is <= 0x4000 (disktool's own check)."
+evidence_status = "validated"
+weight = 0.10
+
+[[validation_rules]]
+name = "di_first_entry_decodes"
+description = "Unit 1's DI record 1 carries a calendar-valid packed timestamp and an SPtoI >= 16 (beyond the DI blocks)."
+evidence_status = "provisional"
+weight = 0.15
 
 [[validation_rules]]
 name = "sptoi_selects_data"
@@ -110,17 +146,26 @@ uniview_ui_size = 65536                         # C 0x10000
 uniview_ui_entry_size = 8                       # C
 uniview_old_ui_current_unit_offset = 0          # C current writing unit index
 uniview_old_ui_field_04_offset = 4              # C location; u16 meaning UNKNOWN
-uniview_old_ui_rewrited_offset = 6              # C rewrited flag
-uniview_old_ui_entries_offset = 8               # T entry table base, not established
+uniview_old_ui_rewrited_offset = 6              # C u16 rewrited flag (ldrh)
+# Unit u's 8-byte time-index entry is UI slot u + 1, i.e. UI + (u + 1) * 8.      (C)
+uniview_old_ui_unit_entry_slot_addend = 1
+# Written unit count = UI[+0x00] - 1 (disktool FLOW).                            (C)
+uniview_old_ui_unit_count_adjust = -1
 uniview_new_uictl_current_unit_offset = 0       # C current unit index
 uniview_new_uictl_count_offset = 4              # C count/scaling field (raw)
-uniview_new_uictl_rewrited_offset = 12          # C 0x0C rewrited flag
-uniview_new_uictl_entries_offset = 16           # C 0x10 time-index entries
+uniview_new_uictl_rewrited_offset = 12          # C 0x0C u16 rewrited flag (ldrh)
+uniview_new_uictl_entries_offset = 16           # C 0x10 time-index entries, numbered 0..
+# UI-CTL entry count = (UI-CTL[+0x04] >> 13) + 1.                               (C arithmetic)
+uniview_new_uictl_count_shift = 13
+# Written unit count = UI-CTL[+0x00] + 1 (disktool FLOW).                        (C)
+uniview_new_uictl_unit_count_adjust = 1
 
 # ── UI-DATA (NEW) ────────────────────────────────────────────────────────────────
 uniview_ui_data_base = 81920                    # C 0x14000
 uniview_ui_data_unit_size = 65536               # C 0x10000
 uniview_ui_data_entries_per_unit = 8192         # C 0x2000 8-byte entries
+# Storage unit u's time-index entry is UI-DATA global index u - 1:
+#   n = (u - 1) >> 13, slot = (u - 1) & 0x1FFF                                  (C)
 # Performance bound on UI-DATA units summarised per read. The geometry allows
 # (0x10014000 - 0x14000) / 0x10000 = 4096; the bound is deliberately not smaller.
 uniview_ui_data_scan_max_units = 4096
@@ -143,6 +188,16 @@ uniview_di_header_unknown_offset = 8            # C location; meaning UNKNOWN
 uniview_di_header_unknown_size = 8
 uniview_di_entries_offset = 16                  # C 0x10
 uniview_di_entry_size = 16                      # C 0x10
+# Vendor bound on DI +0x04. The count includes record 0 (the header): entries are records
+# 1 .. count-1, and 0x4000 records fill the DI region exactly.                  (C)
+uniview_di_count_max = 16384
+
+# ── disktool .h3crd export ───────────────────────────────────────────────────────
+# 0x00000 header (0x68), 0x04000 UI copy, 0x14000 DI copy (count = copied entries, SPtoI
+# re-based to start at 16), 0x54000 raw DATA. An OLD-shaped single-unit artifact.
+uniview_h3crd_header_size = 104                 # C 0x68
+uniview_h3crd_constant_offset = 100             # S 0x64, from the export routine's frame layout
+uniview_h3crd_constant = 1454686837             # C 0x56B4C275 (meaning UNKNOWN)
 
 # ── DATA ─────────────────────────────────────────────────────────────────────────
 uniview_data_block_size = 16384                 # C 0x4000

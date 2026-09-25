@@ -103,7 +103,7 @@ fn parsing_orchestrator_runs_every_uniview_stage() {
     assert_eq!(result.parser_runs.len(), 5);
     for run in &result.parser_runs {
         assert_eq!(run.parser_id, "uniview-super-di-parser");
-        assert_eq!(run.validation_state.state, ValidationStateKind::Pass, "{}: {}", run.operation, run.validation_state.reason);
+        assert_eq!(run.validation_state.state, ValidationStateKind::Pass, "{}: {}", run.operation_name, run.validation_state.reason);
     }
     assert_eq!(result.recordings.len(), 1);
     assert_eq!(result.timeline_events.len(), 1);

@@ -173,7 +173,10 @@ impl UniviewParser {
         let lower_bound: u64 = u
             .span_basis_counts
             .iter()
-            .filter(|(k, _)| k.as_str() != SpanBasis::AdjacentSptoi.label())
+            .filter(|(k, _)| {
+                k.as_str() != SpanBasis::AdjacentSptoi.label()
+                    && k.as_str() != SpanBasis::ExportDataEnd.label()
+            })
             .map(|(_, v)| *v)
             .sum();
         if lower_bound > 0 {
@@ -214,7 +217,9 @@ impl Parser for UniviewParser {
     ) -> Result<Vec<ParserRun>, ForensicError> {
         let vol = volume::read_volume(reader, profile)?;
         let state = match &vol.super_block.recognition {
-            SuperRecognition::Recognized { .. } => vol.evidence.clone(),
+            SuperRecognition::Recognized { .. } | SuperRecognition::H3crdExport { .. } => {
+                vol.evidence.clone()
+            }
             other => other.validation(),
         };
         Ok(vec![self.run(profile, "parse_filesystem", state)])
@@ -244,10 +249,15 @@ impl Parser for UniviewParser {
             if let Some(ix) = volume::recording_index(&vol)? {
                 parts.push(ix.evidence.reason.clone());
             }
+            parts.push(format!("vendor FLOW: {}", vol.vendor_flow().label()));
             parts.push(format!(
-                "FLOW (calculated) = {} byte(s)",
-                vol.flow_total_write_bytes()
+                "filesystem-scan total of DI +0x00 over every unit in the image (not the vendor \
+                 FLOW) = {} byte(s)",
+                vol.scan_total_write_bytes()
             ));
+            if vol.is_h3crd_export() {
+                parts.push(vol.source_label().to_string());
+            }
             let clean = vol.is_usable()
                 && vol.ui.as_ref().is_some_and(|u| u.evidence.state == ValidationStateKind::Pass)
                 && vol.ui_data.as_ref().is_none_or(|d| d.evidence.state == ValidationStateKind::Pass)
@@ -407,12 +417,16 @@ impl Parser for UniviewParser {
         }
         let mut findings = vec![vol.evidence.reason.clone()];
         let count = |f: &dyn Fn(&UnitRecord) -> bool| vol.units.iter().filter(|u| f(u)).count();
-        let malformed = count(&|u| matches!(u.header_state, DiHeaderState::CountExceedsCapacity { .. }));
+        let abnormal = count(&|u| matches!(u.header_state, DiHeaderState::CountAbnormal { .. }));
         let truncated = count(&|u| matches!(u.header_state, DiHeaderState::Truncated { .. }));
         let bad_ts: u64 = vol.units.iter().map(|u| u.invalid_timestamps).sum();
         let bad_sptoi: u64 = vol.units.iter().map(|u| u.sptoi_into_di + u.sptoi_outside_image).sum();
-        if malformed > 0 {
-            findings.push(format!("{malformed} unit(s) declare a DI entry count beyond the DI capacity; their entries were not indexed"));
+        if abnormal > 0 {
+            findings.push(format!(
+                "{abnormal} unit(s): {} (record count above the vendor bound); parsing continued \
+                 over every non-blank record the DI region holds",
+                crate::di::DI_HEAD_ABNORMAL
+            ));
         }
         if truncated > 0 {
             findings.push(format!("{truncated} unit(s) have a DI region truncated by the end of the image"));
@@ -453,7 +467,9 @@ impl Parser for UniviewParser {
         }
         let buf = reader.read_exact_at(0, need)?;
         let Some(count) = u32_at(&buf, l.di_entry_count_offset) else { return Ok(false) };
-        if count == 0 || u64::from(count) > l.di_max_entries() {
+        // The count includes record 0, so at least one entry needs a count of 2; above the
+        // vendor bound the header is abnormal and is not recognised as sound.
+        if count < 2 || u64::from(count) > l.di_count_max {
             return Ok(false);
         }
         let e = &buf[l.di_entries_offset..];
@@ -590,13 +606,16 @@ mod tests {
     fn recognition_rests_on_a_di_header_and_never_on_raw_data() {
         let p = uniview_profile();
         let parser = UniviewParser::default();
-        let di = build::di_region(10, 1, &[build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 16, [0; 8])]);
+        let di = build::di_region(10, 2, &[build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 16, [0; 8])]);
         assert!(parser.recognize_candidate(&SparseReader::new(0x4000).with(0, &di), &p).unwrap());
         for data in [vec![0u8; 0x4000], vec![0xFF; 0x4000], build::data_block(3)] {
             let r = SparseReader::new(0x4000).with(0, &data);
             assert!(!parser.recognize_candidate(&r, &p).unwrap());
         }
-        let bad = build::di_region(10, 1, &[build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 3, [0; 8])]);
+        let bad = build::di_region(10, 2, &[build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 3, [0; 8])]);
+        assert!(!parser.recognize_candidate(&SparseReader::new(0x4000).with(0, &bad), &p).unwrap());
+        // A count of 1 is the header alone: nothing to recognise.
+        let bad = build::di_region(10, 1, &[build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 16, [0; 8])]);
         assert!(!parser.recognize_candidate(&SparseReader::new(0x4000).with(0, &bad), &p).unwrap());
         assert!(!parser.recognize_candidate(&SparseReader::new(4), &p).unwrap());
     }
