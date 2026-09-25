@@ -65,11 +65,16 @@ pub fn get_all_capabilities(registry: &ProfileRegistry) -> HashMap<String, Capab
             CapabilityStage::NotImplemented,
             CapabilityStage::NotImplemented,
         ),
+        // Uniview: SUPER magic (OLD 0x1367 / NEW 0x1587), UI / UI-CTL / UI-DATA, per-unit DI with
+        // SPtoI -> DATA block resolution, raw hashed DATA extraction, and disktool .h3crd exports.
+        // `Partial` because the structure set has been exercised against synthetic images built
+        // from the reverse-engineered layout only, and the DATA codec/framing is unknown, so
+        // reconstruction and validation stop at raw DATA ranges.
         (
             "uniview",
-            CapabilityStage::NotImplemented,
-            CapabilityStage::NotImplemented,
-            CapabilityStage::NotImplemented,
+            CapabilityStage::Partial,
+            CapabilityStage::Partial,
+            CapabilityStage::Partial,
         ),
         (
             "godrej",

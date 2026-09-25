@@ -11,7 +11,7 @@ const OEM_LABELS: Record<string, string> = {
   tplink: 'TP-Link (VIGI)',
   honeywell: 'Honeywell (MAXPRO / MAXPRO_NVR)',
   cp_plus: 'CP Plus / UBS (CPPLUS_UBS)',
-  uniview: 'Uniview (UBIFS / UNV)',
+  uniview: 'Uniview (SUPER / DI)',
   godrej: 'Godrej',
   matrix: 'Matrix',
 };

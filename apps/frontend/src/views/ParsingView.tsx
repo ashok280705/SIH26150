@@ -21,7 +21,7 @@ const MANUAL_PARSERS: { key: string; label: string; family: string }[] = [
   { key: 'hikvision', label: 'Hikvision (HIKVISION_FS)', family: 'HIKVISION_FS' },
   { key: 'honeywell', label: 'Honeywell (MAXPRO)', family: 'MAXPRO' },
   { key: 'cpplus_ubs', label: 'CP Plus / UBS', family: 'UBS' },
-  { key: 'uniview', label: 'Uniview (UBIFS)', family: 'UBIFS' },
+  { key: 'uniview', label: 'Uniview (SUPER / DI)', family: 'UNIVIEW_FS' },
   { key: 'tplink', label: 'TP-Link VIGI NVR', family: 'TPLINK_VIGI_NVR' },
   { key: 'unified', label: 'Unified Fallback (generic carver)', family: 'GENERIC' },
 ];
@@ -438,7 +438,7 @@ export const ParsingView: React.FC<ParsingViewProps> = ({
             <div>
               <strong>No Proprietary DVR File Structure Detected</strong>
               <div className="text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>
-                This image currently does not match the known Dahua (DHFS), Hikvision (HIKVISION@HANGZHOU boot identifier with a HIKBTREE index), Uniview (UBIFS), or CP Plus structures at their documented offsets.
+                This image currently does not match the known Dahua (DHFS), Hikvision (HIKVISION@HANGZHOU boot identifier with a HIKBTREE index), Uniview (SUPER magic 0x1367 / 0x1587), or CP Plus structures at their documented offsets.
                 You can run a full signature scan on the <strong>Detection</strong> page or inspect raw sectors in the <strong>Byte Inspector</strong>.
               </div>
             </div>
