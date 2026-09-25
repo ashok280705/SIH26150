@@ -89,21 +89,22 @@ pub fn validate_and_order_frames(mut frames: Vec<VideoFrame>) -> FrameOrderingRe
         )
         .unwrap()
     } else if !gaps.is_empty() {
+        // (state, reason, operation, subject): the reason is what an examiner reads.
         ValidationState::new(
             ValidationStateKind::Review,
-            "validate_and_order_frames",
             format!("{} gap(s) detected", gaps.len()),
+            "validate_and_order_frames",
             "Frames",
         )
-        .unwrap()
+        .expect("formatted reason is non-empty")
     } else {
         ValidationState::new(
             ValidationStateKind::Pass,
-            "validate_and_order_frames",
             "All frames valid and ordered",
+            "validate_and_order_frames",
             "Frames",
         )
-        .unwrap()
+        .expect("static reason is non-empty")
     };
 
     FrameOrderingResult {
@@ -123,15 +124,15 @@ pub fn check_ffmpeg_availability() -> ValidationState {
     {
         Ok(output) if output.status.success() => ValidationState::new(
             ValidationStateKind::Pass,
-            "check_ffmpeg",
             "FFmpeg available for remux",
+            "check_ffmpeg",
             "FFmpeg",
         )
-        .unwrap(),
+        .expect("static reason is non-empty"),
         _ => ValidationState::new(
             ValidationStateKind::Unknown,
-            "check_ffmpeg",
             "FFmpeg not available; remux/transmux cannot be performed",
+            "check_ffmpeg",
             "FFmpeg",
         )
         .unwrap(),

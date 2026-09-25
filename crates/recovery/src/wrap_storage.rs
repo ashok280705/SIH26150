@@ -45,21 +45,22 @@ pub fn detect_wrap_boundary(
     };
 
     let validation = if has_overwrite_evidence {
+        // (state, reason, operation, subject): the reason is what an examiner reads.
         ValidationState::new(
             ValidationStateKind::Review,
-            "detect_wrap_boundary",
             "Wrap boundary detected with physical overwrite evidence",
+            "detect_wrap_boundary",
             "WrapStorage",
         )
-        .unwrap()
+        .expect("static reason is non-empty")
     } else {
         ValidationState::new(
             ValidationStateKind::Pass,
-            "detect_wrap_boundary",
             "Wrap boundary detected; no overwrite evidence at boundary",
+            "detect_wrap_boundary",
             "WrapStorage",
         )
-        .unwrap()
+        .expect("static reason is non-empty")
     };
 
     Some(WrapBoundary {

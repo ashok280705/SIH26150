@@ -518,8 +518,35 @@ pub async fn get_ffmpeg_status(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let status = state.ffmpeg_service.status();
-    Ok(Json(serde_json::to_value(status).unwrap()))
+    let mut value = serde_json::to_value(status).unwrap();
+    // The media subsystem discovers ffmpeg/ffprobe independently and reports what it can
+    // actually do: decoding is only listed when ffmpeg is present, image processing names the
+    // backend this binary was compiled with, and AI reports its real configured state.
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "media_subsystem".to_string(),
+            state.media_pipeline.toolchain().status(),
+        );
+        obj.insert(
+            "ai_analysis".to_string(),
+            serde_json::json!(state.media_pipeline.analysis().status()),
+        );
+    }
+    Ok(Json(value))
 }
+
+/// Frames decoded for the synchronous reconstruct response.
+///
+/// A bound, not a policy: the media subsystem supports sequential, sampled and time-range
+/// extraction, and a batch or background caller can ask for more. This keeps one HTTP request
+/// from decoding an entire recording.
+const MEDIA_PREVIEW_FRAME_LIMIT: u64 = 12;
+
+/// Frames whose pixel buffers are retained for the analysis boundary.
+///
+/// Metadata is produced for every decoded frame; only this many pictures are held in memory at
+/// once, so peak usage does not scale with recording length.
+const MEDIA_RETAINED_FRAMES: usize = 4;
 
 /// One physical byte range, as supplied by a caller that already knows where the bytes are.
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -1009,6 +1036,8 @@ pub async fn reconstruct_recording(
 
     // 6. Invoke FFmpeg stream-copy remux
     let mut remux_response = None;
+    let mut remux_error: Option<String> = None;
+    let mut remux_artifact_path: Option<std::path::PathBuf> = None;
     let ffmpeg_status = state.ffmpeg_service.status();
 
     if ffmpeg_status.available
@@ -1087,12 +1116,112 @@ pub async fn reconstruct_recording(
                     "validation_state": remux_res.validation_state,
                     "video_url": format!("/api/artifacts/{}/video", remux_art_id.0),
                 }));
+                remux_artifact_path = Some(mp4_path.clone());
             }
             Err(e) => {
+                // A failed remux is reported to the caller. Returning `null` with no reason
+                // leaves the UI unable to distinguish "not attempted" from "attempted and
+                // failed", which are different forensic facts.
                 tracing::warn!("FFmpeg stream-copy remux failed: {e}");
+                remux_error = Some(e.to_string());
             }
         }
+    } else if !ffmpeg_status.available {
+        remux_error = Some("FFMPEG_UNAVAILABLE: ffmpeg was not found on this host".to_string());
+    } else {
+        remux_error = Some(format!(
+            "UNSUPPORTED_CODEC: stream-copy containerization is not supported for {codec:?}"
+        ));
     }
+
+    // 7. Downstream media pipeline: validate the DERIVED container with ffprobe, decode real
+    //    frames with FFmpeg, and run the image-processing stage over them.
+    //
+    //    This reads only the derived artifact. The evidence image is never reopened here, and
+    //    nothing in the media subsystem has a write path to it.
+    //
+    //    When there is no derived container to work on, the stage reports why rather than
+    //    leaving a blank the UI could read as success.
+    let media_report = if let Some(ref mp4_path) = remux_artifact_path {
+        let provenance = media::MediaProvenance::new(evidence_id)
+            .with_regions(
+                source_regions
+                    .iter()
+                    .map(|r| media::SourceByteRange {
+                        offset: r.offset,
+                        length: r.length,
+                    })
+                    .collect(),
+            )
+            .with_upstream("recovery::VideoReconstructor", Some(rec_id_raw.clone()));
+
+        match media::MediaArtifact::from_derived_file(
+            remux_response
+                .as_ref()
+                .and_then(|r| r["artifact_id"].as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            mp4_path,
+            media::ReconstructionMethod::ContainerRemux,
+            provenance,
+        ) {
+            Ok(mut artifact) => {
+                // Sample rather than decode every frame: a synchronous API request must not
+                // decode an hour of footage. One frame per second, capped, and rescaled by
+                // FFmpeg itself so peak memory is bounded regardless of the source resolution.
+                let request = media::DecodeRequest::every_n_seconds(1.0)
+                    .with_max_frames(MEDIA_PREVIEW_FRAME_LIMIT)
+                    .with_target_size(640, 360);
+                let plan = media::ProcessingPlan {
+                    measure_quality: true,
+                    ..Default::default()
+                };
+                let report = state
+                    .media_pipeline
+                    .run(&mut artifact, &request, &plan, MEDIA_RETAINED_FRAMES)
+                    .await;
+                let mut summary = report.status_summary();
+                if let Some(obj) = summary.as_object_mut() {
+                    obj.insert("artifact_summary".to_string(), artifact.summary());
+                    obj.insert(
+                        "decode".to_string(),
+                        serde_json::to_value(&report.decode).unwrap_or(serde_json::Value::Null),
+                    );
+                    obj.insert(
+                        "validation_checks".to_string(),
+                        serde_json::to_value(&report.validation.checks)
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                    obj.insert(
+                        "frames".to_string(),
+                        serde_json::Value::Array(report.frame_metadata.clone()),
+                    );
+                }
+                summary
+            }
+            Err(e) => serde_json::json!({
+                "validation_status": "MEDIA_NOT_FOUND",
+                "validated": false,
+                "decoded": false,
+                "frames_extracted": 0,
+                "ai_analyzed": false,
+                "ai_status": media::AI_NOT_CONFIGURED,
+                "errors": [format!("the remuxed container could not be opened: {e}")],
+            }),
+        }
+    } else {
+        serde_json::json!({
+            "validation_status": "VALIDATION_NOT_RUN",
+            "validated": false,
+            "decoded": false,
+            "frames_extracted": 0,
+            "ai_analyzed": false,
+            "ai_status": media::AI_NOT_CONFIGURED,
+            "errors": [remux_error
+                .clone()
+                .unwrap_or_else(|| "no derived container was produced".to_string())],
+        })
+    };
 
     let result = serde_json::json!({
         "recording_id": rec_id_raw,
@@ -1108,6 +1237,8 @@ pub async fn reconstruct_recording(
             "size_bytes": raw_payload.len(),
         },
         "remux": remux_response,
+        "remux_error": remux_error,
+        "media_pipeline": media_report,
         "ffmpeg_status": ffmpeg_status,
     });
 

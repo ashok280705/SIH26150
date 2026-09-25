@@ -457,8 +457,8 @@ fn a_multi_block_recording_reconstructs_into_an_ordered_exportable_stream() {
         evidence_id,
         native_region,
         stream.clone(),
-        false,
-        false,
+        // No decode test was run in this export path, so the outcome must be UNKNOWN.
+        None,
     );
     assert_eq!(out.native_artifact.evidence_id, evidence_id);
     assert_eq!(out.native_artifact.region, native_region);

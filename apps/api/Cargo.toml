@@ -23,6 +23,10 @@ detection = { path = "../../crates/detection" }
 confidence = { path = "../../crates/confidence" }
 parsing = { path = "../../crates/parsing" }
 recovery = { path = "../../crates/recovery" }
+# The downstream media subsystem: validation, FFmpeg decode, standardized frames, image
+# processing and the AI boundary. It carries no OEM knowledge, so wiring it here does not
+# give the API a second route into parser behaviour.
+media = { path = "../../crates/media" }
 timeline = { path = "../../crates/timeline" }
 pipeline = { path = "../../crates/pipeline" }
 reporting = { path = "../../crates/reporting" }

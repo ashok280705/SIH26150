@@ -120,9 +120,12 @@ pub enum IndexAuthority {
         /// outside it are not governed by this index.
         governs: Region,
     },
-    /// The index was located but is incomplete, partially unreadable, or its declared
-    /// entry count disagrees with what could be parsed. Absence from a partial index
+    /// The index was located but is incomplete: part of it was unreadable, an integrity
+    /// marker failed, or a declared entry could not be decoded. Absence from a partial index
     /// proves nothing.
+    ///
+    /// A declared entry count *larger* than the number of recordings produced is not by
+    /// itself grounds for this: see [`RecordingIndex::declared_entry_count`].
     Partial { reason: String },
     /// No index structure was located, or this OEM path cannot read one.
     NotFound { reason: String },
@@ -213,6 +216,17 @@ pub struct RecordingIndex {
     #[serde(default)]
     pub unreferenced_recordings: Vec<IndexedRecording>,
     /// Entry count the index header itself declared, if it declares one.
+    ///
+    /// This is the count the *structure* declares, which for a slot-table format is the
+    /// number of slots rather than the number of recordings. A free or unused slot correctly
+    /// yields no [`IndexedRecording`], so `recordings.len() + unreferenced_recordings.len()`
+    /// is normally **less** than this and that is not evidence of a partial read. The
+    /// universal contract therefore requires only that a parser never produce *more*
+    /// recordings than the structure declares.
+    ///
+    /// [`IndexAuthority::Partial`] is for an index the parser could not finish reading — an
+    /// unreadable region, a failed integrity marker, a slot it could not decode — which the
+    /// parser knows and this count alone cannot express.
     pub declared_entry_count: Option<usize>,
     /// Physical extent of the index structure.
     pub index_region: Option<Region>,

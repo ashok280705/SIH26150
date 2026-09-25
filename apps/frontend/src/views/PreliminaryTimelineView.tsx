@@ -3,7 +3,9 @@ import {
   ListTree, RefreshCw, HardDrive, CheckCircle2, AlertTriangle, ArrowRight,
   Film, Clock, Scissors, Video, Play, ChevronUp, ChevronDown, Filter, Calendar, Wrench,
 } from 'lucide-react';
-import { Evidence, PipelineRun, RecordingSession, GapRecoveryTarget } from '../types';
+import {
+  Evidence, PipelineRun, RecordingSession, GapRecoveryTarget, ReconstructResponse,
+} from '../types';
 import { runFullPipeline, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { VideoPlayer } from '../components/video/VideoPlayer';
@@ -210,6 +212,19 @@ interface Props {
   onWorkflow?: (patch: Partial<WorkflowState>) => void;
 }
 
+/**
+ * The reason no playable container exists, as the server reported it.
+ *
+ * The previous message named FFmpeg's absence unconditionally, which was a guess: a remux can
+ * also fail because the codec cannot be stream-copied or because FFmpeg ran and errored. The
+ * server now sends the actual reason in `remux_error`, so it is shown verbatim rather than
+ * substituted.
+ */
+function remuxUnavailableMessage(res: ReconstructResponse): string {
+  const base = 'Elementary stream extracted and hashed, but no playable MP4 was produced';
+  return res.remux_error ? `${base}: ${res.remux_error}` : `${base}.`;
+}
+
 export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, onWorkflow, onNavigateToHex, onNavigateToRecovery }) => {
   const [run, setRun] = useState<PipelineRun | null>(null);
   const [loading, setLoading] = useState(false);
@@ -356,9 +371,7 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
         });
       } else {
         setActivePlayback(null);
-        setPlayError(
-          'Elementary stream extracted and hashed, but FFmpeg is unavailable on the host to remux a playable MP4.'
-        );
+        setPlayError(remuxUnavailableMessage(res));
       }
     } catch (err: any) {
       setActivePlayback(null);

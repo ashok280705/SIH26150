@@ -148,37 +148,59 @@ impl FfmpegService {
             ForensicError::io(format!("Spawning FFmpeg at '{}'", ffmpeg_bin.display()), e)
         })?;
 
-        let stderr = child.stderr.take();
-        let run_result = if let Some(token) = cancel {
-            tokio::select! {
-                status_res = child.wait() => {
-                    let mut stderr_bytes = Vec::new();
-                    if let Some(mut s) = stderr {
-                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut stderr_bytes).await;
+        let mut stderr = child.stderr.take();
+
+        // `options.timeout_secs` is a real budget, not a recorded intention: the wait below is
+        // wrapped in it, and when it expires the child is killed and reaped. A configured
+        // timeout that never terminates anything reads as a safety control in review while
+        // providing none, so it is enforced here rather than merely stored.
+        let timeout = options
+            .timeout_secs
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(std::time::Duration::MAX);
+
+        let wait_for_exit = async {
+            if let Some(token) = cancel {
+                tokio::select! {
+                    status_res = child.wait() => {
+                        let stderr_bytes = drain(&mut stderr).await;
+                        status_res.map(|status| (status, stderr_bytes, false))
                     }
-                    status_res.map(|status| (status, stderr_bytes, false))
+                    _ = async {
+                        while !token.is_cancelled() {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                    } => {
+                        let _ = child.kill().await;
+                        let status_res = child.wait().await;
+                        let stderr_bytes = drain(&mut stderr).await;
+                        status_res.map(|status| (status, stderr_bytes, true))
+                    }
                 }
-                _ = async {
-                    while !token.is_cancelled() {
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    }
-                } => {
-                    let _ = child.kill().await;
-                    let status_res = child.wait().await;
-                    let mut stderr_bytes = Vec::new();
-                    if let Some(mut s) = stderr {
-                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut stderr_bytes).await;
-                    }
-                    status_res.map(|status| (status, stderr_bytes, true))
-                }
+            } else {
+                let status_res = child.wait().await;
+                let stderr_bytes = drain(&mut stderr).await;
+                status_res.map(|status| (status, stderr_bytes, false))
             }
-        } else {
-            let status_res = child.wait().await;
-            let mut stderr_bytes = Vec::new();
-            if let Some(mut s) = stderr {
-                let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut stderr_bytes).await;
+        };
+
+        let run_result = match tokio::time::timeout(timeout, wait_for_exit).await {
+            Ok(res) => res,
+            Err(_elapsed) => {
+                // Terminate and reap, then delete the partial output. An over-running remux
+                // is FFMPEG_TIMEOUT — never a success, and never a half-written artifact.
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = std::fs::remove_file(&partial_path);
+                return Err(ForensicError::DecodeFailed {
+                    context: "remux_elementary_stream_file".into(),
+                    reason: format!(
+                        "FFMPEG_TIMEOUT: remux exceeded its {}s budget and the child process \
+                         was terminated",
+                        timeout.as_secs()
+                    ),
+                });
             }
-            status_res.map(|status| (status, stderr_bytes, false))
         };
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -252,10 +274,15 @@ impl FfmpegService {
                 .unwrap(),
             }
         } else {
+            // ffprobe is absent, so the container was never inspected. An unrun check is
+            // UNKNOWN, never PASS: "we could not look" must not render as "we looked and it
+            // was fine". The MP4 was written and FFmpeg exited zero — that is a successful
+            // *remux*, and it is stated as such — but nothing has validated the container.
             ValidationState::new(
-                ValidationStateKind::Pass,
+                ValidationStateKind::Unknown,
                 format!(
-                    "Stream-copy remux completed successfully ({:?})",
+                    "VALIDATION_UNAVAILABLE: stream-copy remux completed ({:?}) but ffprobe is \
+                     not available on this host, so the container was not validated",
                     options.codec
                 ),
                 "remux_elementary_stream_file",
@@ -363,6 +390,18 @@ pub fn hash_file_sha256(path: &Path) -> Result<String, ForensicError> {
     }
 
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// Reads a child pipe to end, returning whatever arrived.
+///
+/// Diagnostics are best-effort: a read error here must not mask the process outcome, which is
+/// what the caller actually reports on.
+async fn drain(stream: &mut Option<tokio::process::ChildStderr>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if let Some(s) = stream.as_mut() {
+        let _ = tokio::io::AsyncReadExt::read_to_end(s, &mut bytes).await;
+    }
+    bytes
 }
 
 fn resolve_binary(

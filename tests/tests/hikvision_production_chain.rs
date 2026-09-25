@@ -335,8 +335,8 @@ fn a_reconstructed_hikvision_recording_exports_as_artifacts_with_real_digests() 
         evidence_id,
         native_region,
         stream.clone(),
-        false,
-        false,
+        // No decode test was run in this export path, so the outcome must be UNKNOWN.
+        None,
     );
     assert_eq!(out.native_artifact.evidence_id, evidence_id);
     assert_ne!(

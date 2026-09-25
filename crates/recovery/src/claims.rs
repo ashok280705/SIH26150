@@ -275,16 +275,39 @@ fn claims_from_entry(
     out
 }
 
+/// The conventional `oem_metadata` key a parser uses to explain unreachability.
+///
+/// A parser may either use this key verbatim or prefix it with its own namespace
+/// (`<something>_availability_reason`), which is what the OEM parsers already do.
+const AVAILABILITY_REASON_KEY: &str = "availability_reason";
+
 /// The availability reason an OEM entry carries, when it carries one.
 ///
 /// Parsers record it in `oem_metadata` under a conventional key so the generic layer can
 /// surface the OEM's own wording without interpreting the OEM's structures.
+///
+/// # No OEM name appears here
+///
+/// The lookup was previously hard-coded to one vendor's prefixed key, so every other OEM's
+/// wording was silently dropped and replaced by the generic default — and adding an OEM meant
+/// editing this generic function. It now accepts the bare conventional key or any
+/// `<namespace>_availability_reason`, so a new parser is surfaced without a change here.
+/// Prefixed keys are resolved in sorted order, which keeps the choice deterministic when a
+/// parser records more than one.
 fn availability_reason(entry: &IndexedRecording) -> String {
+    if let Some(reason) = entry.oem_metadata.get(AVAILABILITY_REASON_KEY) {
+        return reason.clone();
+    }
+    // BTreeMap iteration is already sorted, so the first match is a stable choice.
     entry
         .oem_metadata
-        .get("dahua_availability_reason")
-        .or_else(|| entry.oem_metadata.get("availability_reason"))
-        .cloned()
+        .iter()
+        .find(|(k, _)| {
+            k.len() > AVAILABILITY_REASON_KEY.len() + 1
+                && k.ends_with(AVAILABILITY_REASON_KEY)
+                && k.as_bytes()[k.len() - AVAILABILITY_REASON_KEY.len() - 1] == b'_'
+        })
+        .map(|(_, v)| v.clone())
         .unwrap_or_else(|| DEFAULT_AVAILABLE_REASON.to_string())
 }
 

@@ -36,8 +36,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod capabilities;
 pub mod claims;
 pub mod classification;
+pub mod correlation;
 pub mod engine;
 pub mod ffmpeg;
 pub mod fragment;
@@ -51,11 +53,19 @@ pub mod validation;
 pub mod video;
 pub mod wrap_storage;
 
+pub use capabilities::{
+    assess_capabilities, select_strategies, CapabilityFinding, RecoveryCapabilities,
+    RecoveryCapability, RecoveryStrategy, ScanObservations, StrategyDecision, StrategySelection,
+};
 pub use claims::{
     build_claim_map, ClaimAccessibility, ClaimMap, ClaimedRegion, UnclaimedKind, UnclaimedRegion,
 };
 pub use classification::{
     classify_recovery, classify_region_state, RegionClaim, StateAssessment, VideoEvidence,
+};
+pub use correlation::{
+    correlate_fragments, CorrelatedRecording, CorrelationBounds, CorrelationEvidence,
+    CorrelationOutcome, EvidenceStrength, GroupingBasis, TemporalOrdering,
 };
 pub use engine::{RecoveryEngine, RecoveryOutcome, RecoveryRequest};
 pub use ffmpeg::{
@@ -70,4 +80,6 @@ pub use levels::{
 };
 pub use metrics::RecoveryMetrics;
 pub use plan::{plan_recovery, RecoveryPlan, ScanTarget, CLAIM_PROBE_BYTES, UNCLAIMED_CHUNK_BYTES};
-pub use reconstructor::{MediaMetadata, ReconstructionOutput, VideoCodec, VideoReconstructor};
+pub use reconstructor::{
+    DecodeTestEvidence, MediaMetadata, ReconstructionOutput, VideoCodec, VideoReconstructor,
+};

@@ -28,13 +28,14 @@ impl ReportAuditor {
         report_hash: Hash,
         format_name: &str,
     ) -> DerivedArtifact {
+        // (state, reason, operation, subject): the reason is what an examiner reads.
         let val_state = ValidationState::new(
             ValidationStateKind::Pass,
-            "generate_report",
             "Report generated with full cryptographic provenance",
+            "generate_report",
             "ReportExporter",
         )
-        .unwrap();
+        .expect("static reason is non-empty");
 
         let prov = Provenance::new(
             evidence_id,

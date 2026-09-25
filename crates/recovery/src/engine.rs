@@ -15,7 +15,12 @@
 //!        │
 //!        ├─ levels::scan_target() ×N    ── bounded reads at exact physical offsets
 //!        │
-//!        └─ RecoveryOutcome { candidates, fragments, run, plan, metrics }
+//!        ├─ capabilities::assess()      ── what THIS evidence actually supported
+//!        ├─ capabilities::select()      ── which strategies that licenses, and why not
+//!        ├─ correlation::correlate()    ── fragments → recordings, bounded, evidence-only
+//!        │
+//!        └─ RecoveryOutcome { candidates, fragments, recordings, capabilities,
+//!                             strategies, run, plan, metrics }
 //! ```
 //!
 //! ## Separation of concerns
@@ -40,7 +45,12 @@ use forensic_core::{
 use parsers_core::parser::Parser;
 use parsers_core::storage::IndexAuthority;
 
+use crate::capabilities::{
+    assess_capabilities, select_strategies, RecoveryCapabilities, ScanObservations,
+    StrategySelection,
+};
 use crate::claims::UnclaimedKind;
+use crate::correlation::{correlate_fragments, CorrelatedRecording, CorrelationBounds};
 use crate::fragment::DiscoveredFragment;
 use crate::levels::{scan_target_all, ScanContext, DEFAULT_SCAN_WINDOW_BYTES};
 use crate::metrics::RecoveryMetrics;
@@ -107,6 +117,13 @@ pub struct RecoveryOutcome {
     pub candidates: Vec<RecoveryCandidate>,
     /// The fragment record for each candidate, index-aligned with `candidates`.
     pub fragments: Vec<DiscoveredFragment>,
+    /// The fragments grouped into recordings, with the evidence for each grouping and
+    /// ordering decision. Every fragment appears in exactly one entry.
+    pub recordings: Vec<CorrelatedRecording>,
+    /// What this run's parser output actually established about this evidence item.
+    pub capabilities: RecoveryCapabilities,
+    /// Which recovery strategies those capabilities licensed, and why the others were not.
+    pub strategies: StrategySelection,
     /// Bounded-search accounting.
     pub run: RecoveryRun,
     /// The plan that was executed: geometry, index, claim map and scan targets.
@@ -275,6 +292,9 @@ impl RecoveryEngine {
         let mut candidates: Vec<RecoveryCandidate> = Vec::new();
         let mut fragments: Vec<DiscoveredFragment> = Vec::new();
         let mut metrics = build_metrics(&plan, oem_key, profile);
+        // Named counts the capability assessment consumes. Accumulated while scanning so the
+        // assessment stays a pure function of observations rather than re-walking the output.
+        let mut observations = ScanObservations::default();
         let start_time = Instant::now();
 
         // ── Bounded execution of the plan ───────────────────────────────────
@@ -340,6 +360,19 @@ impl RecoveryEngine {
                             crate::fragment::FragmentFraming::OemContainerRecord
                         ) {
                             metrics.container_record_candidate_count += 1;
+                            observations.container_record_fragments += 1;
+                        }
+                        if finding.fragment.parent_recording.is_known() {
+                            observations.fragments_with_parent_recording += 1;
+                        }
+                        if finding.fragment.camera_id.is_known() {
+                            observations.fragments_with_channel += 1;
+                        }
+                        if finding.fragment.timestamp_unix.is_known() {
+                            observations.fragments_with_timestamp += 1;
+                        }
+                        if finding.fragment.sequence_number.is_known() {
+                            observations.fragments_with_sequence += 1;
                         }
                         tracing::debug!(
                             target: "recovery::candidate",
@@ -377,6 +410,76 @@ impl RecoveryEngine {
             }
         }
 
+        // ── Capability assessment and strategy accounting ───────────────────
+        // Performed from the plan and the named counts above, so the record of what this
+        // evidence supported is derived from evidence rather than from the OEM's name.
+        let capabilities = assess_capabilities(&plan, observations);
+        let strategies = select_strategies(&capabilities, &plan, observations);
+
+        tracing::debug!(
+            target: "recovery::pipeline",
+            oem_key = %oem_key,
+            capabilities = %capabilities
+                .available()
+                .iter()
+                .map(|c| c.label())
+                .collect::<Vec<_>>()
+                .join(","),
+            strategies = %strategies
+                .licensed()
+                .iter()
+                .map(|s| s.label())
+                .collect::<Vec<_>>()
+                .join(","),
+            "runtime capabilities assessed and strategies selected"
+        );
+
+        // ── Fragment and temporal correlation ───────────────────────────────
+        // Bounded here rather than trusting the candidate cap: grouping is the one stage
+        // whose cost grows with the number of fragments rather than with bytes read.
+        let correlation = correlate_fragments(
+            &candidates,
+            &fragments,
+            CorrelationBounds::from_recovery_bounds(bounds),
+        );
+        // Each group is one reconstruction hypothesis. This is the field that was previously
+        // always zero while `max_hypotheses` was carried unused.
+        run.hypothesis_count = correlation.groups_considered.min(u32::MAX as usize) as u32;
+        if correlation.truncated {
+            // A bounded correlation cannot claim a global reconstruction, so the run is
+            // downgraded on the same rule as a bounded search.
+            run.truncated = true;
+        }
+        metrics.correlated_recording_count = correlation.recordings.len();
+        metrics.correlation_groups_considered = correlation.groups_considered;
+        metrics.ordered_recording_count = correlation
+            .recordings
+            .iter()
+            .filter(|r| r.ordering.is_established())
+            .count();
+        metrics.unordered_recording_count = correlation
+            .recordings
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r.ordering,
+                    crate::correlation::TemporalOrdering::Unknown { .. }
+                )
+            })
+            .count();
+
+        tracing::debug!(
+            target: "recovery::pipeline",
+            oem_key = %oem_key,
+            groups_considered = correlation.groups_considered,
+            recordings = correlation.recordings.len(),
+            ordered = metrics.ordered_recording_count,
+            unordered = metrics.unordered_recording_count,
+            truncated = correlation.truncated,
+            "fragments correlated into recordings: {}",
+            correlation.validation.reason
+        );
+
         metrics.scanned_bytes = run.searched_bytes;
         metrics.scan_region_count = run.searched_regions.len();
         metrics.skipped_range_count = run.skipped_ranges.len();
@@ -407,6 +510,9 @@ impl RecoveryEngine {
         Ok(RecoveryOutcome {
             candidates,
             fragments,
+            recordings: correlation.recordings,
+            capabilities,
+            strategies,
             run,
             plan,
             metrics,

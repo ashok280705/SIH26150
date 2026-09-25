@@ -16,7 +16,7 @@
 use chrono::Utc;
 use forensic_core::{
     ArtifactId, DerivedArtifact, DerivedKind, EvidenceId, Hash, NativeArtifact, Provenance, Region,
-    SourceRegion, TransformationStep, ValidationState, ValidationStateKind,
+    SourceRegion, ValidationState, ValidationStateKind,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -52,17 +52,41 @@ pub struct CodecEvidence {
     pub validation: ValidationState,
 }
 
-/// Detailed media metadata extracted from stream bytes.
+/// Media metadata established from the stream bytes themselves.
+///
+/// Every field is optional because every field is a *measurement*. A property this function
+/// did not measure is `None` — which reports as UNKNOWN — and is never defaulted to a
+/// plausible value. Resolution, frame rate and a true frame count require a decoder; they are
+/// established downstream by the `media` crate's ffprobe/decode stages and stay `None` here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaMetadata {
     pub codec: VideoCodec,
-    pub frame_count: u64,
-    pub keyframe_count: u64,
+    /// Total pictures in the stream. Establishing this requires decoding, so it is `None`
+    /// until the media pipeline decodes the artifact.
+    pub frame_count: Option<u64>,
+    /// Keyframes counted from the IDR/keyframe NAL units actually observed in the bytes.
+    pub keyframe_count: Option<u64>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f64>,
-    pub has_timestamp_continuity: bool,
-    pub has_channel_continuity: bool,
+    /// Whether timestamps run continuously. Determining this needs the OEM index, which this
+    /// layer does not read, so it is `None`.
+    pub has_timestamp_continuity: Option<bool>,
+    /// Whether the stream stays on one channel. Same reason: `None` until upstream says.
+    pub has_channel_continuity: Option<bool>,
+}
+
+/// Evidence that a decode test genuinely ran and what it produced.
+///
+/// This type exists so that `decode_tested` can only be true when something actually decoded:
+/// it is constructed by the component that ran the decoder, carrying the frame count it
+/// observed. It cannot be satisfied by checking whether an executable is on PATH.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecodeTestEvidence {
+    /// Frames the decoder actually emitted. Zero means the decode failed.
+    pub frames_decoded: u64,
+    /// The decoder that ran, e.g. `"ffmpeg 6.0 rawvideo"`.
+    pub decoder: String,
 }
 
 /// Output bundle from video reconstruction.
@@ -342,13 +366,64 @@ impl VideoReconstructor {
         Self::classify_codec(stream_bytes).codec
     }
 
-    /// Reconstructs a recording into native and derived artifacts, performing full validation.
+    /// Counts IDR (keyframe) NAL units present in an Annex-B stream.
+    ///
+    /// This is a measurement of the bytes, not an estimate: Annex-B emulation prevention makes
+    /// the three-byte start code impossible inside a NAL payload, so every match is a real NAL
+    /// boundary. It counts keyframes only — the total picture count needs a decoder and is
+    /// established downstream by the media pipeline, not guessed here.
+    ///
+    /// Returns `None` for a codec whose keyframes this scan does not describe.
+    pub fn count_keyframe_nals(stream_bytes: &[u8], codec: VideoCodec) -> Option<u64> {
+        let mut count = 0u64;
+        let len = stream_bytes.len();
+        let mut i = 0usize;
+        while i + 4 <= len {
+            let header_offset = if stream_bytes[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+                i + 4
+            } else if stream_bytes[i..i + 3] == [0x00, 0x00, 0x01] {
+                i + 3
+            } else {
+                i += 1;
+                continue;
+            };
+            if header_offset >= len {
+                break;
+            }
+            let header = stream_bytes[header_offset];
+            match codec {
+                // H.264: 1-byte header, nal_unit_type 5 is an IDR slice.
+                VideoCodec::H264 => {
+                    if (header & 0x80) == 0 && (header & 0x1F) == 5 {
+                        count += 1;
+                    }
+                }
+                // H.265: 2-byte header, nal_unit_type 19/20 are IDR_W_RADL / IDR_N_LP.
+                VideoCodec::H265 => {
+                    let t = (header >> 1) & 0x3F;
+                    if (header & 0x80) == 0 && (t == 19 || t == 20) {
+                        count += 1;
+                    }
+                }
+                _ => return None,
+            }
+            i = header_offset;
+        }
+        Some(count)
+    }
+
+    /// Reconstructs a recording into native and derived artifacts.
+    ///
+    /// `decode_test` is the outcome of a decode that **actually ran**, normally supplied by the
+    /// downstream `media` pipeline after it decoded the materialized artifact. `None` means no
+    /// decode was performed, and the result is `UNKNOWN` — never `PASS`. There is deliberately
+    /// no "ffmpeg is installed" parameter: the presence of a binary is not evidence that a
+    /// stream decoded.
     pub fn reconstruct(
         evidence_id: EvidenceId,
         source_region: Region,
         raw_payload: Vec<u8>,
-        run_decode_test: bool,
-        ffmpeg_available: bool,
+        decode_test: Option<DecodeTestEvidence>,
     ) -> ReconstructionOutput {
         // 1. Calculate native payload hash (SHA-256)
         let mut hasher = Sha256::new();
@@ -370,19 +445,18 @@ impl VideoReconstructor {
         let codec_evidence = Self::classify_codec(&raw_payload);
         let codec = codec_evidence.codec;
 
+        // Only what the bytes themselves establish. Resolution, frame rate and the picture
+        // count all need a decoder; the media pipeline measures them from ffprobe and from
+        // actual decoding, and until it does they are UNKNOWN rather than invented here.
         let media_meta = MediaMetadata {
             codec,
-            frame_count: if raw_payload.is_empty() { 0 } else { 1 },
-            keyframe_count: if codec == VideoCodec::H264 || codec == VideoCodec::H265 {
-                1
-            } else {
-                0
-            },
+            frame_count: None,
+            keyframe_count: Self::count_keyframe_nals(&raw_payload, codec),
             width: None,
             height: None,
             fps: None,
-            has_timestamp_continuity: true,
-            has_channel_continuity: true,
+            has_timestamp_continuity: None,
+            has_channel_continuity: None,
         };
 
         // 4. Create Derived Artifacts (Elementary Stream, Remux, etc.) with explicit Provenance
@@ -419,50 +493,26 @@ impl VideoReconstructor {
             produced_at: Utc::now(),
         });
 
-        // Remuxed container derived artifact
-        if codec == VideoCodec::H264 || codec == VideoCodec::H265 {
-            let mut remux_hasher = Sha256::new();
-            remux_hasher.update(b"MP4_HEADER_CONTAINER_DATA");
-            remux_hasher.update(&raw_payload);
-            let remux_hash = Hash::sha256(remux_hasher.finalize().to_vec());
+        // A Remux derived artifact is deliberately NOT produced here.
+        //
+        // This function classifies bytes; it runs no FFmpeg and writes no container. The
+        // previous implementation emitted a `DerivedKind::Remux` artifact whose SHA-256 was
+        // taken over the literal string "MP4_HEADER_CONTAINER_DATA" concatenated with the
+        // payload, pointing at `artifacts/remux/<offset>.mp4` — a digest of bytes that were
+        // never written, for a file that never existed, carrying a PASS that claimed the
+        // remux had happened. That is a fabricated artifact and a fabricated hash.
+        //
+        // The real remux artifact is produced where the remux actually occurs: the API's
+        // export path runs FFmpeg, writes the container, hashes the file's own bytes and
+        // records the process exit status and ffprobe result on its provenance.
 
-            let mut remux_prov = Provenance::new(
-                evidence_id,
-                native_hash.clone(),
-                vec![SourceRegion::new(evidence_id, source_region)],
-                "VideoReconstructor",
-                "1.0.0",
-                remux_hash.clone(),
-                ValidationState::new(
-                    ValidationStateKind::Pass,
-                    "Remuxed raw stream into standard ISO/IEC 14496-14 MP4 container",
-                    "remux_container",
-                    "DerivedMp4",
-                )
-                .unwrap(),
-            );
-
-            remux_prov.add_transformation(TransformationStep {
-                operation: "remux_mp4".to_string(),
-                component: "VideoReconstructor".to_string(),
-                component_version: "1.0.0".to_string(),
-                performed_at: Utc::now(),
-                notes: Some(
-                    "Container remuxing without transcoding (bitstream preserved)".to_string(),
-                ),
-            });
-
-            derived_artifacts.push(DerivedArtifact {
-                id: ArtifactId::new(),
-                kind: DerivedKind::Remux,
-                provenance: remux_prov,
-                output_path: format!("artifacts/remux/{}.mp4", source_region.offset),
-                description: format!("Remuxed standard MP4 container ({:?})", codec),
-                produced_at: Utc::now(),
-            });
-        }
-
-        // 5. Explicit ValidationState determination
+        // 5. Explicit ValidationState determination.
+        //
+        // PASS requires evidence that a decoder actually produced pictures. FFmpeg merely
+        // being installed is not that evidence, and this function does not decode, so the
+        // only way to reach PASS is for the caller to hand over the result of a decode that
+        // really ran.
+        let decode_ran = decode_test.is_some();
         let validation_state = if raw_payload.is_empty() {
             ValidationState::new(
                 ValidationStateKind::Fail,
@@ -471,32 +521,40 @@ impl VideoReconstructor {
                 "Recording",
             )
             .unwrap()
-        } else if !run_decode_test {
-            ValidationState::new(
-                ValidationStateKind::Unknown,
-                "Stream extracted; decode test was not requested/executed (Req 22.3)",
-                "reconstruct",
-                "Recording",
-            )
-            .unwrap()
-        } else if !ffmpeg_available {
-            ValidationState::new(
-                ValidationStateKind::Unknown,
-                "Decode test requested but FFmpeg is not available on host system (Req 22.3)",
-                "reconstruct",
-                "Recording",
-            )
-            .unwrap()
-        } else if codec_evidence.validation.state == ValidationStateKind::Review {
-            codec_evidence.validation.clone()
         } else {
-            ValidationState::new(
-                ValidationStateKind::Pass,
-                format!("Stream fully validated, decoded, and remuxed ({:?})", codec),
-                "reconstruct",
-                "Recording",
-            )
-            .unwrap()
+            match &decode_test {
+                None => ValidationState::new(
+                    ValidationStateKind::Unknown,
+                    "Stream extracted and codec classified; no decode test was performed \
+                     by this call (Req 22.3)",
+                    "reconstruct",
+                    "Recording",
+                )
+                .unwrap(),
+                Some(evidence) if evidence.frames_decoded == 0 => ValidationState::new(
+                    ValidationStateKind::Fail,
+                    format!(
+                        "A decode test ran via {} and produced no frames",
+                        evidence.decoder
+                    ),
+                    "reconstruct",
+                    "Recording",
+                )
+                .unwrap(),
+                Some(_) if codec_evidence.validation.state == ValidationStateKind::Review => {
+                    codec_evidence.validation.clone()
+                }
+                Some(evidence) => ValidationState::new(
+                    ValidationStateKind::Pass,
+                    format!(
+                        "Stream extracted and decoded: {} produced {} frame(s) of {:?}",
+                        evidence.decoder, evidence.frames_decoded, codec
+                    ),
+                    "reconstruct",
+                    "Recording",
+                )
+                .unwrap(),
+            }
         };
 
         ReconstructionOutput {
@@ -505,7 +563,7 @@ impl VideoReconstructor {
             media_metadata: media_meta,
             codec_evidence,
             validation_state,
-            decode_tested: run_decode_test && ffmpeg_available,
+            decode_tested: decode_ran,
         }
     }
 }
@@ -575,18 +633,24 @@ mod tests {
         };
         let payload = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E];
 
-        let out = VideoReconstructor::reconstruct(ev_id, region, payload, true, true);
+        let out = VideoReconstructor::reconstruct(ev_id, region, payload, None);
         assert_eq!(out.native_artifact.region, region);
         assert!(!out.derived_artifacts.is_empty());
-        assert_ne!(
-            out.native_artifact.hash,
-            out.derived_artifacts
+        // This call runs no FFmpeg, so it must not claim a remux artifact. The remux is
+        // produced only where the container is actually written and hashed.
+        assert!(
+            !out.derived_artifacts
                 .iter()
-                .find(|d| d.kind == DerivedKind::Remux)
-                .unwrap()
-                .provenance
-                .output_hash
+                .any(|d| d.kind == DerivedKind::Remux),
+            "a remux artifact must not be emitted by a call that performed no remux"
         );
+        // The elementary stream artifact's digest covers the payload bytes themselves.
+        let es = out
+            .derived_artifacts
+            .iter()
+            .find(|d| d.kind == DerivedKind::ElementaryStream)
+            .expect("the extracted elementary stream artifact");
+        assert_eq!(es.provenance.source_evidence_id, ev_id);
     }
 
     #[test]
@@ -598,16 +662,17 @@ mod tests {
         };
         let payload = vec![0x00, 0x00, 0x00, 0x01, 0x67];
 
-        let out = VideoReconstructor::reconstruct(ev_id, region, payload, false, true);
+        let out = VideoReconstructor::reconstruct(ev_id, region, payload, None);
         assert_eq!(out.validation_state.state, ValidationStateKind::Unknown);
         assert!(out
             .validation_state
             .reason
-            .contains("not requested/executed"));
+            .contains("no decode test was performed"));
+        assert!(!out.decode_tested);
     }
 
     #[test]
-    fn test_ffmpeg_absent_yields_unknown_never_pass() {
+    fn a_decode_that_produced_no_frames_is_a_failure_not_an_unknown() {
         let ev_id = EvidenceId::new();
         let region = Region {
             offset: 0,
@@ -615,16 +680,21 @@ mod tests {
         };
         let payload = vec![0x00, 0x00, 0x00, 0x01, 0x67];
 
-        let out = VideoReconstructor::reconstruct(ev_id, region, payload, true, false);
-        assert_eq!(out.validation_state.state, ValidationStateKind::Unknown);
-        assert!(out
-            .validation_state
-            .reason
-            .contains("FFmpeg is not available"));
+        let out = VideoReconstructor::reconstruct(
+            ev_id,
+            region,
+            payload,
+            Some(DecodeTestEvidence {
+                frames_decoded: 0,
+                decoder: "ffmpeg 6.0 rawvideo".into(),
+            }),
+        );
+        assert_eq!(out.validation_state.state, ValidationStateKind::Fail);
+        assert!(out.decode_tested, "the decode did run; it produced nothing");
     }
 
     #[test]
-    fn test_fully_validated_reconstruction_yields_pass() {
+    fn pass_requires_evidence_that_a_decoder_actually_produced_frames() {
         let ev_id = EvidenceId::new();
         let region = Region {
             offset: 0,
@@ -634,7 +704,41 @@ mod tests {
             0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x01, 0x68,
         ];
 
-        let out = VideoReconstructor::reconstruct(ev_id, region, payload, true, true);
+        let out = VideoReconstructor::reconstruct(
+            ev_id,
+            region,
+            payload,
+            Some(DecodeTestEvidence {
+                frames_decoded: 42,
+                decoder: "ffmpeg 6.0 rawvideo".into(),
+            }),
+        );
         assert_eq!(out.validation_state.state, ValidationStateKind::Pass);
+        assert!(out.validation_state.reason.contains("42 frame(s)"));
+        assert!(out.decode_tested);
+    }
+
+    #[test]
+    fn unmeasured_media_properties_are_unknown_rather_than_plausible_defaults() {
+        let ev_id = EvidenceId::new();
+        let region = Region {
+            offset: 0,
+            length: 100,
+        };
+        // Two IDR NAL units (type 5) among parameter sets.
+        let payload = vec![
+            0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x00, 0x00,
+            0x00, 0x01, 0x65, 0x88, 0x00, 0x00, 0x00, 0x01, 0x65, 0x88,
+        ];
+        let out = VideoReconstructor::reconstruct(ev_id, region, payload, None);
+        let m = &out.media_metadata;
+        assert_eq!(m.frame_count, None, "a picture count needs a decoder");
+        assert_eq!(m.width, None);
+        assert_eq!(m.height, None);
+        assert_eq!(m.fps, None);
+        assert_eq!(m.has_timestamp_continuity, None);
+        assert_eq!(m.has_channel_continuity, None);
+        // Keyframes, by contrast, are counted from the bytes that are actually present.
+        assert_eq!(m.keyframe_count, Some(2));
     }
 }

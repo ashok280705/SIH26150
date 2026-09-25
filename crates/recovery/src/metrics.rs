@@ -67,6 +67,18 @@ pub struct RecoveryMetrics {
     pub deleted_count: usize,
     pub corrupted_count: usize,
     pub overwritten_count: usize,
+    /// Recordings the correlation stage produced from those candidates. The ratio of this to
+    /// `candidate_count` is how much of a run was per-record discovery versus reconstruction:
+    /// a carved recording of 400 frames is 400 candidates but one recording.
+    pub correlated_recording_count: usize,
+    /// Groups the correlation stage formed before bounding. Each is one reconstruction
+    /// hypothesis, so this is the run's real hypothesis count.
+    pub correlation_groups_considered: usize,
+    /// Correlated recordings whose member order is established from sequence or clock evidence.
+    pub ordered_recording_count: usize,
+    /// Correlated recordings whose member order could not be established and are therefore
+    /// reported in physical order with an explicit UNKNOWN ordering.
+    pub unordered_recording_count: usize,
     /// Candidates whose structural validation did not pass.
     pub validation_failures: usize,
     /// Ranges that could not be read and were recorded as skipped.
@@ -126,6 +138,10 @@ impl RecoveryMetrics {
             deleted = self.deleted_count,
             corrupted = self.corrupted_count,
             overwritten = self.overwritten_count,
+            correlated_recordings = self.correlated_recording_count,
+            correlation_groups_considered = self.correlation_groups_considered,
+            ordered_recordings = self.ordered_recording_count,
+            unordered_recordings = self.unordered_recording_count,
             validation_failures = self.validation_failures,
             skipped_ranges = self.skipped_range_count,
             truncated = self.truncated,

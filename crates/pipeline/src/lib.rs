@@ -184,6 +184,21 @@ pub struct RecoverySummary {
     /// metadata that was — or explicitly was not — established. Reporting reads channel
     /// and timestamp from here rather than substituting zero.
     pub fragments: Vec<recovery::DiscoveredFragment>,
+    /// The fragments grouped into recordings by the correlation stage, with the evidence for
+    /// every grouping and ordering decision.
+    ///
+    /// This is the answer to "how many recordings were recovered?", which `candidates` is not:
+    /// a carved recording of four hundred container records is four hundred candidates and one
+    /// recording. A group whose order could not be established from evidence says so
+    /// explicitly rather than presenting physical order as a timeline.
+    #[serde(default)]
+    pub recordings: Vec<recovery::CorrelatedRecording>,
+    /// What the OEM parser actually established about this evidence item, capability by
+    /// capability — runtime evidence, distinct from the declared `CapabilityStages` maturity.
+    pub capabilities: recovery::RecoveryCapabilities,
+    /// Which recovery strategies those capabilities licensed, and the recorded reason for
+    /// each strategy that was not applied.
+    pub strategies: recovery::StrategySelection,
     pub run: RecoveryRun,
     /// Observability counters: geometry, index entry count, claimed/unclaimed byte
     /// totals, and the per-state candidate breakdown.
@@ -753,6 +768,9 @@ pub fn run_pipeline(
             let recovery::RecoveryOutcome {
                 candidates,
                 fragments,
+                recordings,
+                capabilities,
+                strategies,
                 run: rec_run,
                 metrics,
                 ..
@@ -876,6 +894,9 @@ pub fn run_pipeline(
             run.recovery = Some(RecoverySummary {
                 candidates,
                 fragments,
+                recordings,
+                capabilities,
+                strategies,
                 run: rec_run,
                 metrics,
                 decision,

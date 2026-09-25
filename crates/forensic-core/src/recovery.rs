@@ -313,23 +313,26 @@ impl RecoveryRun {
     /// downgrades the validation state to REVIEW, as a bounded search can never
     /// guarantee a global optimum (Req 13.10).
     pub fn finalize(&mut self) {
+        // Argument order is (state, reason, operation, subject). The reason is the field an
+        // examiner reads, so it carries the explanation; "RecoveryRun" is the subject, not a
+        // reason, and putting it there left every bounded run explaining itself as a type name.
         if self.cancelled {
             self.validation_state = ValidationState::new(
                 crate::ValidationStateKind::Review,
-                "RecoveryRun",
                 "Run was cancelled by the user",
+                "RecoveryRun::finalize",
                 "Search",
             )
-            .unwrap();
+            .expect("static reason is non-empty");
             self.reason = "Search cancelled".to_string();
         } else if self.truncated {
             self.validation_state = ValidationState::new(
                 crate::ValidationStateKind::Review,
-                "RecoveryRun",
                 "Search space was truncated; global optimum not guaranteed",
+                "RecoveryRun::finalize",
                 "Search",
             )
-            .unwrap();
+            .expect("static reason is non-empty");
             self.reason = "Search bounds reached".to_string();
         }
     }

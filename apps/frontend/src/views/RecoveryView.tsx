@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import {
   Evidence, GapRecoveryTarget, GapRecoveryResponse, GapRecoverySlot, RecordingSession,
+  ReconstructResponse,
 } from '../types';
 import { runFullPipeline, recoverGap, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
@@ -71,6 +72,19 @@ const LEVEL_META: Record<string, { badge: string; label: string }> = {
   L2: { badge: 'badge-review', label: 'L2 · Orphan carve' },
   L3: { badge: 'badge-review', label: 'L3 · Raw carve' },
 };
+
+/**
+ * The reason no playable container exists, as the server reported it.
+ *
+ * The previous message named FFmpeg's absence unconditionally, which was a guess: a remux can
+ * also fail because the codec cannot be stream-copied or because FFmpeg ran and errored. The
+ * server now sends the actual reason in `remux_error`, so it is shown verbatim rather than
+ * substituted.
+ */
+function remuxUnavailableMessage(res: ReconstructResponse): string {
+  const base = 'Elementary stream extracted and hashed, but no playable MP4 was produced';
+  return res.remux_error ? `${base}: ${res.remux_error}` : `${base}.`;
+}
 
 export const RecoveryView: React.FC<RecoveryViewProps> = ({
   evidence,
@@ -198,7 +212,7 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
           validationState: res.remux.validation_state,
         });
       } else {
-        alert('Elementary stream extracted and hashed. FFmpeg is required on the host to remux a playable MP4.');
+        alert(remuxUnavailableMessage(res));
       }
     } catch (e: any) {
       alert(`Reconstruction failed: ${e?.message || e}`);

@@ -641,5 +641,51 @@ export interface ReconstructResponse {
     validation_state: ValidationState;
     video_url: string;
   } | null;
+  /** Why no remuxed container exists, when `remux` is null. */
+  remux_error?: string | null;
+  /** What the downstream media pipeline actually did. */
+  media_pipeline?: MediaPipelineStatus;
   ffmpeg_status: FfmpegInfo;
+}
+
+/**
+ * The media pipeline's own account of one artifact.
+ *
+ * Every claim is gated on the corresponding operation having happened, so the UI must read
+ * these fields rather than inferring outcomes. In particular:
+ *
+ * - `validated` is only true when ffprobe ran and accepted the file. A host without ffprobe
+ *   reports `validation_status: "VALIDATION_UNAVAILABLE"` with `validated: false` — "could
+ *   not check" is not "checked and fine".
+ * - `decoded` is only true when FFmpeg produced actual frames. A successful remux is not a
+ *   decode.
+ * - `ai_analyzed` is only true when an analysis engine really ran. With none configured,
+ *   `ai_status` is `"AI_ANALYSIS_NOT_CONFIGURED"` and nothing was inferred.
+ */
+export interface MediaPipelineStatus {
+  artifact_id?: string;
+  artifact_found?: boolean;
+  /** VALID | INVALID | UNSUPPORTED | CORRUPTED | VALIDATION_UNAVAILABLE | VALIDATION_TIMEOUT | VALIDATION_NOT_RUN */
+  validation_status: string;
+  validated: boolean;
+  /** Measured codec, or the literal "UNKNOWN" when nothing established one. */
+  codec?: string;
+  /** "WxH", or the literal "UNKNOWN". */
+  resolution?: string;
+  duration_secs?: number | null;
+  decode_status?: unknown;
+  decoded: boolean;
+  frames_extracted: number;
+  frames_processed?: number;
+  /** "opencv" or "pure_rust_fallback" — whichever actually performed the operations. */
+  processing_backend?: string;
+  processing_status?: unknown;
+  ai_status: string;
+  ai_analyzed: boolean;
+  /** Explicit media error codes, e.g. FFPROBE_UNAVAILABLE, FFMPEG_TIMEOUT, NO_VIDEO_STREAM. */
+  errors: string[];
+  artifact_summary?: Record<string, unknown>;
+  validation_checks?: Array<{ name: string; outcome: string; detail: string }>;
+  frames?: Array<Record<string, unknown>>;
+  decode?: Record<string, unknown> | null;
 }
