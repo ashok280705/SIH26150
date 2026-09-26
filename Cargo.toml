@@ -42,7 +42,13 @@ members = [
   "crates/parsers/cpplus-ubs",
   "crates/parsers/uniview",
   "crates/parsers/tplink",
+  "crates/parsers/unified",
   "crates/parsing",
+  "crates/pipeline",
+
+  # Downstream media subsystem: validation, FFmpeg decode, frames, image processing, AI
+  # boundary. Depends only on forensic-core — never on recovery or any OEM parser.
+  "crates/media",
 
   # Applications
   "apps/api",

@@ -7,18 +7,20 @@
   },
   "source_type": "raw",
   "expected_detection": "hikvision",
-  "expected_detection_status": "confirmed",
-  "expected_classification": "confirmed",
-  "expected_attribution_status": "confirmed",
+  "expected_detection_status": "insufficient",
+  "expected_classification": "insufficient",
+  "expected_attribution_status": "insufficient",
   "expected_regions": [
     {
-      "offset": 0,
+      "offset": 512,
       "length": 512
     }
   ],
   "expected_parser_state": "parsed",
   "expected_recovery_state": "l1_carving_available",
   "expected_validation_state": "review",
-  "expected_warnings": [],
+  "expected_warnings": [
+    "the identifier is present at boot+16 but no coherent boot geometry or HIKBTREE is reachable in this detection fixture, so the identifier stands alone and attribution is Insufficient"
+  ],
   "synthetic": true
 }

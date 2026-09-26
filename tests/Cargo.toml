@@ -23,10 +23,13 @@ uuid = { workspace = true }
 hex = { workspace = true }
 
 parsing = { path = "../crates/parsing" }
+# The Hikvision fixture builder composes the parser crate's own container builders, so the
+# synthetic bytes are assembled from the same field layout the parser reads rather than from a
+# second copy of the offsets.
+parser-hikvision = { path = "../crates/parsers/hikvision" }
 
 [dev-dependencies]
 parser-dahua = { path = "../crates/parsers/dahua" }
-parser-hikvision = { path = "../crates/parsers/hikvision" }
 parser-honeywell = { path = "../crates/parsers/honeywell" }
 parser-cpplus-ubs = { path = "../crates/parsers/cpplus-ubs" }
 parser-uniview = { path = "../crates/parsers/uniview" }
@@ -34,6 +37,7 @@ parsers-core = { path = "../crates/parsers-core" }
 recovery = { path = "../crates/recovery" }
 timeline = { path = "../crates/timeline" }
 reporting = { path = "../crates/reporting" }
+pipeline = { path = "../crates/pipeline" }
 chrono = { workspace = true }
 tempfile = "3"
 

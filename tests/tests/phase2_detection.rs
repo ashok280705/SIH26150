@@ -15,7 +15,9 @@ use detection::output::DetectionStatus;
 use detection::topology::StorageTopologyProfiler;
 use detection::DetectionOrchestrator;
 use evidence_reader::{EvidenceReader, RawReader};
-use forensic_core::{EvidenceId, EvidenceItem, EvidenceStatus, Hash, ProfileRegistry, RuleMatchStatus};
+use forensic_core::{
+    EvidenceId, EvidenceItem, EvidenceStatus, Hash, ProfileRegistry, RuleMatchStatus,
+};
 use forensic_tests::fixtures::{generate_fixture, FixtureShape, OemShape};
 
 /// Property 5: Evidence independence across all 5 parallel detectors.
@@ -84,11 +86,11 @@ fn property_6_margin_respecting_ambiguity_preserved() {
         DetectionStatus::Confirmed,
         vec![EvidenceItem::new(
             EvidenceId::new(),
-            "sig",
-            0,
-            4,
-            b"HIK_",
-            b"HIK_",
+            "hikvision_boot_identifier",
+            528,
+            18,
+            b"HIKVISION@HANGZHOU",
+            b"HIKVISION@HANGZHOU",
             RuleMatchStatus::Match,
             EvidenceStatus::Validated,
             0.80, // Very close score! (diff = 0.05 < 0.20 margin)
@@ -157,10 +159,15 @@ fn property_7_ubs_storage_without_branding_yields_compatible_candidate() {
     );
 
     let classified = ConfidenceEngine::classify(&[ubs_output], &registry, &config).unwrap();
-    assert_eq!(classified.classification, Classification::CompatibleCandidate);
-    assert_eq!(classified.attribution_status, AttributionStatus::CompatibleCandidate);
+    assert_eq!(
+        classified.classification,
+        Classification::CompatibleCandidate
+    );
+    assert_eq!(
+        classified.attribution_status,
+        AttributionStatus::CompatibleCandidate
+    );
     assert_ne!(classified.attribution_status, AttributionStatus::Confirmed);
-
 }
 
 /// Adversarial: Lone magic without corroboration yields Insufficient (preempting threshold).
@@ -206,21 +213,38 @@ fn adversarial_non_512_sector_size_topology() {
         data: Vec<u8>,
     }
     impl EvidenceReader for Non512Reader {
-        fn len(&self) -> u64 { self.data.len() as u64 }
-        fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, forensic_core::ForensicError> {
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+        fn read_at(
+            &self,
+            offset: u64,
+            buf: &mut [u8],
+        ) -> Result<usize, forensic_core::ForensicError> {
             if offset >= self.len() {
-                return Err(forensic_core::ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.len()));
+                return Err(forensic_core::ForensicError::out_of_bounds(
+                    "test",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let start = offset as usize;
             let n = (self.data.len() - start).min(buf.len());
             buf[..n].copy_from_slice(&self.data[start..start + n]);
             Ok(n)
         }
-        fn source_kind(&self) -> evidence_reader::SourceKind { evidence_reader::SourceKind::Raw }
-        fn source_path(&self) -> &str { "mock://4k_sector" }
+        fn source_kind(&self) -> evidence_reader::SourceKind {
+            evidence_reader::SourceKind::Raw
+        }
+        fn source_path(&self) -> &str {
+            "mock://4k_sector"
+        }
     }
 
-    let reader = Non512Reader { data: vec![0x00; 16384] };
+    let reader = Non512Reader {
+        data: vec![0x00; 16384],
+    };
     // Sector size 4096 (Advanced Format 4Kn)
     let topo = StorageTopologyProfiler::profile(&reader, Some(4096)).unwrap();
     assert_eq!(topo.sector_size, 4096);

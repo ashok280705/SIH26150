@@ -17,7 +17,33 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 uuid = { workspace = true }
 hex = { workspace = true }
-tokio = { workspace = true, features = ["process", "io-util", "sync", "rt"] }
+tracing = { workspace = true }
+# Declared directly rather than inherited: workspace dependency features are ADDITIVE, so
+# `workspace = true` would append to the workspace's `features = ["full"]` and compile net, fs
+# and signal support this crate never uses. Building the whole workspace still unifies tokio
+# upward for `apps/api`, which does need the full runtime.
+tokio = { version = "1", default-features = false, features = [
+  "process",
+  "io-util",
+  "sync",
+  "rt",
+  # The remux wait is wrapped in `tokio::time::timeout` and a `tokio::select!` over the
+  # cancellation token, so the timer driver and the macro are load-bearing here: without
+  # them the enforced FFmpeg timeout does not compile, let alone terminate anything.
+  "time",
+  "macros",
+] }
 
 [dev-dependencies]
+# Every compliant OEM parser is a dev-dependency so the universal contract suite in
+# `tests/universal_parser_contract.rs` runs the SAME checks against all of them. A parser that
+# is not listed here is not covered by the contract.
 parser-uniview = { path = "../parsers/uniview" }
+parser-dahua = { path = "../parsers/dahua" }
+parser-hikvision = { path = "../parsers/hikvision" }
+parser-unified = { path = "../parsers/unified" }
+parser-cpplus-ubs = { path = "../parsers/cpplus-ubs" }
+parser-honeywell = { path = "../parsers/honeywell" }
+tplink = { path = "../parsers/tplink" }
+tempfile = "3"
+tracing-subscriber = { workspace = true }

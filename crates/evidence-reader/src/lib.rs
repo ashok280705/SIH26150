@@ -12,28 +12,30 @@
 //!   8.3; OPEN-2). The bound is loaded from `config/reader.toml` → `[read_window]`
 //!   (`max_bytes`, `min_bytes`); see `docs/decisions/OPEN-2-max-read-window.md`. Forensic
 //!   results must be identical for every value in the allowed range.
-//! * Sparse/unallocated regions are never reported as source truncation; out-of-bounds
-//!   requests are rejected with `OutOfBounds` (Req 8.9–8.11).
+//! * The reader does not implement sparse-image *capture* or hole detection: a file hole
+//!   is read as its backing bytes (typically zeros) by the OS, and is never reported as
+//!   source truncation. Out-of-bounds requests are rejected with `OutOfBounds`
+//!   (Req 8.9–8.11).
 //! * `.raw`, `.dd`, `.img`, and physical disks are in scope. `.E01` stays a planned,
 //!   dependency-gated integration and is not implemented by assumption (Req 8.8; OPEN-1).
 
 // This crate deliberately does not `forbid(unsafe_code)`: read-only memory maps may
 // require `unsafe`.
 
-pub mod reader;
-pub mod config;
-pub mod raw;
-pub mod source_safety;
-pub mod progress;
-pub mod scanner;
-pub mod mmap;
 pub mod bounded;
+pub mod config;
+pub mod mmap;
+pub mod progress;
+pub mod raw;
+pub mod reader;
+pub mod scanner;
+pub mod source_safety;
 
-pub use reader::{EvidenceReader, SourceKind};
-pub use config::ReaderConfig;
-pub use raw::RawReader;
-pub use source_safety::{SafetyDecision, SourceSafetyReport, inspect_source};
-pub use progress::{CancellationToken, ProgressCallback, ProgressInfo};
-pub use scanner::{RegionScanner, ScanOptions, ScanReport, TerminationReason};
-pub use mmap::ReadOnlyMmap;
 pub use bounded::BoundedReader;
+pub use config::ReaderConfig;
+pub use mmap::ReadOnlyMmap;
+pub use progress::{CancellationToken, ProgressCallback, ProgressInfo};
+pub use raw::RawReader;
+pub use reader::{EvidenceReader, SourceKind};
+pub use scanner::{RegionScanner, ScanOptions, ScanReport, TerminationReason};
+pub use source_safety::{inspect_source, SafetyDecision, SourceSafetyReport};

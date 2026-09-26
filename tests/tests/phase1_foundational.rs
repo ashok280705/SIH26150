@@ -10,8 +10,7 @@
 use std::fs;
 
 use evidence_reader::{
-    inspect_source, EvidenceReader, RawReader, RegionScanner,
-    SafetyDecision, ScanOptions,
+    inspect_source, EvidenceReader, RawReader, RegionScanner, SafetyDecision, ScanOptions,
 };
 use forensic_core::case::SourceState;
 use forensic_core::chain_of_custody::{CustodyAction, CustodyLog};

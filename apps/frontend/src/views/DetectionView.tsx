@@ -4,17 +4,39 @@ import { Evidence, ClassifiedDetectionResult, CapabilityStages, StorageTopology 
 import { runDetection, getCapabilities, getTopology } from '../services/api';
 import { loadStorage, saveStorage } from '../utils/storage';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
+import { WorkflowState, DetectionVerdict } from '../workflow';
 
 interface DetectionViewProps {
   evidence: Evidence | null;
   evidenceList?: Evidence[];
   onSelectEvidence?: (e: Evidence) => void;
+  workflow?: WorkflowState;
+  onWorkflow?: (patch: Partial<WorkflowState>) => void;
+}
+
+/** Derive the routing verdict from the top classified candidate. */
+function deriveVerdict(results: ClassifiedDetectionResult[]): {
+  verdict: DetectionVerdict;
+  oem: string | null;
+  confidence: number;
+} {
+  const top = results[0];
+  if (!top) return { verdict: 'unresolved', oem: null, confidence: 0 };
+  const cls = (top.classification || '').toLowerCase();
+  if (cls === 'confirmed' || cls === 'compatiblecandidate' || cls === 'compatible_candidate') {
+    return { verdict: 'confirmed', oem: top.oem_key, confidence: top.confidence_score };
+  }
+  if (cls === 'ambiguous') {
+    return { verdict: 'ambiguous', oem: null, confidence: top.confidence_score };
+  }
+  return { verdict: 'unresolved', oem: null, confidence: top.confidence_score };
 }
 
 export const DetectionView: React.FC<DetectionViewProps> = ({ 
   evidence, 
   evidenceList = [], 
-  onSelectEvidence 
+  onSelectEvidence,
+  onWorkflow,
 }) => {
   const [capabilities, setCapabilities] = useState<Record<string, CapabilityStages>>({});
   const [results, setResults] = useState<ClassifiedDetectionResult[]>([]);
@@ -37,6 +59,21 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
       setTopology(null);
     }
   }, [evidence?.id]);
+
+  // When results exist, publish the verdict to the workflow so downstream stages
+  // unlock and Parsing knows whether to auto-attach a parser (confirmed) or wait
+  // for manual selection (ambiguous). Only emitted when it actually changes.
+  const verdict = results.length > 0 ? deriveVerdict(results) : null;
+  useEffect(() => {
+    if (!verdict || !onWorkflow) return;
+    onWorkflow({
+      detectionDone: true,
+      verdict: verdict.verdict,
+      attributedOem: verdict.oem,
+      confidence: verdict.confidence,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verdict?.verdict, verdict?.oem, verdict?.confidence]);
 
   const fetchCapabilities = async () => {
     try {
@@ -168,6 +205,64 @@ export const DetectionView: React.FC<DetectionViewProps> = ({
         <div style={{ color: '#991b1b', background: '#fee2e2', padding: '12px 16px', borderRadius: '6px', marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
           <AlertCircle size={16} style={{ flexShrink: 0 }} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Confidence Engine verdict — routes the rest of the workflow */}
+      {verdict && (
+        <div
+          className="panel mb-4"
+          style={{
+            borderLeft: `4px solid ${
+              verdict.verdict === 'confirmed'
+                ? 'var(--success)'
+                : verdict.verdict === 'ambiguous'
+                ? 'var(--warning)'
+                : 'var(--danger)'
+            }`,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+            {verdict.verdict === 'confirmed' ? (
+              <CheckCircle size={22} style={{ color: 'var(--success)', flexShrink: 0 }} />
+            ) : (
+              <AlertCircle size={22} style={{ color: verdict.verdict === 'ambiguous' ? 'var(--warning)' : 'var(--danger)', flexShrink: 0 }} />
+            )}
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: '15px' }}>Confidence Engine Verdict</strong>
+                <span
+                  className={
+                    verdict.verdict === 'confirmed'
+                      ? 'badge badge-pass'
+                      : verdict.verdict === 'ambiguous'
+                      ? 'badge badge-review'
+                      : 'badge badge-fail'
+                  }
+                >
+                  {verdict.verdict === 'confirmed'
+                    ? `OEM CONFIRMED · ${verdict.oem}`
+                    : verdict.verdict === 'ambiguous'
+                    ? 'AMBIGUOUS'
+                    : 'UNRESOLVED'}
+                </span>
+                <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  {(verdict.confidence * 100).toFixed(1)}% confidence
+                </span>
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                {verdict.verdict === 'confirmed' && (
+                  <>Parsing is unlocked and will auto-attach the <strong>{verdict.oem}</strong> parser. Proceed to <strong>Parsing &amp; Extraction</strong>.</>
+                )}
+                {verdict.verdict === 'ambiguous' && (
+                  <>Multiple candidates scored within the margin. Review the extracted evidence in the <strong>Byte Inspector</strong>, then <strong>manually select a parser</strong> in Parsing &amp; Extraction.</>
+                )}
+                {verdict.verdict === 'unresolved' && (
+                  <>No candidate reached the threshold. Parsing will offer the <strong>unified fallback</strong> carver, or you may select a parser manually.</>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

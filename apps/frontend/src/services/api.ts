@@ -1,4 +1,4 @@
-import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording } from '../types';
+import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording, ExaminerTimezone } from '../types';
 
 const API_BASE = '/api';
 
@@ -157,6 +157,82 @@ export async function runParsing(evidenceId: string, oemKey: string): Promise<{ 
   return res.json();
 }
 
+import { RecoveryResponse, UnifiedTimelineResponse, OrderingMode, PipelineRun } from '../types';
+
+/**
+ * Runs the entire forensic pipeline in one pass and returns the audited run:
+ * every stage, every gate decision, attribution, timelines, and recovery.
+ */
+export async function runFullPipeline(evidenceId: string): Promise<PipelineRun> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/pipeline/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to run pipeline');
+  }
+  return res.json();
+}
+
+/** Fetch the generated report as text plus its self-verifying hash and id. */
+export async function fetchReport(
+  evidenceId: string,
+  format: 'json' | 'markdown' | 'csv' = 'json'
+): Promise<{ body: string; reportId: string | null; sha256: string | null; contentType: string }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/report?format=${format}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to generate report');
+  }
+  return {
+    body: await res.text(),
+    reportId: res.headers.get('X-Report-Id'),
+    sha256: res.headers.get('X-Report-SHA256'),
+    contentType: res.headers.get('Content-Type') || 'application/json',
+  };
+}
+
+/**
+ * Runs a bounded recovery scan. Candidates are derived from structures the parser
+ * actually located in the image; the OEM is auto-detected unless `oemKey` is given.
+ */
+export async function runRecovery(evidenceId: string, oemKey?: string): Promise<RecoveryResponse> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/recovery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(oemKey ? { oem_key: oemKey } : {})
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to run recovery');
+  }
+  return res.json();
+}
+
+/**
+ * Fetches the unified cross-camera timeline. Ordering is applied server-side by
+ * TimelineEngine so the deterministic tie-break rules stay authoritative.
+ */
+export async function getTimeline(
+  evidenceId: string,
+  ordering: OrderingMode = 'Normalized',
+  oemKey?: string
+): Promise<UnifiedTimelineResponse> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const params = new URLSearchParams({ ordering });
+  if (oemKey) params.set('oem_key', oemKey);
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timeline?${params.toString()}`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to load timeline');
+  }
+  return res.json();
+}
+
 import { FfmpegInfo, ArtifactRecord, ArtifactVerificationResult, ReconstructResponse } from '../types';
 
 export async function getFfmpegStatus(): Promise<FfmpegInfo> {
@@ -168,15 +244,35 @@ export async function getFfmpegStatus(): Promise<FfmpegInfo> {
   return res.json();
 }
 
+export interface ReconstructPayload {
+  offset_start?: number;
+  length?: number;
+  channel?: number;
+  oem_key?: string;
+  /** Explicit ordered physical ranges, e.g. every block of an engine-discovered recording. */
+  regions?: { offset: number; length: number }[];
+  /** The recovery engine's fragment id, carried onto the artifact's provenance. */
+  fragment_id?: string;
+  /**
+   * An OEM recording id the parser can reconstruct frame-accurately (Dahua `dahua:...`,
+   * Hikvision `hikclip:...`). Preferred over ranges: the server exports the parser's own
+   * payload order rather than raw container bytes.
+   */
+  recording_chain_id?: string;
+}
+
 export async function reconstructRecording(
   evidenceId: string,
   recordingId: string,
-  payload?: { offset_start?: number; length?: number; channel?: number; oem_key?: string }
+  payload?: ReconstructPayload
 ): Promise<ReconstructResponse> {
   const cleanEvId = evidenceId.replace('evidence-', '');
-  const cleanRecId = recordingId.includes('-') && recordingId.length === 36 ? recordingId : uuidv4();
+  // The recording id is sent as given. It used to be replaced by a random UUID whenever it
+  // was not one already, which detached the exported artifact from the recording it came
+  // from. OEM ids contain ':' and similar, so it is URL-encoded instead.
+  const recPath = encodeURIComponent(recordingId);
 
-  const res = await fetch(`${API_BASE}/evidence/${cleanEvId}/recordings/${cleanRecId}/reconstruct`, {
+  const res = await fetch(`${API_BASE}/evidence/${cleanEvId}/recordings/${recPath}/reconstruct`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload || {}),
@@ -193,6 +289,26 @@ export async function getArtifact(artifactId: string): Promise<ArtifactRecord> {
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to fetch artifact');
+  }
+  return res.json();
+}
+
+import { GapRecoveryRequest, GapRecoveryResponse } from '../types';
+
+/**
+ * Runs a staged L1->L2->L3 recovery over one detected gap's byte region and returns
+ * which time sub-ranges were recovered at which level and which remain missing.
+ */
+export async function recoverGap(evidenceId: string, req: GapRecoveryRequest): Promise<GapRecoveryResponse> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/recovery/gap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to recover gap');
   }
   return res.json();
 }
@@ -216,9 +332,48 @@ export async function listEvidenceArtifacts(evidenceId: string): Promise<Artifac
   return res.json();
 }
 
-function uuidv4(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
+/** Sets or updates the examiner-established timezone assertion for evidence. */
+export async function setEvidenceTimezone(
+  evidenceId: string,
+  payload: { timezone: string; source: string; established_by?: string; examiner?: string; notes?: string }
+): Promise<ExaminerTimezone> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to set evidence timezone');
+  }
+  return res.json();
+}
+
+/** Removes examiner-established timezone, reverting interpretation to filesystem facts. */
+export async function clearEvidenceTimezone(
+  evidenceId: string
+): Promise<{ status: string; message: string }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to clear evidence timezone');
+  }
+  return res.json();
+}
+
+/** Retrieves the current examiner-established timezone for evidence. */
+export async function getEvidenceTimezone(
+  evidenceId: string
+): Promise<{ evidence_id: string; examiner_timezone: ExaminerTimezone | null }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to get evidence timezone');
+  }
+  return res.json();
 }

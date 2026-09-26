@@ -13,5 +13,10 @@ Expected contents as the project progresses:
   are not a hardware write blocker, and the platform supports forensic defensibility rather
   than guaranteeing legal admissibility.
 
+OEM format notes:
+
+- `uniview.md` — Uniview SUPER / UI / UI-DATA / DI / DATA layout, per-field confidence, FLOW,
+  disktool `.h3crd` exports, and known limitations.
+
 The authoritative spec lives in `.kiro/specs/dvr-nvr-forensic-platform/`
 (`requirements.md`, `design.md`, `tasks.md`).

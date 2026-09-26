@@ -3,16 +3,20 @@ use forensic_core::{ForensicError, OemProfile, ParserRun, Recording, TimelineEve
 use parsers_core::Parser;
 
 // Import all parsers
+use parser_cpplus_ubs::CpPlusUbsParser;
 use parser_dahua::DahuaParser;
 use parser_hikvision::HikvisionParser;
 use parser_honeywell::HoneywellParser;
-use parser_cpplus_ubs::CpPlusUbsParser;
+use parser_unified::UnifiedParser;
 use parser_uniview::UniviewParser;
 use tplink::TplinkParser;
 
-use serde::{Serialize, Deserialize};
+/// OEM key reserved for the generic fallback parser used on unresolved evidence.
+pub const UNIFIED_OEM_KEY: &str = "unified";
 
-#[derive(Debug, Serialize, Deserialize)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsingResult {
     pub parser_runs: Vec<ParserRun>,
     pub recordings: Vec<Recording>,
@@ -23,18 +27,48 @@ pub struct ParsingOrchestrator {
     parsers: std::collections::HashMap<String, Box<dyn Parser>>,
 }
 
+impl Default for ParsingOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParsingOrchestrator {
     pub fn new() -> Self {
-        let mut parsers: std::collections::HashMap<String, Box<dyn Parser>> = std::collections::HashMap::new();
-        
+        let mut parsers: std::collections::HashMap<String, Box<dyn Parser>> =
+            std::collections::HashMap::new();
+
         parsers.insert("dahua".to_string(), Box::new(DahuaParser::default()));
-        parsers.insert("hikvision".to_string(), Box::new(HikvisionParser::default()));
-        parsers.insert("honeywell".to_string(), Box::new(HoneywellParser::default()));
-        parsers.insert("cpplus_ubs".to_string(), Box::new(CpPlusUbsParser::default()));
+        parsers.insert(
+            "hikvision".to_string(),
+            Box::new(HikvisionParser::default()),
+        );
+        parsers.insert(
+            "honeywell".to_string(),
+            Box::new(HoneywellParser::default()),
+        );
+        parsers.insert(
+            "cpplus_ubs".to_string(),
+            Box::new(CpPlusUbsParser::default()),
+        );
         parsers.insert("uniview".to_string(), Box::new(UniviewParser::default()));
         parsers.insert("tplink".to_string(), Box::new(TplinkParser::default()));
-        
+        // Generic fallback for the "Unresolved -> Unified parser" branch of the flow.
+        parsers.insert(
+            UNIFIED_OEM_KEY.to_string(),
+            Box::new(UnifiedParser::default()),
+        );
+
         Self { parsers }
+    }
+
+    /// Borrow the registered parser for an OEM key.
+    ///
+    /// Exposed so downstream stages (e.g. the recovery engine, which takes a
+    /// `&dyn Parser`) can reuse this single registry instead of constructing a
+    /// second, divergent one.
+    pub fn parser_for(&self, oem_key: &str) -> Option<&dyn Parser> {
+        self.parsers.get(oem_key).map(|p| p.as_ref())
     }
 
     pub fn run_parsing(
@@ -43,8 +77,12 @@ impl ParsingOrchestrator {
         reader: &dyn EvidenceReader,
         profile: &OemProfile,
     ) -> Result<ParsingResult, ForensicError> {
-        let parser = self.parsers.get(oem_key)
-            .ok_or_else(|| ForensicError::corrupt("ParsingOrchestrator", format!("No parser registered for OEM key: {}", oem_key)))?;
+        let parser = self.parsers.get(oem_key).ok_or_else(|| {
+            ForensicError::corrupt(
+                "ParsingOrchestrator",
+                format!("No parser registered for OEM key: {}", oem_key),
+            )
+        })?;
 
         let mut parser_runs = Vec::new();
 

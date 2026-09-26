@@ -9,12 +9,10 @@
 
 use chrono::Utc;
 use forensic_core::{
-    chain_of_custody::CustodyAction,
-    CapabilityStages, CaseId, EvidenceId, ExaminerId, Hash,
+    chain_of_custody::CustodyAction, CapabilityStages, CaseId, EvidenceId, ExaminerId, Hash,
 };
 use reporting::{
-    model::*,
-    CsvReportExporter, FormattedReportExporter, JsonReportExporter, ReportAuditor,
+    model::*, CsvReportExporter, FormattedReportExporter, JsonReportExporter, ReportAuditor,
 };
 
 fn create_full_test_report() -> ForensicReport {
@@ -31,6 +29,7 @@ fn create_full_test_report() -> ForensicReport {
             sha256: Hash::sha256(vec![0xAA; 32]),
             acquisition_status: "Complete".into(),
             source_safety_decision: "SafeReadOnly (Strict Kernel Write Guard)".into(),
+            examiner_timezone: None,
         },
         detection_summary: DetectionSummaryReport {
             detection_status: "Detected".into(),
@@ -85,7 +84,7 @@ fn create_full_test_report() -> ForensicReport {
         recovery_items: vec![
             RecoveryReportItem {
                 candidate_id: "cand-001".into(),
-                channel: 1,
+                channel: Some(1),
                 recovery_level: "L1".into(),
                 data_state: "Active".into(),
                 recovery_status: "Recoverable".into(),
@@ -93,10 +92,12 @@ fn create_full_test_report() -> ForensicReport {
                 source_length: 50 * 1024 * 1024,
                 validation_state: "PASS".into(),
                 validation_reason: "Direct indexed table entry validated".into(),
+                discovery_method: "index-claimed-probe".into(),
+                state_reason: "Region is claimed by authoritative index entry didx#0 and valid video was validated there".into(),
             },
             RecoveryReportItem {
                 candidate_id: "cand-002".into(),
-                channel: 2,
+                channel: Some(2),
                 recovery_level: "L2".into(),
                 data_state: "Orphaned".into(),
                 recovery_status: "Recoverable".into(),
@@ -104,6 +105,8 @@ fn create_full_test_report() -> ForensicReport {
                 source_length: 30 * 1024 * 1024,
                 validation_state: "PASS".into(),
                 validation_reason: "Orphan payload candidate; index missing but video stream valid".into(),
+                discovery_method: "unclaimed-scan-in-index-scope".into(),
+                state_reason: "Valid video is physically present here, and the authoritative recording index governs this region without referencing it".into(),
             }
         ],
         recovery_run_bounds: Some(RecoveryRunBoundsReport {
@@ -144,6 +147,11 @@ fn create_full_test_report() -> ForensicReport {
         ],
         chain_of_custody: vec![],
         limitations: ForensicReport::standard_limitations(),
+        detection_depth: None,
+        parsing_depth: None,
+        preliminary_timeline: None,
+        recovery_depth: None,
+        final_timeline_summary: None,
     }
 }
 
@@ -160,10 +168,20 @@ fn test_full_report_json_export_and_hashing() {
     let hash = ReportAuditor::hash_report(json_output.as_bytes());
     assert_eq!(hash.algorithm, forensic_core::HashAlgorithm::Sha256);
 
-    let artifact = ReportAuditor::create_report_artifact(report.evidence_id, "/reports/REP-2026-001.json", hash.clone(), "JSON");
+    let artifact = ReportAuditor::create_report_artifact(
+        report.evidence_id,
+        "/reports/REP-2026-001.json",
+        hash.clone(),
+        "JSON",
+    );
     assert_eq!(artifact.provenance.output_hash, hash);
 
-    let custody_event = ReportAuditor::create_custody_event(report.case_id, report.examiner_id.clone(), hash, "JSON");
+    let custody_event = ReportAuditor::create_custody_event(
+        report.case_id,
+        report.examiner_id.clone(),
+        hash,
+        "JSON",
+    );
     assert_eq!(custody_event.action, CustodyAction::Export);
 }
 
@@ -179,7 +197,8 @@ fn test_full_report_csv_export() {
     assert!(recov_csv.contains("cand-002,2,L2,Orphaned,Recoverable"));
 
     let time_csv = CsvReportExporter::export_timeline_csv(&report);
-    assert!(time_csv.contains("1,2026-09-01T12:00:00Z,2026-09-01 12:00:00,\"Recording Start (Camera 1)\""));
+    assert!(time_csv
+        .contains("1,2026-09-01T12:00:00Z,2026-09-01 12:00:00,\"Recording Start (Camera 1)\""));
 }
 
 #[test]
@@ -188,9 +207,13 @@ fn test_full_report_markdown_formatted_document() {
     let md = FormattedReportExporter::render_markdown_report(&report);
 
     assert!(md.contains("# DIGITAL FORENSIC EXAMINATION REPORT"));
-    assert!(md.contains("## 1. Case & Examiner Information"));
-    assert!(md.contains("## 3. OEM Detection & Attribution"));
-    assert!(md.contains("## 4. Recovered Video & Candidate Summary"));
-    assert!(md.contains("## 5. Artifact Registry & Lineage"));
-    assert!(md.contains("## 6. Stated Forensic Limitations"));
+    assert!(md.contains("## 1. Case & Examiner"));
+    assert!(md.contains("## 2. Selected Evidence & Integrity"));
+    assert!(md.contains("## 3. Detection — Where the Format Was Found"));
+    assert!(md.contains("## 4. Parsing — Where Frames Were Found and How They Were Confirmed"));
+    assert!(md.contains("## 5. Preliminary Timeline — Coverage and Gaps"));
+    assert!(md.contains("## 6. Recovery Engine — Staged Carving of Missing Footage"));
+    assert!(md.contains("## 7. Final Timeline"));
+    assert!(md.contains("## 8. Artifact Registry & Lineage"));
+    assert!(md.contains("## 9. Stated Forensic Limitations"));
 }

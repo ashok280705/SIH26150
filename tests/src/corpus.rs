@@ -6,10 +6,10 @@
 //! - All synthetic test cases carry `synthetic: true` (Req 19.11).
 //! - Incomplete cases missing any required expected field are rejected with an error.
 
+use forensic_core::{ForensicError, Hash, Region};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
-use forensic_core::{ForensicError, Hash, Region};
 
 /// A single validation corpus case definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,28 +34,52 @@ impl CorpusCase {
     /// Strict validation ensuring no required expected field is blank.
     pub fn validate(&self) -> Result<(), ForensicError> {
         if self.case_id.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing case_id"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing case_id",
+            ));
         }
         if self.expected_detection.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing expected_detection"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing expected_detection",
+            ));
         }
         if self.expected_detection_status.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing expected_detection_status"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing expected_detection_status",
+            ));
         }
         if self.expected_classification.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing expected_classification"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing expected_classification",
+            ));
         }
         if self.expected_attribution_status.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing expected_attribution_status"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing expected_attribution_status",
+            ));
         }
         if self.expected_parser_state.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing expected_parser_state"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing expected_parser_state",
+            ));
         }
         if self.expected_recovery_state.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing expected_recovery_state"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing expected_recovery_state",
+            ));
         }
         if self.expected_validation_state.trim().is_empty() {
-            return Err(ForensicError::corrupt("corpus_validation", "missing expected_validation_state"));
+            return Err(ForensicError::corrupt(
+                "corpus_validation",
+                "missing expected_validation_state",
+            ));
         }
         Ok(())
     }
@@ -73,9 +97,8 @@ impl CorpusLoader {
             return Ok(cases);
         }
 
-        let entries = fs::read_dir(dir).map_err(|e| {
-            ForensicError::io(format!("reading corpus dir {}", dir.display()), e)
-        })?;
+        let entries = fs::read_dir(dir)
+            .map_err(|e| ForensicError::io(format!("reading corpus dir {}", dir.display()), e))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
@@ -84,12 +107,14 @@ impl CorpusLoader {
             let path = entry.path();
 
             if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-                let content = fs::read_to_string(&path).map_err(|e| {
-                    ForensicError::io(format!("reading {}", path.display()), e)
-                })?;
+                let content = fs::read_to_string(&path)
+                    .map_err(|e| ForensicError::io(format!("reading {}", path.display()), e))?;
 
                 let case: CorpusCase = serde_json::from_str(&content).map_err(|e| {
-                    ForensicError::corrupt("corpus_loader", format!("invalid JSON in {}: {e}", path.display()))
+                    ForensicError::corrupt(
+                        "corpus_loader",
+                        format!("invalid JSON in {}: {e}", path.display()),
+                    )
                 })?;
 
                 case.validate()?;
@@ -106,19 +131,20 @@ impl CorpusLoader {
     /// Save a case manifest to disk as pretty JSON.
     pub fn save_case(dir: &Path, case: &CorpusCase) -> Result<PathBuf, ForensicError> {
         case.validate()?;
-        fs::create_dir_all(dir).map_err(|e| {
-            ForensicError::io(format!("creating corpus dir {}", dir.display()), e)
-        })?;
+        fs::create_dir_all(dir)
+            .map_err(|e| ForensicError::io(format!("creating corpus dir {}", dir.display()), e))?;
 
         let filename = format!("{}.json", case.case_id);
         let path = dir.join(filename);
         let json = serde_json::to_string_pretty(case).map_err(|e| {
-            ForensicError::corrupt("save_case", format!("serializing case {}: {e}", case.case_id))
+            ForensicError::corrupt(
+                "save_case",
+                format!("serializing case {}: {e}", case.case_id),
+            )
         })?;
 
-        fs::write(&path, json).map_err(|e| {
-            ForensicError::io(format!("writing case to {}", path.display()), e)
-        })?;
+        fs::write(&path, json)
+            .map_err(|e| ForensicError::io(format!("writing case to {}", path.display()), e))?;
 
         Ok(path)
     }

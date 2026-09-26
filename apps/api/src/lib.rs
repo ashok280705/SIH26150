@@ -1,13 +1,13 @@
 //! # forensic-api Library Interface
 
-pub mod state;
-pub mod handlers;
 pub mod capability_service;
 pub mod db;
+pub mod handlers;
+pub mod state;
 
-use std::path::PathBuf;
 use axum::routing::{get, post};
 use axum::Router;
+use std::path::PathBuf;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -54,22 +54,60 @@ pub fn app_router(state: AppState) -> Router {
         .allow_headers(Any);
 
     let mut router = Router::new()
-        .route("/api/cases", post(handlers::create_case).get(handlers::list_cases))
+        .route(
+            "/api/cases",
+            post(handlers::create_case).get(handlers::list_cases),
+        )
         .route("/api/cases/:id", get(handlers::get_case))
-        .route("/api/cases/:id/evidence", post(handlers::register_evidence).get(handlers::list_case_evidence))
+        .route(
+            "/api/cases/:id/evidence",
+            post(handlers::register_evidence).get(handlers::list_case_evidence),
+        )
         .route("/api/cases/:id/custody", get(handlers::get_custody_log))
         .route("/api/evidence/:id", get(handlers::get_evidence))
         .route("/api/evidence/:id/safety", get(handlers::get_source_safety))
-        .route("/api/evidence/:id/bytes", get(handlers::read_evidence_bytes))
+        .route(
+            "/api/evidence/:id/timezone",
+            post(handlers::set_evidence_timezone)
+                .delete(handlers::clear_evidence_timezone)
+                .get(handlers::get_evidence_timezone),
+        )
+        .route(
+            "/api/evidence/:id/bytes",
+            get(handlers::read_evidence_bytes),
+        )
         .route("/api/evidence/:id/search", get(handlers::search_evidence))
         .route("/api/evidence/:id/detection", post(handlers::run_detection))
         .route("/api/evidence/:id/parsing", post(handlers::run_parsing))
+        .route("/api/evidence/:id/recovery", post(handlers::run_recovery))
+        .route(
+            "/api/evidence/:id/recovery/gap",
+            post(handlers::recover_gap),
+        )
+        .route("/api/evidence/:id/timeline", get(handlers::get_timeline))
+        .route(
+            "/api/evidence/:id/pipeline/run",
+            post(handlers::run_full_pipeline),
+        )
+        .route("/api/evidence/:id/report", get(handlers::get_report))
         .route("/api/evidence/:id/topology", get(handlers::get_topology))
-        .route("/api/evidence/:id/recordings/:rec_id/reconstruct", post(handlers::reconstruct_recording))
-        .route("/api/evidence/:id/artifacts", get(handlers::list_evidence_artifacts))
+        .route(
+            "/api/evidence/:id/recordings/:rec_id/reconstruct",
+            post(handlers::reconstruct_recording),
+        )
+        .route(
+            "/api/evidence/:id/artifacts",
+            get(handlers::list_evidence_artifacts),
+        )
         .route("/api/artifacts/:id", get(handlers::get_artifact_handler))
-        .route("/api/artifacts/:id/verify", post(handlers::verify_artifact_handler))
-        .route("/api/artifacts/:id/video", get(handlers::stream_artifact_video))
+        .route(
+            "/api/artifacts/:id/verify",
+            post(handlers::verify_artifact_handler),
+        )
+        .route(
+            "/api/artifacts/:id/video",
+            get(handlers::stream_artifact_video),
+        )
         .route("/api/ffmpeg/status", get(handlers::get_ffmpeg_status))
         .route("/api/capabilities", get(handlers::get_capabilities));
 

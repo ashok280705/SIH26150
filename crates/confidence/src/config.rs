@@ -6,13 +6,13 @@
 //! - Classification parameters live in versioned configuration data, never hard-coded in source (Req 10.7).
 //! - Both `config_version` and `config_hash` are stamped onto every classified result as determinism inputs (Req 20.1).
 
-use std::fs;
-use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::Path;
 
-use forensic_core::evidence_status::EvidenceStatus;
 use forensic_core::evidence_item::RuleMatchStatus;
+use forensic_core::evidence_status::EvidenceStatus;
 use forensic_core::{ForensicError, Hash};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,7 +72,10 @@ impl ConfidenceConfig {
     /// Load from a TOML string, computing the config hash.
     pub fn from_toml_str(content: &str) -> Result<Self, ForensicError> {
         let raw: RawConfig = toml::from_str(content).map_err(|e| {
-            ForensicError::corrupt("confidence_config", format!("failed to parse classification TOML: {e}"))
+            ForensicError::corrupt(
+                "confidence_config",
+                format!("failed to parse classification TOML: {e}"),
+            )
         })?;
 
         let mut hasher = Sha256::new();
@@ -99,9 +102,8 @@ impl ConfidenceConfig {
 
     /// Load from file path.
     pub fn from_file(path: &Path) -> Result<Self, ForensicError> {
-        let content = fs::read_to_string(path).map_err(|e| {
-            ForensicError::io(format!("reading config at {}", path.display()), e)
-        })?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| ForensicError::io(format!("reading config at {}", path.display()), e))?;
         Self::from_toml_str(&content)
     }
 

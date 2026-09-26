@@ -1,11 +1,11 @@
 //! Media validation and ffprobe JSON output parser.
 
-use std::path::Path;
-use serde_json::Value;
-use forensic_core::{ForensicError, ValidationState, ValidationStateKind};
-use crate::reconstructor::VideoCodec;
-use super::types::{ProbeResult, ProbeStream};
 use super::command::build_probe_command;
+use super::types::{ProbeResult, ProbeStream};
+use crate::reconstructor::VideoCodec;
+use forensic_core::{ForensicError, ValidationState, ValidationStateKind};
+use serde_json::Value;
+use std::path::Path;
 
 /// Runs ffprobe on a target container file and parses the machine-readable JSON structure.
 pub async fn probe_media_file(
@@ -14,7 +14,10 @@ pub async fn probe_media_file(
 ) -> Result<ProbeResult, ForensicError> {
     if !target_path.exists() {
         return Err(ForensicError::io(
-            format!("probe_media_file: target '{}' does not exist", target_path.display()),
+            format!(
+                "probe_media_file: target '{}' does not exist",
+                target_path.display()
+            ),
             std::io::Error::new(std::io::ErrorKind::NotFound, "Target media file not found"),
         ));
     }
@@ -23,7 +26,10 @@ pub async fn probe_media_file(
     let mut cmd = spec.to_tokio_command();
 
     let output = cmd.output().await.map_err(|e| {
-        ForensicError::io(format!("executing ffprobe on '{}'", target_path.display()), e)
+        ForensicError::io(
+            format!("executing ffprobe on '{}'", target_path.display()),
+            e,
+        )
     })?;
 
     if !output.status.success() {
@@ -50,14 +56,34 @@ pub fn parse_probe_json(stdout_bytes: &[u8]) -> Result<ProbeResult, ForensicErro
 
     if let Some(stream_array) = json.get("streams").and_then(|s| s.as_array()) {
         for (i, st) in stream_array.iter().enumerate() {
-            let codec_type = st.get("codec_type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-            let codec_name = st.get("codec_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let codec_type = st
+                .get("codec_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let codec_name = st
+                .get("codec_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let w = st.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
             let h = st.get("height").and_then(|v| v.as_u64()).map(|v| v as u32);
-            let pix_fmt = st.get("pix_fmt").and_then(|v| v.as_str()).map(ToString::to_string);
-            let r_frame_rate = st.get("r_frame_rate").and_then(|v| v.as_str()).map(ToString::to_string);
-            let duration = st.get("duration").and_then(|v| v.as_str()).map(ToString::to_string);
-            let nb_frames = st.get("nb_frames").and_then(|v| v.as_str()).map(ToString::to_string);
+            let pix_fmt = st
+                .get("pix_fmt")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let r_frame_rate = st
+                .get("r_frame_rate")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let duration = st
+                .get("duration")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let nb_frames = st
+                .get("nb_frames")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
 
             if codec_type == "video" && video_codec.is_none() {
                 video_codec = Some(codec_name.clone());
@@ -98,7 +124,8 @@ pub fn parse_probe_json(stdout_bytes: &[u8]) -> Result<ProbeResult, ForensicErro
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<u64>().ok());
 
-    let is_valid_mp4 = format_name.contains("mp4") || format_name.contains("mov") || format_name.contains("isom");
+    let is_valid_mp4 =
+        format_name.contains("mp4") || format_name.contains("mov") || format_name.contains("isom");
 
     Ok(ProbeResult {
         streams,
@@ -123,7 +150,8 @@ pub fn validate_codec_consistency(
             "Output container is not recognized as valid ISO/IEC 14496-14 MP4",
             "validate_codec_consistency",
             "RemuxContainer",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     let Some(ref observed) = probe.video_codec else {
@@ -132,29 +160,42 @@ pub fn validate_codec_consistency(
             "No video stream identified in remuxed MP4 container",
             "validate_codec_consistency",
             "RemuxContainer",
-        ).unwrap();
+        )
+        .unwrap();
     };
 
     let matches = match expected_codec {
-        VideoCodec::H264 => observed.eq_ignore_ascii_case("h264") || observed.eq_ignore_ascii_case("avc1"),
-        VideoCodec::H265 => observed.eq_ignore_ascii_case("hevc") || observed.eq_ignore_ascii_case("h265"),
+        VideoCodec::H264 => {
+            observed.eq_ignore_ascii_case("h264") || observed.eq_ignore_ascii_case("avc1")
+        }
+        VideoCodec::H265 => {
+            observed.eq_ignore_ascii_case("hevc") || observed.eq_ignore_ascii_case("h265")
+        }
         _ => false,
     };
 
     if matches {
         ValidationState::new(
             ValidationStateKind::Pass,
-            format!("Stream-copy verified: container holds expected {:?} video stream ({})", expected_codec, observed),
+            format!(
+                "Stream-copy verified: container holds expected {:?} video stream ({})",
+                expected_codec, observed
+            ),
             "validate_codec_consistency",
             "RemuxContainer",
-        ).unwrap()
+        )
+        .unwrap()
     } else {
         ValidationState::new(
             ValidationStateKind::Review,
-            format!("Codec discrepancy: expected {:?} bitstream, but container probe observed '{}'", expected_codec, observed),
+            format!(
+                "Codec discrepancy: expected {:?} bitstream, but container probe observed '{}'",
+                expected_codec, observed
+            ),
             "validate_codec_consistency",
             "RemuxContainer",
-        ).unwrap()
+        )
+        .unwrap()
     }
 }
 

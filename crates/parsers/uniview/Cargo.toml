@@ -1,6 +1,6 @@
 [package]
 name = "parser-uniview"
-description = "Uniview OEM parser: profile-driven super metadata, region, index, and recording interpretation."
+description = "Uniview OEM parser: profile-driven SUPER, UI/UI-CTL, UI-DATA, unit/DI index, SPtoI-to-DATA resolution, raw DATA extraction and recovery."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,11 @@ forensic-core = { path = "../../forensic-core" }
 evidence-reader = { path = "../../evidence-reader" }
 parsers-core = { path = "../../parsers-core" }
 hex = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
-uuid = { workspace = true }
-forensic-tests = { path = "../../../tests" }
+serde_json = { workspace = true }
 tempfile = "3"

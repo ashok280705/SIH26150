@@ -7,9 +7,9 @@
 //! - No mandatory +faststart in primary forensic path
 //! - No `-y` overwrite flag (protecting against accidental file overwrites)
 
-use std::path::Path;
-use forensic_core::ForensicError;
 use crate::reconstructor::VideoCodec;
+use forensic_core::ForensicError;
+use std::path::Path;
 
 /// Structured specification of an external FFmpeg command invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,13 +47,15 @@ pub fn build_file_remux_command(
         VideoCodec::Mjpeg => {
             return Err(ForensicError::UnsupportedFormat {
                 format: "mjpeg".into(),
-                reason: "MJPEG stream-copy containerization is not supported in Phase 1 pipeline".into(),
+                reason: "MJPEG stream-copy containerization is not supported in Phase 1 pipeline"
+                    .into(),
             });
         }
         VideoCodec::Mpeg4 => {
             return Err(ForensicError::UnsupportedFormat {
                 format: "mpeg4".into(),
-                reason: "MPEG-4 elementary stream remuxing is not supported in Phase 1 pipeline".into(),
+                reason: "MPEG-4 elementary stream remuxing is not supported in Phase 1 pipeline"
+                    .into(),
             });
         }
         VideoCodec::Unknown => {
@@ -76,6 +78,13 @@ pub fn build_file_remux_command(
         "0:v:0".to_string(),
         "-c:v".to_string(),
         "copy".to_string(),
+        // The output muxer is stated explicitly rather than inferred from the
+        // filename. The writer stages output through a `.mp4.partial` temp file,
+        // and FFmpeg cannot derive a format from the `.partial` extension, so
+        // inference would fail. Being explicit also keeps the chosen container
+        // deterministic and independent of the temp-file naming scheme.
+        "-f".to_string(),
+        "mp4".to_string(),
         output_mp4_path.to_string_lossy().to_string(),
     ];
 
@@ -86,10 +95,7 @@ pub fn build_file_remux_command(
 }
 
 /// Builds the argument list for ffprobe machine-readable JSON inspection.
-pub fn build_probe_command(
-    ffprobe_bin: &str,
-    media_path: &Path,
-) -> CommandSpec {
+pub fn build_probe_command(ffprobe_bin: &str, media_path: &Path) -> CommandSpec {
     let args = vec![
         "-v".to_string(),
         "error".to_string(),
@@ -132,9 +138,15 @@ mod tests {
                 "0:v:0",
                 "-c:v",
                 "copy",
+                "-f",
+                "mp4",
                 "/tmp/recording.mp4.partial"
             ]
         );
+        // The output muxer must be explicit; the `.partial` temp extension is not
+        // inferable by FFmpeg.
+        assert_eq!(spec.args[spec.args.len() - 3], "-f");
+        assert_eq!(spec.args[spec.args.len() - 2], "mp4");
         // Assert no -y flag
         assert!(!spec.args.contains(&"-y".to_string()));
         // Assert no +faststart flag
@@ -165,7 +177,8 @@ mod tests {
         // Path with shell injection characters must remain a single literal string argument
         let malicious_input = PathBuf::from("/tmp/stream; rm -rf /; $(whoami).h264");
         let output = PathBuf::from("/tmp/output.mp4");
-        let spec = build_file_remux_command("ffmpeg", VideoCodec::H264, &malicious_input, &output).unwrap();
+        let spec = build_file_remux_command("ffmpeg", VideoCodec::H264, &malicious_input, &output)
+            .unwrap();
 
         assert_eq!(spec.args[6], "/tmp/stream; rm -rf /; $(whoami).h264");
         // Ensure no shell command wrapper exists
@@ -182,7 +195,15 @@ mod tests {
         assert_eq!(spec.program, "ffprobe");
         assert_eq!(
             spec.args,
-            vec!["-v", "error", "-show_streams", "-show_format", "-of", "json", "/tmp/recording.mp4"]
+            vec![
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                "/tmp/recording.mp4"
+            ]
         );
     }
 }

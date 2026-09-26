@@ -97,7 +97,10 @@ mod tests {
         assert!(token.is_cancelled());
         let err = token.check_cancelled("scanner", 1024).unwrap_err();
         match err {
-            forensic_core::ForensicError::Cancelled { context, bytes_processed } => {
+            forensic_core::ForensicError::Cancelled {
+                context,
+                bytes_processed,
+            } => {
                 assert_eq!(context, "scanner");
                 assert_eq!(bytes_processed, 1024);
             }

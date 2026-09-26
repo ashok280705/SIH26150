@@ -145,6 +145,10 @@ pub struct Evidence {
     pub path: String,
     /// When this evidence was registered.
     pub registered_at: DateTime<Utc>,
+    /// Optional examiner-established timezone assertion (e.g. from DVR configuration sheet).
+    /// Does NOT mutate parser-derived filesystem facts.
+    #[serde(default)]
+    pub examiner_timezone: Option<crate::time_evidence::ExaminerTimezone>,
 }
 
 impl Evidence {
@@ -173,6 +177,7 @@ impl Evidence {
             acquisition_id: None,
             path: path.into(),
             registered_at: Utc::now(),
+            examiner_timezone: None,
         }
     }
 
@@ -184,6 +189,15 @@ impl Evidence {
     ) -> Self {
         self.acquisition_tool = Some(tool.into());
         self.acquisition_tool_version = version.map(|v| v.into());
+        self
+    }
+
+    /// Set optional examiner-established timezone.
+    pub fn with_examiner_timezone(
+        mut self,
+        examiner_tz: crate::time_evidence::ExaminerTimezone,
+    ) -> Self {
+        self.examiner_timezone = Some(examiner_tz);
         self
     }
 }
@@ -284,7 +298,11 @@ mod tests {
 
     #[test]
     fn source_state_values() {
-        for state in [SourceState::ReadOnly, SourceState::ReadWrite, SourceState::Unknown] {
+        for state in [
+            SourceState::ReadOnly,
+            SourceState::ReadWrite,
+            SourceState::Unknown,
+        ] {
             let json = serde_json::to_string(&state).unwrap();
             let back: SourceState = serde_json::from_str(&json).unwrap();
             assert_eq!(state, back);

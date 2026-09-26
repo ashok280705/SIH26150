@@ -70,7 +70,10 @@ pub fn validate_and_order_frames(mut frames: Vec<VideoFrame>) -> FrameOrderingRe
         let start_of_next = window[1].offset;
         if start_of_next > end_of_prev + 1024 {
             gaps.push(FrameGap {
-                region: Region { offset: end_of_prev, length: start_of_next - end_of_prev },
+                region: Region {
+                    offset: end_of_prev,
+                    length: start_of_next - end_of_prev,
+                },
                 expected_frame_count: 0, // Unknown
                 reason: "Missing frames between GOP boundaries".to_string(),
             });
@@ -78,14 +81,30 @@ pub fn validate_and_order_frames(mut frames: Vec<VideoFrame>) -> FrameOrderingRe
     }
 
     let validation = if !rejected.is_empty() {
-        ValidationState::new(ValidationStateKind::Review, "validate_and_order_frames",
-            &format!("{} frame(s) rejected with reasons", rejected.len()), "Frames").unwrap()
+        ValidationState::new(
+            ValidationStateKind::Review,
+            "validate_and_order_frames",
+            format!("{} frame(s) rejected with reasons", rejected.len()),
+            "Frames",
+        )
+        .unwrap()
     } else if !gaps.is_empty() {
-        ValidationState::new(ValidationStateKind::Review, "validate_and_order_frames",
-            &format!("{} gap(s) detected", gaps.len()), "Frames").unwrap()
+        // (state, reason, operation, subject): the reason is what an examiner reads.
+        ValidationState::new(
+            ValidationStateKind::Review,
+            format!("{} gap(s) detected", gaps.len()),
+            "validate_and_order_frames",
+            "Frames",
+        )
+        .expect("formatted reason is non-empty")
     } else {
-        ValidationState::new(ValidationStateKind::Pass, "validate_and_order_frames",
-            "All frames valid and ordered", "Frames").unwrap()
+        ValidationState::new(
+            ValidationStateKind::Pass,
+            "All frames valid and ordered",
+            "validate_and_order_frames",
+            "Frames",
+        )
+        .expect("static reason is non-empty")
     };
 
     FrameOrderingResult {
@@ -99,15 +118,24 @@ pub fn validate_and_order_frames(mut frames: Vec<VideoFrame>) -> FrameOrderingRe
 /// Checks whether FFmpeg is available. When absent, validation is UNKNOWN/REVIEW, never PASS.
 pub fn check_ffmpeg_availability() -> ValidationState {
     // Check if ffmpeg binary exists on PATH
-    match std::process::Command::new("ffmpeg").arg("-version").output() {
-        Ok(output) if output.status.success() => {
-            ValidationState::new(ValidationStateKind::Pass, "check_ffmpeg",
-                "FFmpeg available for remux", "FFmpeg").unwrap()
-        }
-        _ => {
-            ValidationState::new(ValidationStateKind::Unknown, "check_ffmpeg",
-                "FFmpeg not available; remux/transmux cannot be performed", "FFmpeg").unwrap()
-        }
+    match std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+    {
+        Ok(output) if output.status.success() => ValidationState::new(
+            ValidationStateKind::Pass,
+            "FFmpeg available for remux",
+            "check_ffmpeg",
+            "FFmpeg",
+        )
+        .expect("static reason is non-empty"),
+        _ => ValidationState::new(
+            ValidationStateKind::Unknown,
+            "FFmpeg not available; remux/transmux cannot be performed",
+            "check_ffmpeg",
+            "FFmpeg",
+        )
+        .unwrap(),
     }
 }
 
@@ -118,8 +146,24 @@ mod tests {
     #[test]
     fn test_ordering_by_timestamp_not_physical_offset() {
         let frames = vec![
-            VideoFrame { offset: 2000, size: 100, frame_type: FrameType::IFrame, timestamp: Some(1), channel_id: None, is_valid: true, rejection_reason: None },
-            VideoFrame { offset: 1000, size: 100, frame_type: FrameType::PFrame, timestamp: Some(2), channel_id: None, is_valid: true, rejection_reason: None },
+            VideoFrame {
+                offset: 2000,
+                size: 100,
+                frame_type: FrameType::IFrame,
+                timestamp: Some(1),
+                channel_id: None,
+                is_valid: true,
+                rejection_reason: None,
+            },
+            VideoFrame {
+                offset: 1000,
+                size: 100,
+                frame_type: FrameType::PFrame,
+                timestamp: Some(2),
+                channel_id: None,
+                is_valid: true,
+                rejection_reason: None,
+            },
         ];
         let result = validate_and_order_frames(frames);
         // Physical offset 2000 comes first because its timestamp (1) is earlier
@@ -130,21 +174,56 @@ mod tests {
     #[test]
     fn test_malformed_frames_rejected_with_reason() {
         let frames = vec![
-            VideoFrame { offset: 0, size: 100, frame_type: FrameType::IFrame, timestamp: Some(1), channel_id: None, is_valid: true, rejection_reason: None },
-            VideoFrame { offset: 100, size: 50, frame_type: FrameType::Unknown, timestamp: None, channel_id: None, is_valid: false, rejection_reason: Some("Invalid NAL header".to_string()) },
+            VideoFrame {
+                offset: 0,
+                size: 100,
+                frame_type: FrameType::IFrame,
+                timestamp: Some(1),
+                channel_id: None,
+                is_valid: true,
+                rejection_reason: None,
+            },
+            VideoFrame {
+                offset: 100,
+                size: 50,
+                frame_type: FrameType::Unknown,
+                timestamp: None,
+                channel_id: None,
+                is_valid: false,
+                rejection_reason: Some("Invalid NAL header".to_string()),
+            },
         ];
         let result = validate_and_order_frames(frames);
         assert_eq!(result.ordered_frames.len(), 1);
         assert_eq!(result.rejected_frames.len(), 1);
-        assert_eq!(result.rejected_frames[0].rejection_reason.as_deref(), Some("Invalid NAL header"));
+        assert_eq!(
+            result.rejected_frames[0].rejection_reason.as_deref(),
+            Some("Invalid NAL header")
+        );
         assert_eq!(result.validation.state, ValidationStateKind::Review);
     }
 
     #[test]
     fn test_no_synthesized_frames_on_gap() {
         let frames = vec![
-            VideoFrame { offset: 0, size: 100, frame_type: FrameType::IFrame, timestamp: Some(1), channel_id: None, is_valid: true, rejection_reason: None },
-            VideoFrame { offset: 5000, size: 100, frame_type: FrameType::IFrame, timestamp: Some(2), channel_id: None, is_valid: true, rejection_reason: None },
+            VideoFrame {
+                offset: 0,
+                size: 100,
+                frame_type: FrameType::IFrame,
+                timestamp: Some(1),
+                channel_id: None,
+                is_valid: true,
+                rejection_reason: None,
+            },
+            VideoFrame {
+                offset: 5000,
+                size: 100,
+                frame_type: FrameType::IFrame,
+                timestamp: Some(2),
+                channel_id: None,
+                is_valid: true,
+                rejection_reason: None,
+            },
         ];
         let result = validate_and_order_frames(frames);
         // Gap detected, but output count is exactly 2 — no frames synthesized

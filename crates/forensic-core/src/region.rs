@@ -59,14 +59,8 @@ impl Region {
         if self.is_empty() || other.is_empty() {
             return false;
         }
-        let self_end = match self.end() {
-            Some(e) => e,
-            None => u64::MAX,
-        };
-        let other_end = match other.end() {
-            Some(e) => e,
-            None => u64::MAX,
-        };
+        let self_end = self.end().unwrap_or(u64::MAX);
+        let other_end = other.end().unwrap_or(u64::MAX);
         self.offset < other_end && other.offset < self_end
     }
 
@@ -90,7 +84,11 @@ impl Region {
 impl std::fmt::Display for Region {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.end() {
-            Some(end) => write!(f, "[0x{:X}..0x{:X}) ({} bytes)", self.offset, end, self.length),
+            Some(end) => write!(
+                f,
+                "[0x{:X}..0x{:X}) ({} bytes)",
+                self.offset, end, self.length
+            ),
             None => write!(f, "[0x{:X}..overflow) ({} bytes)", self.offset, self.length),
         }
     }

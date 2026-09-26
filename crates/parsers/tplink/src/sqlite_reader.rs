@@ -14,8 +14,12 @@ impl SqliteForensicReader {
         // Enforce forensic safety: URI params for Read-Only + Immutable
         let uri = format!("file:{}?mode=ro&immutable=1", path);
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI;
-        let connection = Connection::open_with_flags(&uri, flags)
-            .map_err(|e| ForensicError::corrupt("sqlite_reader", format!("Failed to open immutable SQLite DB: {}", e)))?;
+        let connection = Connection::open_with_flags(&uri, flags).map_err(|e| {
+            ForensicError::corrupt(
+                "sqlite_reader",
+                format!("Failed to open immutable SQLite DB: {}", e),
+            )
+        })?;
 
         Ok(Self { connection })
     }

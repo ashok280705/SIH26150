@@ -7,11 +7,11 @@
 //! - Stored as a `DerivedArtifact` that never replaces or alters native evidence (Req 16.6, 5.9).
 //! - Findings NEVER feed back into OEM attribution or recovery classification (Req 16.6).
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use crate::identifiers::EvidenceId;
 use crate::provenance::Provenance;
 use crate::region::Region;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// An AI-detected finding in a validated recording or video clip.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,7 +25,7 @@ pub struct AiFinding {
     pub confidence: f64,
     pub bounding_box: Option<BoundingBox>,
     pub source_region: Region,
-    
+
     /// Mandatory AI-assisted label (Req 16.3).
     pub is_ai_assisted: bool,
     pub disclaimer: String,
@@ -44,6 +44,8 @@ pub struct BoundingBox {
 }
 
 impl AiFinding {
+    // A plain data constructor: each argument is one required field of the finding.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         evidence_id: EvidenceId,
         recording_id: String,
@@ -66,7 +68,8 @@ impl AiFinding {
             bounding_box,
             source_region,
             is_ai_assisted: true,
-            disclaimer: "AI-assisted finding; probabilistic analysis only; not absolute truth".to_string(),
+            disclaimer: "AI-assisted finding; probabilistic analysis only; not absolute truth"
+                .to_string(),
             provenance,
             created_at: Utc::now(),
         }
@@ -99,8 +102,16 @@ mod tests {
             "2026-09-01T12:00:00Z".into(),
             "PersonDetected".into(),
             0.88,
-            Some(BoundingBox { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }),
-            Region { offset: 1024, length: 512 },
+            Some(BoundingBox {
+                x: 0.1,
+                y: 0.2,
+                width: 0.3,
+                height: 0.4,
+            }),
+            Region {
+                offset: 1024,
+                length: 512,
+            },
             prov,
         );
 

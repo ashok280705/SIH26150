@@ -156,8 +156,12 @@ fn diff_json_values(path: &str, a: &serde_json::Value, b: &serde_json::Value) ->
                     (Some(va), Some(vb)) => {
                         diffs.extend(diff_json_values(&child_path, va, vb));
                     }
-                    (Some(_), None) => diffs.push(format!("{child_path}: present in A, missing in B")),
-                    (None, Some(_)) => diffs.push(format!("{child_path}: missing in A, present in B")),
+                    (Some(_), None) => {
+                        diffs.push(format!("{child_path}: present in A, missing in B"))
+                    }
+                    (None, Some(_)) => {
+                        diffs.push(format!("{child_path}: missing in A, present in B"))
+                    }
                     (None, None) => unreachable!(),
                 }
             }

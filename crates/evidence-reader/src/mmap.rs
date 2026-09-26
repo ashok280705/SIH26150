@@ -2,8 +2,13 @@
 //!
 //! Provides safe, bounded, read-only memory mappings for evidence chunks (Req 8.4, 1.6).
 //!
+//! **Platform support: Unix-only.** The actual mapping path is gated behind
+//! `#[cfg(unix)]` and uses `mmap(2)` with `PROT_READ`/`MAP_PRIVATE`. There is currently
+//! no Windows implementation; on non-Unix targets [`ReadOnlyMmap::map_region`] returns an
+//! error rather than mapping. A Windows (`PAGE_READONLY`) backend is not implemented.
+//!
 //! Key invariants:
-//! - Mappings are strictly read-only (`PROT_READ` / `PAGE_READONLY`).
+//! - Mappings are strictly read-only (`PROT_READ`).
 //! - No writable mapping is ever created (Req 1.6).
 //! - Large evidence files never force a full-image mapping.
 
@@ -35,7 +40,10 @@ impl ReadOnlyMmap {
         validate_region_bounds(&region, total_len)?;
 
         if region.length == 0 {
-            return Err(ForensicError::corrupt("mmap_region", "cannot mmap zero-length region"));
+            return Err(ForensicError::corrupt(
+                "mmap_region",
+                "cannot mmap zero-length region",
+            ));
         }
 
         #[cfg(unix)]
@@ -62,7 +70,11 @@ impl ReadOnlyMmap {
 
             if ptr == libc::MAP_FAILED {
                 return Err(ForensicError::io(
-                    format!("mmap region [0x{:X}..0x{:X})", region.offset, region.offset + region.length),
+                    format!(
+                        "mmap region [0x{:X}..0x{:X})",
+                        region.offset,
+                        region.offset + region.length
+                    ),
                     std::io::Error::last_os_error(),
                 ));
             }

@@ -243,7 +243,10 @@ impl DeterministicRng {
     }
 
     fn next_u8(&mut self) -> u8 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.state >> 33) as u8
     }
 
@@ -254,14 +257,37 @@ impl DeterministicRng {
     }
 }
 
-/// Get a synthetic primary "magic" bytes pattern for an OEM shape.
+/// Get the primary "magic" bytes pattern for an OEM shape.
+///
+/// These are the OEM's **real** identifier bytes, matching the versioned profile. An earlier
+/// revision used invented tags for Hikvision (`HIK_` / `HKSEG`) which appear nowhere in the
+/// Hikvision filesystem; a fixture built on those tested only that the parser agreed with the
+/// fixture, not that either agreed with the format.
 fn synthetic_magic(oem: OemShape) -> &'static [u8] {
     match oem {
         OemShape::Dahua => b"DHFS",
-        OemShape::Hikvision => b"HIK_",
+        OemShape::Hikvision => b"HIKVISION@HANGZHOU",
         OemShape::Honeywell => b"HONEYWELL",
         OemShape::CpPlusUbs => b"UBS_",
         OemShape::Uniview => b"UNIV",
+    }
+}
+
+/// Where the OEM's primary identifier sits in its own structures.
+///
+/// Most of these formats put their magic at offset 0. Hikvision does not: its identifier is a
+/// 32-byte field at `+16` inside a boot structure that itself begins at `0x200`, i.e. absolute
+/// offset 528. Placing it at 0 would produce a fixture no real detector should ever accept.
+///
+/// Note what this file can and cannot do. These are small adversarial *detection* shapes; a
+/// fixture that exercises the whole Hikvision production path needs a boot structure with live
+/// tree pointers, a HIKBTREE, video blocks and footer clip indexes, which is what
+/// [`crate::hikvision_fixtures`] builds.
+fn primary_magic_offset(oem: OemShape) -> usize {
+    match oem {
+        // boot_candidate_offset_primary (512) + boot_identifier_offset (16)
+        OemShape::Hikvision => 528,
+        _ => 0,
     }
 }
 
@@ -269,7 +295,7 @@ fn synthetic_magic(oem: OemShape) -> &'static [u8] {
 fn synthetic_corroborating_tag(oem: OemShape) -> &'static [u8] {
     match oem {
         OemShape::Dahua => b"DHAV",
-        OemShape::Hikvision => b"HKSEG",
+        OemShape::Hikvision => b"HIKBTREE",
         OemShape::Honeywell => b"MPRO",
         OemShape::CpPlusUbs => b"CPPLUS",
         OemShape::Uniview => b"EC1001",
@@ -278,27 +304,40 @@ fn synthetic_corroborating_tag(oem: OemShape) -> &'static [u8] {
 
 const FIXTURE_SIZE: usize = 8192; // 8 KiB — small enough for fast tests
 
+/// Write `magic` at the OEM's declared primary offset, returning the byte just past it.
+fn place_primary_magic(buf: &mut [u8], oem: OemShape) -> usize {
+    let magic = synthetic_magic(oem);
+    let at = primary_magic_offset(oem);
+    let end = (at + magic.len()).min(buf.len());
+    if at < buf.len() {
+        buf[at..end].copy_from_slice(&magic[..end - at]);
+    }
+    end
+}
+
 fn generate_normal(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE];
-    // Place primary magic at offset 0.
-    let magic = synthetic_magic(oem);
-    buf[..magic.len()].copy_from_slice(magic);
-    // Fill structure area with deterministic data.
-    rng.fill(&mut buf[magic.len()..512]);
-    // Place secondary corroborating tag at offset 512.
+    // Place the primary identifier at the offset this OEM's structures put it.
+    let magic_end = place_primary_magic(&mut buf, oem);
+    // Place the secondary corroborating tag at offset 512.
     let tag = synthetic_corroborating_tag(oem);
     buf[512..512 + tag.len()].copy_from_slice(tag);
-    // Fill remaining data area.
-    rng.fill(&mut buf[512 + tag.len()..]);
+    // Fill the remaining structure and data areas with deterministic bytes, without
+    // overwriting either structure.
+    let fill_from = magic_end.max(512 + tag.len());
+    rng.fill(&mut buf[fill_from..]);
+    if primary_magic_offset(oem) > 512 + tag.len() {
+        // The identifier sits after the tag; fill the gap between them too.
+        rng.fill(&mut buf[512 + tag.len()..primary_magic_offset(oem)]);
+    } else {
+        rng.fill(&mut buf[magic_end..512]);
+    }
     buf
 }
 
-
 fn generate_sparse(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE * 4]; // Larger, mostly zeros.
-    let magic = synthetic_magic(oem);
-    buf[..magic.len()].copy_from_slice(magic);
-    rng.fill(&mut buf[magic.len()..512]);
+    place_primary_magic(&mut buf, oem);
     // Data at end only — middle is sparse (zeros).
     rng.fill(&mut buf[FIXTURE_SIZE * 3..]);
     buf
@@ -314,9 +353,9 @@ fn generate_truncated(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
 fn generate_fragmented(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE * 2];
     let magic = synthetic_magic(oem);
-    // Place magic at offset 0 and at a non-contiguous offset.
-    buf[..magic.len()].copy_from_slice(magic);
-    rng.fill(&mut buf[magic.len()..256]);
+    // Place the identifier at its declared offset and again at a non-contiguous offset.
+    let magic_end = place_primary_magic(&mut buf, oem);
+    rng.fill(&mut buf[magic_end..magic_end + 256]);
     let second_offset = FIXTURE_SIZE + 1024;
     if second_offset + magic.len() <= buf.len() {
         buf[second_offset..second_offset + magic.len()].copy_from_slice(magic);
@@ -327,13 +366,15 @@ fn generate_fragmented(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
 
 fn generate_overlapping(rng: &mut DeterministicRng, _oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE];
-    // Place multiple different OEM-shape magics to simulate ambiguity.
+    // Place several OEM identifiers to simulate ambiguity. Each goes at its own declared
+    // offset where it has one, so the conflict is between plausible readings rather than
+    // between values no detector would look at.
     for (i, shape) in OemShape::all().iter().enumerate() {
-        let offset = i * 512;
-        if offset + 16 <= buf.len() {
-            let magic = synthetic_magic(*shape);
-            let end = (offset + magic.len()).min(buf.len());
-            buf[offset..end].copy_from_slice(&magic[..end - offset]);
+        let magic = synthetic_magic(*shape);
+        let declared = primary_magic_offset(*shape);
+        let offset = if declared > 0 { declared } else { i * 512 };
+        if offset + magic.len() <= buf.len() {
+            buf[offset..offset + magic.len()].copy_from_slice(magic);
         }
     }
     rng.fill(&mut buf[2560..]);
@@ -343,8 +384,11 @@ fn generate_overlapping(rng: &mut DeterministicRng, _oem: OemShape) -> Vec<u8> {
 fn generate_wrong_offset(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE];
     let magic = synthetic_magic(oem);
-    // Place magic at an unexpected offset instead of 0.
+    // Place the identifier at an offset the OEM's structures never put it at. 777 is not a
+    // declared boot position for any supported OEM, and it is not 528, so it is genuinely wrong
+    // for Hikvision too.
     let wrong_offset = 777;
+    debug_assert_ne!(wrong_offset, primary_magic_offset(oem));
     buf[wrong_offset..wrong_offset + magic.len()].copy_from_slice(magic);
     rng.fill(&mut buf[wrong_offset + magic.len()..wrong_offset + 512]);
     buf
@@ -352,17 +396,20 @@ fn generate_wrong_offset(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
 
 fn generate_lone_magic(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE];
-    let magic = synthetic_magic(oem);
-    // Only the magic value, nothing else — should NOT pass detection.
-    buf[..magic.len()].copy_from_slice(magic);
+    // Only the identifier, nothing else — must NOT pass detection, because a lone magic can be
+    // a fragment of a real disk or a file that happens to contain the string.
+    place_primary_magic(&mut buf, oem);
     let _ = rng; // Unused for this shape.
     buf
 }
 
 fn generate_overwritten(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = generate_normal(rng, oem);
-    // Zero out the structure area to simulate overwriting.
-    for byte in buf[0..512].iter_mut() {
+    // Zero out the structure area to simulate overwriting. The range must cover the OEM's own
+    // identifier, or an "overwritten" fixture would still detect cleanly.
+    let magic_end = primary_magic_offset(oem) + synthetic_magic(oem).len();
+    let wipe_to = magic_end.max(512).min(buf.len());
+    for byte in buf[0..wipe_to].iter_mut() {
         *byte = 0;
     }
     buf
@@ -372,7 +419,7 @@ fn generate_known_negative(rng: &mut DeterministicRng, _oem: OemShape) -> Vec<u8
     let mut buf = vec![0u8; FIXTURE_SIZE];
     rng.fill(&mut buf);
     // Put FAT32 magic instead
-    buf[82..82+8].copy_from_slice(b"FAT32   ");
+    buf[82..82 + 8].copy_from_slice(b"FAT32   ");
     buf
 }
 
@@ -393,9 +440,11 @@ fn generate_partial(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
 fn generate_false_positive(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = vec![0u8; FIXTURE_SIZE];
     rng.fill(&mut buf);
-    // Place magic in middle of random data
+    // Place the identifier in the middle of random data, far from any declared offset, so a
+    // detector that looks where the format says must reject it.
     let magic = synthetic_magic(oem);
-    buf[4096..4096+magic.len()].copy_from_slice(magic);
+    debug_assert_ne!(4096, primary_magic_offset(oem));
+    buf[4096..4096 + magic.len()].copy_from_slice(magic);
     buf
 }
 
@@ -410,8 +459,9 @@ fn generate_missing_frame(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> 
 
 fn generate_deleted(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = generate_normal(rng, oem);
-    // Set a common deleted marker (e.g., 0xE5 in FAT, or just zeroes in header)
-    buf[0] = 0xE5;
+    // Set a common deleted marker over the first byte of the OEM's own identifier, so the
+    // fixture is a damaged header rather than a clean one with a stray byte at offset 0.
+    buf[primary_magic_offset(oem)] = 0xE5;
     buf
 }
 
@@ -426,14 +476,14 @@ fn generate_unknown_model(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> 
     let mut buf = generate_normal(rng, oem);
     // Overwrite the corroborating tag with a valid but unknown tag
     let tag = synthetic_corroborating_tag(oem);
-    buf[512..512+tag.len()].copy_from_slice(&vec![b'X'; tag.len()]);
+    buf[512..512 + tag.len()].copy_from_slice(&vec![b'X'; tag.len()]);
     buf
 }
 
 fn generate_unknown_firmware(rng: &mut DeterministicRng, oem: OemShape) -> Vec<u8> {
     let mut buf = generate_normal(rng, oem);
     // Alter firmware version strings (dummy)
-    buf[1024..1024+4].copy_from_slice(b"V9.9");
+    buf[1024..1024 + 4].copy_from_slice(b"V9.9");
     buf
 }
 

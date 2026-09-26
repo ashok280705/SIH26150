@@ -1409,3 +1409,197 @@ body {
   font-size: 11.5px;
 }
 
+
+/* ==========================================================================
+   DVR-EXAMINER-STYLE PLAYER (timestamp overlay, frame info, transport)
+   ========================================================================== */
+
+/* Burned-in timestamp overlay, positioned in a chosen corner of the player */
+.dvr-overlay {
+  position: absolute;
+  z-index: 12;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 4px 8px;
+  border-radius: 3px;
+  background-color: rgba(0, 0, 0, 0.45);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
+.dvr-overlay .dvr-overlay-ch {
+  font-weight: 700;
+  font-size: 12.5px;
+}
+
+.dvr-overlay .dvr-overlay-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.dvr-overlay .dvr-overlay-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  opacity: 0.7;
+}
+
+.dvr-overlay-tl { top: 10px; left: 10px; }
+.dvr-overlay-tr { top: 10px; right: 10px; text-align: right; }
+.dvr-overlay-br { bottom: 10px; right: 10px; text-align: right; }
+.dvr-overlay-bl { bottom: 10px; left: 10px; }
+
+/* Dark "Current Frame Information" readout, mirrors DVR Examiner's info block */
+.dvr-frameinfo {
+  background-color: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  min-width: 210px;
+}
+
+.dvr-frameinfo-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-bottom: 4px;
+  font-family: var(--font-sans);
+}
+
+.dvr-frameinfo-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 11px;
+  padding: 1px 0;
+}
+
+.dvr-frameinfo-row .k {
+  color: #94a3b8;
+  font-family: var(--font-sans);
+}
+
+.dvr-frameinfo-row .v {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.dvr-frameinfo-row .v.accent { color: #60a5fa; }
+
+/* Round transport buttons (first/last, jump, step, play) */
+.dvr-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dvr-tbtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.dvr-tbtn:hover:not(:disabled) {
+  background-color: var(--accent);
+  color: #fff;
+}
+
+.dvr-tbtn:active:not(:disabled) { transform: scale(0.94); }
+
+.dvr-tbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.dvr-tbtn-play {
+  width: 42px;
+  height: 42px;
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.dvr-tbtn-play:hover:not(:disabled) { background-color: var(--accent-hover); }
+
+/* Speed selector chips */
+.dvr-speed {
+  display: inline-flex;
+  gap: 2px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.dvr-speed button {
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  background-color: transparent;
+  color: #94a3b8;
+  border: none;
+  cursor: pointer;
+}
+
+.dvr-speed button.active {
+  background-color: var(--accent);
+  color: #fff;
+}
+
+/* Overlay customization chips in the sidebar */
+.dvr-overlay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.dvr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dvr-chip:hover { background-color: var(--surface-muted); }
+
+.dvr-chip.active {
+  background-color: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.dvr-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+
+.dvr-color-swatch.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}

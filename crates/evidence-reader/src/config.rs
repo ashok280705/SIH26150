@@ -45,8 +45,8 @@ impl ReaderConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("failed to read reader config at {}: {e}", path.display()))?;
-        let config: Self = toml::from_str(&content)
-            .map_err(|e| format!("failed to parse reader config: {e}"))?;
+        let config: Self =
+            toml::from_str(&content).map_err(|e| format!("failed to parse reader config: {e}"))?;
         config.validate()?;
         Ok(config)
     }
@@ -73,7 +73,7 @@ impl ReaderConfig {
             status: "provisional".into(),
             read_window: ReadWindowConfig {
                 max_bytes: 16 * 1024 * 1024, // 16 MiB
-                min_bytes: 4096,              // 4 KiB
+                min_bytes: 4096,             // 4 KiB
                 allowed: Some(ReadWindowAllowed {
                     max_bytes: AllowedRange {
                         min: 8 * 1024 * 1024,  // 8 MiB

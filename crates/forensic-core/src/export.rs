@@ -77,7 +77,9 @@ pub fn finalize_export(
 
         Artifact::Derived(DerivedArtifact {
             id: artifact_id,
-            kind: request.derived_kind.unwrap_or(DerivedKind::Other("export".into())),
+            kind: request
+                .derived_kind
+                .unwrap_or(DerivedKind::Other("export".into())),
             provenance,
             output_path: request.output_path.clone(),
             description: request.description,
@@ -105,7 +107,11 @@ pub fn finalize_export(
         CustodyAction::Export,
         format!(
             "exported {} artifact '{}' with hash {}",
-            if request.is_derived { "derived" } else { "native" },
+            if request.is_derived {
+                "derived"
+            } else {
+                "native"
+            },
             request.output_path,
             output_hash
         ),
@@ -147,7 +153,8 @@ mod tests {
             profile_version: Some("dahua-1.0".into()),
             profile_hash: Some(Hash::sha256(vec![0x22; 32])),
             transformation_steps: vec![],
-            validation_state: ValidationState::pass("h264 stream intact", "export", "clip.mp4").unwrap(),
+            validation_state: ValidationState::pass("h264 stream intact", "export", "clip.mp4")
+                .unwrap(),
         };
 
         let output_hash = Hash::sha256(vec![0x33; 32]);

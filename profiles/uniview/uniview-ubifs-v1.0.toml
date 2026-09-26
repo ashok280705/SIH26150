@@ -1,43 +1,213 @@
 profile_id = "uniview-ubifs-v1.0"
-profile_version = "1.0.0"
+profile_version = "2.1.0"
 schema_version = "1.0"
 oem = "uniview"
-storage_family = "UNIVIEW_UBIFS"
+# The Uniview recorder filesystem is a proprietary SUPER / UI / DI / DATA layout, not UBIFS.
+# The profile id keeps its historical name so existing references stay valid; the storage
+# family states what the structures actually are.
+storage_family = "UNIVIEW_FS"
 
 [applicability]
 models = ["UNV-NVR", "UNV-XVR", "NVR301"]
 firmwares = []
 storage_variants = ["single_disk"]
-reference = "Uniview UBIFS Storage Layout Analysis 2024"
+reference = "Reverse-engineered Uniview recorder disk layout (vendor disktool analysis): SUPER block with generation magic, UI / UI-CTL, UI-DATA (new generation), 256 MiB units each holding a DI index and 16 KiB DATA blocks addressed by the 14-bit SPtoI block index. Structure facts only; DATA codec/container/framing is not established."
+
+# =================================================================================
+# Signatures
+# =================================================================================
+#
+# The SUPER magic is the primary vendor and generation signature: a little-endian u32 at
+# SUPER +0x00. Exactly one of the two can match. Nothing else — EcPortId, timestamps, UI,
+# DI or DATA — is required to identify the filesystem (CONFIRMED).
 
 [[signatures]]
-name = "uniview_super_magic"
-pattern_hex = "55 4E 49 56" # "UNIV"
+name = "uniview_super_magic_old"
+pattern_hex = "67 13 00 00" # u32 LE 0x1367
 evidence_status = "validated"
 weight = 0.85
 is_exclusive = true
-explanation = "Uniview filesystem superblock magic identifier"
+explanation = "Uniview SUPER magic 0x1367 (u32 LE at offset 0): OLD generation layout."
 
 [[signatures.offset_constraints]]
 type = "exact"
 offset = 0
 
 [[signatures]]
-name = "ec_port_id"
-pattern_hex = "45 43 31 30 30 31" # "EC1001"
-evidence_status = "model_specific"
-weight = 0.35
-is_exclusive = false # Corroborating evidence only (Req 25.4)
-explanation = "Uniview camera channel port descriptor identifier"
+name = "uniview_super_magic_new"
+pattern_hex = "87 15 00 00" # u32 LE 0x1587
+evidence_status = "validated"
+weight = 0.85
+is_exclusive = true
+explanation = "Uniview SUPER magic 0x1587 (u32 LE at offset 0): NEW generation layout."
 
 [[signatures.offset_constraints]]
-type = "header_window"
-max_offset = 65536
+type = "exact"
+offset = 0
+
+# disktool `-r data` export (.h3crd). Not a raw-disk signature: consulted only when neither
+# SUPER magic matches, and the evidence is then labelled a normalized export artifact. The
+# tag is the 20-byte NUL-terminated string the export routine copies into its 0x68-byte
+# header (dwords 38535669h 40303030h 77617568h 332D6965h 006D6F63h).
+[[signatures]]
+name = "uniview_h3crd_export_tag"
+pattern_hex = "69 56 53 38 30 30 30 40 68 75 61 77 65 69 2D 33 63 6F 6D" # "iVS8000@huawei-3com"
+evidence_status = "validated"
+weight = 0.85
+is_exclusive = true
+explanation = "Uniview/H3C disktool .h3crd export header tag at offset 0: an OLD-shaped single-unit exported artifact, not a physical disk."
+
+[[signatures.offset_constraints]]
+type = "exact"
+offset = 0
+
+# =================================================================================
+# Validation rules
+# =================================================================================
+
+[[validation_rules]]
+name = "super_magic_generation"
+description = "SUPER +0x00 is 0x1367 (OLD) or 0x1587 (NEW) as u32 LE, and the full 0x4000-byte SUPER block is in the image."
+evidence_status = "validated"
+weight = 0.85
+
+[[validation_rules]]
+name = "di_count_within_capacity"
+description = "A DI header's record count (including record 0, the header) does not exceed the vendor bound 0x4000; 0x4000 records fill the 0x40000-byte DI exactly. Above it disktool prints 'data index head abnormal' and continues."
+evidence_status = "validated"
+weight = 0.20
+
+# Structural corroboration evaluated by the detector. Never required: the SUPER magic alone
+# identifies the filesystem; a failed check is reported as a degraded filesystem warning.
+[[validation_rules]]
+name = "ui_header_plausible"
+description = "UI (OLD +0x06) / UI-CTL (NEW +0x0C) u16 rewrited flag is 0 or 1, and the raw current-unit value yields a written-unit count in 0..=max units."
+evidence_status = "provisional"
+weight = 0.10
+
+[[validation_rules]]
+name = "di_head_count_within_vendor_bound"
+description = "Unit 1's DI record count at +0x04 is <= 0x4000 (disktool's own check)."
+evidence_status = "validated"
+weight = 0.10
+
+[[validation_rules]]
+name = "di_first_entry_decodes"
+description = "Unit 1's DI record 1 carries a calendar-valid packed timestamp and an SPtoI >= 16 (beyond the DI blocks)."
+evidence_status = "provisional"
+weight = 0.15
+
+[[validation_rules]]
+name = "sptoi_selects_data"
+description = "A DI entry's 14-bit SPtoI selects a block at or beyond the DI region (SPtoI >= 0x40000 / 0x4000) whose 16 KiB lies inside the image."
+evidence_status = "validated"
+weight = 0.20
+
+[[validation_rules]]
+name = "adjacent_sptoi_span"
+description = "A DATA extent is inferred as SPtoI_next - SPtoI_current blocks when the next entry is valid and greater; otherwise only the selected block is claimed. Storage-span inference, not a recording boundary."
+evidence_status = "provisional"
+weight = 0.10
 
 [confidence_weights]
 max_possible_score = 1.20
 min_threshold = 0.65
 
+# =================================================================================
+# Structural layout
+# =================================================================================
+#
+# All multi-byte fields are little-endian. Offsets inside a structure are relative to that
+# structure's start. Confidence per value: C = CONFIRMED, S = STRONG INFERENCE,
+# T = TENTATIVE. Any offset not listed is one the platform has no evidence for.
 [layout]
-superblock_size = 512
-ec1001_start = 512
+
+# ── SUPER ────────────────────────────────────────────────────────────────────────
+uniview_super_offset = 0                        # C
+uniview_super_size = 16384                      # C 0x4000
+uniview_super_magic_offset = 0                  # C u32 LE
+uniview_super_last_write_time_offset = 20       # C 0x14, 5-byte packed timestamp
+uniview_super_start_storage_time_offset = 28    # C 0x1C, 5-byte packed timestamp
+uniview_super_ec_port_id_offset = 44            # C 0x2C, opaque
+uniview_super_ec_port_id_size = 64              # C 0x40
+
+# ── Packed timestamp ─────────────────────────────────────────────────────────────
+# year = b0 | ((b1 & 0x0F) << 8); month = b1 >> 4; day = b2 & 0x1F;
+# hour = ((b3 & 0x03) << 3) | (b2 >> 5); minute = b3 >> 2; second = b4 & 0x3F   (C)
+uniview_timestamp_size = 5
+# Plausibility window. Outside it a real calendar value is reported as implausible, never
+# dropped or clamped.
+uniview_timestamp_plausible_min_year = 2000
+uniview_timestamp_plausible_max_year = 2100
+
+# ── UI (OLD) / UI-CTL (NEW) ──────────────────────────────────────────────────────
+uniview_ui_offset = 16384                       # C 0x4000
+uniview_ui_size = 65536                         # C 0x10000
+uniview_ui_entry_size = 8                       # C
+uniview_old_ui_current_unit_offset = 0          # C current writing unit index
+uniview_old_ui_field_04_offset = 4              # C location; u16 meaning UNKNOWN
+uniview_old_ui_rewrited_offset = 6              # C u16 rewrited flag (ldrh)
+# Unit u's 8-byte time-index entry is UI slot u + 1, i.e. UI + (u + 1) * 8.      (C)
+uniview_old_ui_unit_entry_slot_addend = 1
+# Written unit count = UI[+0x00] - 1 (disktool FLOW).                            (C)
+uniview_old_ui_unit_count_adjust = -1
+uniview_new_uictl_current_unit_offset = 0       # C current unit index
+uniview_new_uictl_count_offset = 4              # C count/scaling field (raw)
+uniview_new_uictl_rewrited_offset = 12          # C 0x0C u16 rewrited flag (ldrh)
+uniview_new_uictl_entries_offset = 16           # C 0x10 time-index entries, numbered 0..
+# UI-CTL entry count = (UI-CTL[+0x04] >> 13) + 1.                               (C arithmetic)
+uniview_new_uictl_count_shift = 13
+# Written unit count = UI-CTL[+0x00] + 1 (disktool FLOW).                        (C)
+uniview_new_uictl_unit_count_adjust = 1
+
+# ── UI-DATA (NEW) ────────────────────────────────────────────────────────────────
+uniview_ui_data_base = 81920                    # C 0x14000
+uniview_ui_data_unit_size = 65536               # C 0x10000
+uniview_ui_data_entries_per_unit = 8192         # C 0x2000 8-byte entries
+# Storage unit u's time-index entry is UI-DATA global index u - 1:
+#   n = (u - 1) >> 13, slot = (u - 1) & 0x1FFF                                  (C)
+# Performance bound on UI-DATA units summarised per read. The geometry allows
+# (0x10014000 - 0x14000) / 0x10000 = 4096; the bound is deliberately not smaller.
+uniview_ui_data_scan_max_units = 4096
+
+# ── Units ────────────────────────────────────────────────────────────────────────
+uniview_old_unit_base = 81920                   # C 0x00014000
+uniview_new_unit_base = 268517376               # C 0x10014000
+uniview_unit_stride = 268435456                 # C 0x10000000
+uniview_unit_size = 268435456                   # C 0x10000000 (256 MiB)
+# Loop guard on unit enumeration (65536 units = 16 TiB). Not a semantic limit; a report
+# states when it stopped enumeration.
+uniview_max_units = 65536
+
+# ── DI ───────────────────────────────────────────────────────────────────────────
+uniview_di_offset_in_unit = 0                   # C
+uniview_di_size = 262144                        # C 0x40000 (256 KiB)
+uniview_di_write_bytes_offset = 0               # C per-unit write-data byte count
+uniview_di_entry_count_offset = 4               # C DI entry count
+uniview_di_header_unknown_offset = 8            # C location; meaning UNKNOWN
+uniview_di_header_unknown_size = 8
+uniview_di_entries_offset = 16                  # C 0x10
+uniview_di_entry_size = 16                      # C 0x10
+# Vendor bound on DI +0x04. The count includes record 0 (the header): entries are records
+# 1 .. count-1, and 0x4000 records fill the DI region exactly.                  (C)
+uniview_di_count_max = 16384
+
+# ── disktool .h3crd export ───────────────────────────────────────────────────────
+# 0x00000 header (0x68), 0x04000 UI copy, 0x14000 DI copy (count = copied entries, SPtoI
+# re-based to start at 16), 0x54000 raw DATA. An OLD-shaped single-unit artifact.
+uniview_h3crd_header_size = 104                 # C 0x68
+uniview_h3crd_constant_offset = 100             # S 0x64, from the export routine's frame layout
+uniview_h3crd_constant = 1454686837             # C 0x56B4C275 (meaning UNKNOWN)
+
+# ── DATA ─────────────────────────────────────────────────────────────────────────
+uniview_data_block_size = 16384                 # C 0x4000
+# SPtoI = (b7 << 6) | (b6 >> 2): a 14-bit DATA block index.   (C)
+# data_offset = unit_base + SPtoI * uniview_data_block_size      (C)
+uniview_sptoi_bits = 14
+
+# ── Bounds ───────────────────────────────────────────────────────────────────────
+# Upper bound on bytes one extraction call returns. Larger requests are refused, never
+# truncated.
+uniview_max_extract_bytes = 1073741824          # 1 GiB
+uniview_max_anomalies_per_unit = 64
+uniview_recovery_max_items = 1000000

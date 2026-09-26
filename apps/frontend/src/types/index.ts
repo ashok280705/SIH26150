@@ -34,6 +34,15 @@ export interface Evidence {
   acquisition_id?: string;
   path: string;
   registered_at: string;
+  examiner_timezone?: ExaminerTimezone | null;
+}
+
+export interface ExaminerTimezone {
+  timezone: string;
+  source: string;
+  established_by: string;
+  notes?: string | null;
+  established_at: string;
 }
 
 export interface Acquisition {
@@ -74,7 +83,8 @@ export interface HexChunkResponse {
   total_source_len: number;
 }
 
-export type CapabilityStage = 'NOT_IMPLEMENTED' | 'PARTIAL' | 'IMPLEMENTED';
+/** Wire format of `forensic_core::capability::CapabilityStage` (`serde(rename_all = "snake_case")`). */
+export type CapabilityStage = 'not_implemented' | 'partial' | 'implemented';
 
 export interface CapabilityStages {
   detection: CapabilityStage;
@@ -181,15 +191,38 @@ export interface DeletedCandidate {
   validation: ValidationState;
 }
 
-export type DataState = 'Active' | 'Deleted' | 'Orphaned' | 'Corrupted' | 'Overwritten';
+/**
+ * Physical state of the data on the medium.
+ *
+ * `Orphaned` requires positive evidence: an authoritative recording index governs those
+ * bytes and does not reference them. `Unindexed` records an *absence* of index evidence
+ * and must never be presented as a deletion finding.
+ */
+export type DataState =
+  | 'Active'
+  | 'Deleted'
+  | 'Orphaned'
+  | 'Unindexed'
+  | 'Corrupted'
+  | 'Overwritten';
 export type RecoveryStatus = 'Recoverable' | 'PartiallyRecoverable' | 'Unrecoverable';
 export type RecoveryLevel = 'L1' | 'L2' | 'L3';
 
+/**
+ * A recovery candidate as returned by POST /api/evidence/:id/recovery.
+ *
+ * Nullable fields are genuinely unknown for the evidence — they are not filled
+ * with placeholder values so the UI can state "Unknown" instead of implying a
+ * measurement that was never made.
+ */
 export interface RecoveryCandidateUI {
   id: string;
-  channel: number;
-  time_native: string;
-  duration_sec: number;
+  /** `null` when no index entry supplied a channel (carved video has none). */
+  channel: number | null;
+  time_native: string | null;
+  time_normalized: string | null;
+  timezone_state: string;
+  duration_sec: number | null;
   data_state: DataState;
   recovery_status: RecoveryStatus;
   recovery_level: RecoveryLevel;
@@ -198,8 +231,384 @@ export interface RecoveryCandidateUI {
   integrity_status: string;
   codec: string;
   validation: ValidationState;
+  nal_unit_count: number;
   has_native_artifact: boolean;
   has_derived_artifact: boolean;
+  /** How the candidate was found: an index-claimed probe, or a scan of unclaimed space. */
+  discovery_method: string;
+  /** Why this candidate received its `data_state`. Safe to display verbatim. */
+  state_reason: string;
+  /** The recovery engine's stable fragment id; post it back so the artifact traces to it. */
+  fragment_id?: string | null;
+  /** Every physical range of the candidate's recording, in recording order. */
+  source_regions?: { offset: number; length: number }[];
+  /** The OEM recording this candidate belongs to, when metadata established one. */
+  parent_recording?: string | null;
+  /**
+   * Post back as `recording_chain_id` for a frame-accurate export. `null` when only the
+   * raw `source_regions` (container bytes) can be exported.
+   */
+  recording_chain_id?: string | null;
+  /** Whether the bounds are an OEM container record's or a scan window's. */
+  framing?: string | null;
+  /** OEM-specific facts read from the structures, verbatim. */
+  oem_metadata?: Record<string, string>;
+}
+
+/** Raw backend RecoveryRun (forensic_core::RecoveryRun) plus scan totals. */
+export interface RecoveryResponse {
+  oem_key: string;
+  candidates: RecoveryCandidateUI[];
+  run: {
+    searched_bytes: number;
+    skipped_ranges: { offset: number; length: number }[];
+    candidate_count: number;
+    accepted: number;
+    rejected: number;
+    truncated: boolean;
+    cancelled: boolean;
+    validation_state: ValidationState;
+    reason: string;
+  };
+  total_bytes: number;
+  skipped_bytes: number;
+  /** Observability counters for the index-aware recovery run. */
+  metrics: RecoveryMetrics;
+  /** How the scan space was derived from OEM evidence, in plain language. */
+  plan_rationale: string;
+}
+
+/**
+ * Counters describing one index-aware recovery run: what the recorder's index claimed,
+ * what physical space that left unclaimed, and how the discovered candidates classified.
+ */
+export interface RecoveryMetrics {
+  oem_key: string;
+  profile_id: string;
+  geometry_available: boolean;
+  /** `"offset:length"` of the OEM-declared video payload region, if established. */
+  video_region: string | null;
+  index_region: string | null;
+  block_size: number | null;
+  /** True only when the index was fully parsed; required before any orphan finding. */
+  authoritative_index: boolean;
+  index_declared_entries: number | null;
+  index_entry_count: number;
+  claimed_range_count: number;
+  claimed_bytes: number;
+  unclaimed_region_count: number;
+  unclaimed_bytes: number;
+  orphan_eligible_region_count: number;
+  orphan_eligible_bytes: number;
+  scan_region_count: number;
+  scanned_bytes: number;
+  bytes_avoided_vs_full_scan: number;
+  candidate_count: number;
+  active_count: number;
+  orphaned_count: number;
+  unindexed_count: number;
+  deleted_count: number;
+  corrupted_count: number;
+  overwritten_count: number;
+  validation_failures: number;
+  skipped_range_count: number;
+  truncated: boolean;
+  cancelled: boolean;
+}
+
+export type OrderingMode = 'Normalized' | 'RecorderNative' | 'Physical';
+
+/**
+ * A forensic_core::Hash as serialised over the API.
+ *
+ * It is an object, not a string — `value` is the hex-encoded digest. Rendering the
+ * whole object in JSX throws "Objects are not valid as a React child", so always
+ * read `.value` (or use `hashHex`).
+ */
+export interface ForensicHash {
+  algorithm: string;
+  value: string;
+}
+
+/** Hex digest of a backend hash, tolerating a plain string or a missing value. */
+export function hashHex(hash: ForensicHash | string | null | undefined): string | null {
+  if (!hash) return null;
+  if (typeof hash === 'string') return hash;
+  return hash.value ?? null;
+}
+
+/** A backend forensic_core::TimelineEvent as serialised over the API. */
+export interface TimelineEventApi {
+  channel: number;
+  description: string;
+  source_offsets: { offset: number; length: number }[];
+  parser_id: string;
+  parser_version: string;
+  profile_id: string;
+  profile_hash: ForensicHash | string;
+  time: {
+    raw: { value: number; format: string };
+    recorder_native: { iso_8601: string } | null;
+    normalized: { iso_8601: string; method: string } | null;
+    reference: { iso_8601: string; source: string } | null;
+    timezone: 'Unknown' | { Known: string };
+    correction: unknown | null;
+  };
+}
+
+/** Response of GET /api/evidence/:id/timeline (timeline::UnifiedTimeline). */
+export interface UnifiedTimelineResponse {
+  oem_key: string;
+  ordering: OrderingMode;
+  has_unknown_timezones: boolean;
+  validation: ValidationState;
+  events: TimelineEventApi[];
+}
+
+// ── Pipeline (POST /api/evidence/:id/pipeline/run) ──────────────────────────
+
+export type PipelineStageName =
+  | 'intake'
+  | 'detection'
+  | 'confidence'
+  | 'threshold_gate'
+  | 'oem_extraction'
+  | 'unified_extraction'
+  | 'analyst_review'
+  | 'parsed_gate'
+  | 'preliminary_timeline'
+  | 'gap_gate'
+  | 'recovery'
+  | 'recovery_gate'
+  | 'final_timeline';
+
+export type StageStatus = 'completed' | 'skipped' | 'requires_analyst';
+
+export interface StageRecord {
+  stage: PipelineStageName;
+  status: StageStatus;
+  detail: string;
+}
+
+/** A recorded gate decision (serde-tagged by `gate`). */
+export interface GateRecord {
+  gate: 'threshold' | 'parsed' | 'gaps' | 'recovery';
+  decision: string;
+  reason?: string;
+  confidence?: number;
+  min_confidence?: number;
+  margin?: number;
+  min_margin?: number;
+}
+
+export interface AttributionSummary {
+  oem_key: string;
+  classification: string;
+  attribution_status: string;
+  confidence: number;
+  margin: number;
+  evidence_quality: number;
+  explanation: string;
+}
+
+export type PipelineOutcome =
+  | 'completed_no_gaps'
+  | 'completed_after_recovery'
+  | 'completed_partial_recovery'
+  | 'requires_analyst';
+
+export interface UnaccountedRegion {
+  region: {
+    offset: number;
+    length: number;
+  };
+  reason: string;
+}
+
+export interface GapCoverage {
+  total_bytes: number;
+  accounted_bytes: number;
+  unaccounted_bytes: number;
+  coverage_ratio: number;
+  largest_unaccounted?: UnaccountedRegion | null;
+  unaccounted_regions: UnaccountedRegion[];
+  method?: string;
+}
+
+/** A per-channel temporal gap in the unified timeline (timeline::TimelineGap). */
+export interface TimelineGap {
+  channel: number;
+  starts_after_iso: string;
+  ends_before_iso: string;
+  gap_seconds: number;
+  previous_offset: number;
+  next_offset: number;
+  reason: string;
+}
+
+export interface GapAnalysis {
+  temporal_gaps: TimelineGap[];
+  coverage: GapCoverage;
+  events_with_unknown_timezone: number;
+  events_without_normalized_time: number;
+  gaps_present: boolean;
+  validation: ValidationState;
+}
+
+// ── Per-recording timeline (timeline::sessions) ─────────────────────────────
+
+/** One stored stream packet projected onto the recording-session view. */
+export interface RecordingSegment {
+  channel: number;
+  start_native: string | null;
+  start_normalized: string | null;
+  source_offset: number;
+  source_length: number;
+  absolute_utc?: string | null;
+}
+
+/** A window inside a recording where footage is absent (timeline::SessionGap). */
+export interface SessionGap {
+  starts_after_native: string | null;
+  ends_before_native: string | null;
+  starts_after_normalized: string;
+  ends_before_normalized: string;
+  missing_seconds: number;
+  previous_offset: number;
+  /** Byte length of the segment before the gap. Recoverable region is
+   *  [previous_offset + previous_length, next_offset]. */
+  previous_length: number;
+  next_offset: number;
+  reason: string;
+}
+
+// ── Gap-targeted recovery (POST /api/evidence/:id/recovery/gap) ─────────────
+
+export interface GapRecoverySlot {
+  index: number;
+  /** "L1" | "L2" | "L3", or null when nothing could be carved. */
+  level: 'L1' | 'L2' | 'L3' | null;
+  /**
+   * `null` when no video was found in this slot.
+   *
+   * Finding nothing is an absence of evidence, so the backend asserts no state at all —
+   * in particular not `Deleted`. This endpoint has no recording index, so it also never
+   * returns `Active` or `Orphaned`; for index-backed states use the main recovery endpoint.
+   */
+  data_state: DataState | null;
+  /** `null` when no candidate was produced for this slot. */
+  recovery_status: RecoveryStatus | null;
+  start_offset_sec: number;
+  end_offset_sec: number;
+  offset: number;
+  /** Absolute offset of the first Annex-B start code in the slot (the recovered stream
+   *  data), or `offset` when the slot has no start code. The Hex button jumps here. */
+  data_offset?: number;
+  length: number;
+  codec: string;
+  nal_unit_count: number;
+  validation_state: string;
+  reason: string;
+}
+
+export interface GapRecoveryResponse {
+  channel: number;
+  oem_key: string;
+  scan_start: number;
+  scan_end: number;
+  nominal_seconds: number;
+  num_slots: number;
+  total_seconds: number;
+  recovered_seconds: number;
+  unrecovered_seconds: number;
+  decision: 'completely_recovered' | 'partially_recovered' | 'not_recovered';
+  slots: GapRecoverySlot[];
+}
+
+export interface GapRecoveryRequest {
+  channel: number;
+  scan_start: number;
+  scan_end: number;
+  gap_seconds: number;
+  nominal_seconds: number;
+  oem_key?: string;
+}
+
+export type RecoveryTargetType = 'temporal_gap' | 'physical_unaccounted';
+
+/** A recovery target (temporal gap or physical unaccounted region) handed to the Recovery Engine. */
+export interface GapRecoveryTarget {
+  id?: string;
+  targetType?: RecoveryTargetType;
+  channel: number;
+  scanStart: number;
+  scanEnd: number;
+  length?: number;
+  gapSeconds?: number | null;
+  nominalSeconds: number;
+  startNative?: string | null;
+  startNormalized?: string | null;
+  endNative?: string | null;
+  endNormalized?: string | null;
+  source?: string;
+  reason?: string;
+  sessionRef?: string | null;
+}
+
+export type TemporalBasis = 'absolute_utc' | 'device_local';
+
+/** A contiguous recording produced by one camera (timeline::RecordingSession). */
+export interface RecordingSession {
+  id: string;
+  channel: number;
+  start_native: string | null;
+  end_native: string | null;
+  start_normalized: string;
+  end_normalized: string;
+  timezone: string;
+  temporal_basis?: TemporalBasis;
+  segment_count: number;
+  span_seconds: number;
+  covered_seconds: number;
+  missing_seconds: number;
+  coverage_ratio: number;
+  nominal_segment_seconds: number;
+  gaps: SessionGap[];
+  segments: RecordingSegment[];
+  filesystem_timezone?: string | null;
+  examiner_timezone?: ExaminerTimezone | null;
+  timezone_conflict?: string | null;
+}
+
+/** The full per-recording view for an evidence image (timeline::RecordingTimeline). */
+export interface RecordingTimeline {
+  sessions: RecordingSession[];
+  channel_count: number;
+  total_segments: number;
+  total_recordings: number;
+  total_missing_seconds: number;
+  recordings_without_time: number;
+  recordings_with_unknown_timezone?: number;
+  examiner_timezone?: ExaminerTimezone | null;
+  method: string;
+}
+
+export interface PipelineRun {
+  stages: StageRecord[];
+  gates: GateRecord[];
+  attribution: AttributionSummary | null;
+  oem_key_used: string | null;
+  used_unified_fallback: boolean;
+  parsing: { parser_runs: unknown[]; recordings: unknown[]; timeline_events: unknown[] } | null;
+  preliminary_timeline: { events: unknown[] } | null;
+  recordings_timeline: RecordingTimeline | null;
+  gap_analysis: GapAnalysis | null;
+  recovery: { candidates: unknown[]; run: unknown; decision: string } | null;
+  final_timeline: { events: unknown[] } | null;
+  correlation_groups: unknown[];
+  outcome: PipelineOutcome;
+  requires_analyst: boolean;
+  analyst_reasons: string[];
 }
 
 export interface RecoveryRunUI {
@@ -269,5 +678,51 @@ export interface ReconstructResponse {
     validation_state: ValidationState;
     video_url: string;
   } | null;
+  /** Why no remuxed container exists, when `remux` is null. */
+  remux_error?: string | null;
+  /** What the downstream media pipeline actually did. */
+  media_pipeline?: MediaPipelineStatus;
   ffmpeg_status: FfmpegInfo;
+}
+
+/**
+ * The media pipeline's own account of one artifact.
+ *
+ * Every claim is gated on the corresponding operation having happened, so the UI must read
+ * these fields rather than inferring outcomes. In particular:
+ *
+ * - `validated` is only true when ffprobe ran and accepted the file. A host without ffprobe
+ *   reports `validation_status: "VALIDATION_UNAVAILABLE"` with `validated: false` — "could
+ *   not check" is not "checked and fine".
+ * - `decoded` is only true when FFmpeg produced actual frames. A successful remux is not a
+ *   decode.
+ * - `ai_analyzed` is only true when an analysis engine really ran. With none configured,
+ *   `ai_status` is `"AI_ANALYSIS_NOT_CONFIGURED"` and nothing was inferred.
+ */
+export interface MediaPipelineStatus {
+  artifact_id?: string;
+  artifact_found?: boolean;
+  /** VALID | INVALID | UNSUPPORTED | CORRUPTED | VALIDATION_UNAVAILABLE | VALIDATION_TIMEOUT | VALIDATION_NOT_RUN */
+  validation_status: string;
+  validated: boolean;
+  /** Measured codec, or the literal "UNKNOWN" when nothing established one. */
+  codec?: string;
+  /** "WxH", or the literal "UNKNOWN". */
+  resolution?: string;
+  duration_secs?: number | null;
+  decode_status?: unknown;
+  decoded: boolean;
+  frames_extracted: number;
+  frames_processed?: number;
+  /** "opencv" or "pure_rust_fallback" — whichever actually performed the operations. */
+  processing_backend?: string;
+  processing_status?: unknown;
+  ai_status: string;
+  ai_analyzed: boolean;
+  /** Explicit media error codes, e.g. FFPROBE_UNAVAILABLE, FFMPEG_TIMEOUT, NO_VIDEO_STREAM. */
+  errors: string[];
+  artifact_summary?: Record<string, unknown>;
+  validation_checks?: Array<{ name: string; outcome: string; detail: string }>;
+  frames?: Array<Record<string, unknown>>;
+  decode?: Record<string, unknown> | null;
 }

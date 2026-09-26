@@ -1,0 +1,60 @@
+[package]
+name = "media"
+description = "OEM-agnostic downstream media pipeline: validation, FFmpeg decode, standardized frames, image processing, and the AI analysis boundary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Downstream subsystem. It depends on `forensic-core` for the shared error, validation,
+# identifier and provenance vocabulary and on nothing else in the workspace. It must NOT
+# depend on `recovery` or on any `parsers/*` crate: the media layer is deliberately blind to
+# Hikvision, Dahua, Uniview, CP-Plus, Honeywell and TP-Link. Upstream crates hand it bytes and
+# whatever metadata they happen to know; everything else is UNKNOWN.
+[dependencies]
+forensic-core = { path = "../forensic-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+# Declared directly rather than with `workspace = true`. Workspace dependency inheritance is
+# ADDITIVE: a member's `features` list is appended to the one in `[workspace.dependencies]`,
+# and there is no way to subtract from it. Since the workspace entry is `features = ["full"]`,
+# inheriting here would compile net, fs, signal handling and the multi-thread scheduler — and
+# therefore mio and socket2 — on every `cargo test -p media`, none of which this crate touches.
+#
+# The version matches the workspace entry, so `Cargo.lock` still resolves to a single tokio.
+# Building the whole workspace unifies features upward for crates that do need `full`
+# (`apps/api`); this only keeps the media crate's own test runs lean.
+tokio = { version = "1", default-features = false, features = [
+  # spawning and reaping ffmpeg/ffprobe children
+  "process",
+  # reading their stdout/stderr pipes
+  "io-util",
+  # the semaphore that bounds concurrent child processes
+  "sync",
+  # the current-thread scheduler `#[tokio::test]` uses
+  "rt",
+  # the timer that enforces the process budget
+  "time",
+  # `#[tokio::test]`
+  "macros",
+] }
+
+# The `opencv` crate links against a native OpenCV installation, which is not present on every
+# build host. It is therefore OPTIONAL. With the feature off, `process::FrameProcessor` runs a
+# pure-Rust fallback backend and reports `ProcessingBackend::PureRustFallback` — the pipeline
+# never claims OpenCV performed an operation that OpenCV did not perform.
+opencv = { version = "0.94", default-features = false, features = ["imgproc"], optional = true }
+
+[features]
+default = []
+opencv-backend = ["dep:opencv"]
+
+[dev-dependencies]
+# No `tokio` entry here on purpose. `#[tokio::test]` needs `macros` + `rt`, which the normal
+# dependency above already enables, so a dev-dependency would add nothing except to re-enable
+# `full` — and dev-dependency features unify into the test build, so that one line would pull
+# the whole runtime back in for every test run.
+tempfile = "3"

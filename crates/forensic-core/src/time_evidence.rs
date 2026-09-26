@@ -2,13 +2,35 @@
 //!
 //! Models representing timestamps extracted from DVR/NVR filesystems.
 //!
-//! To satisfy evidentiary requirements (Req 4.1–4.7, 24.2), this module maintains strict separation 
+//! To satisfy evidentiary requirements (Req 4.1–4.7, 24.2), this module maintains strict separation
 //! between raw, recorder-native, normalized, and reference times. No field ever overwrites another.
-//! 
+//!
 //! Impossible timestamps are handled as invalid states rather than causing panics.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
 use crate::provenance::Provenance;
+
+/// An examiner-established timezone assertion for an evidence source.
+///
+/// FORENSIC INTEGRITY: This assertion represents an external, documented claim
+/// (e.g. DVR configuration sheet, site logs, or investigator verification).
+/// It does NOT alter or mutate the disk-derived `TimeZoneState::Unknown` fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExaminerTimezone {
+    /// The established timezone identifier or UTC offset (e.g. "Asia/Kolkata", "+05:30", "UTC-04:00").
+    pub timezone: String,
+    /// Basis or documentation source (e.g. "DVR on-screen setup menu documentation", "Dispatch room log").
+    pub source: String,
+    /// Who established this assertion.
+    pub established_by: String,
+    /// Optional justification or investigative notes.
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// When this assertion was recorded.
+    pub established_at: DateTime<Utc>,
+}
 
 /// The raw bytes or primitive integer exactly as found on disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

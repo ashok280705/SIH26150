@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Play, Pause, Volume2, VolumeX, Maximize, RotateCcw,
+  Play, Pause, Volume2, VolumeX, Maximize,
   ShieldCheck, AlertTriangle, CheckCircle2, XCircle,
-  Clock, Hash as HashIcon, RefreshCw, X
+  Clock, Hash as HashIcon, RefreshCw, X,
+  SkipBack, SkipForward, ChevronLeft, ChevronRight,
+  Rewind, FastForward, Type, Move, Eye, EyeOff
 } from 'lucide-react';
 import { verifyArtifact } from '../../services/api';
 import { ArtifactVerificationResult } from '../../types';
@@ -18,12 +20,47 @@ export interface VideoPlayerProps {
   nativeTime?: string;
   normalizedUtc?: string;
   codec: string;
+  /** Total decoded frames, when known from reconstruction. Optional. */
+  frameCount?: number;
   elementarySha256?: string;
   remuxSha256?: string;
   ffmpegVersion?: string;
   ffmpegArgs?: string[];
   validationState?: { state: string; reason: string };
   onClose?: () => void;
+}
+
+type Corner = 'tl' | 'tr' | 'br' | 'bl';
+const CORNERS: Corner[] = ['tl', 'tr', 'br', 'bl'];
+const OVERLAY_COLORS = ['#ffffff', '#facc15', '#000000'];
+
+/**
+ * DVR recorders record wall-clock time, not UTC instants. To advance the
+ * displayed timestamp during playback we parse the wall-clock components and
+ * add the playback offset in UTC space so the browser's local timezone never
+ * shifts the shown value. Returns null for unparseable strings (e.g. "Unknown").
+ */
+function parseWallClock(s?: string): number | null {
+  if (!s) return null;
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, se] = m;
+  return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se);
+}
+
+function formatWallClock(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+/** Advances a recorder wall-clock timestamp by `offsetSec`, falling back to the
+ *  raw string when it can't be parsed so we never fabricate a time. */
+function advanceStamp(base: string | undefined, offsetSec: number): string {
+  const parsed = parseWallClock(base);
+  if (parsed === null) return base || 'Unknown';
+  return formatWallClock(parsed + Math.floor(offsetSec) * 1000);
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -37,6 +74,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   nativeTime,
   normalizedUtc,
   codec,
+  frameCount,
   elementarySha256,
   remuxSha256,
   ffmpegVersion,
@@ -55,11 +93,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isHevcUnsupported, setIsHevcUnsupported] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<ArtifactVerificationResult | null>(null);
+  const [dims, setDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
-  const isHevc = codec.toLowerCase().includes('h.265') || codec.toLowerCase().includes('hevc');
+  // DVR-Examiner-style overlay controls
+  const [overlayEnabled, setOverlayEnabled] = useState(true);
+  const [overlayCorner, setOverlayCorner] = useState<Corner>('tl');
+  const [overlayColor, setOverlayColor] = useState<string>(OVERLAY_COLORS[0]);
+
+  const isHevc = codec.toLowerCase().includes('h.265') || codec.toLowerCase().includes('hevc') || codec.toLowerCase().includes('h265');
+
+  // DVR footage lacks a container frame rate we can trust, so frame stepping uses
+  // a nominal rate. When the reconstruction reports a real frame count we derive
+  // the true rate from it; otherwise we fall back to 15 fps (common on DVRs) and
+  // label the frame number as approximate so nothing is presented as ground truth.
+  const derivedFps = frameCount && duration > 0 ? frameCount / duration : 15;
+  const fpsIsDerived = !(frameCount && duration > 0);
+  const totalFrames = frameCount ?? (duration > 0 ? Math.round(duration * derivedFps) : 0);
+  const currentFrame = duration > 0 ? Math.min(totalFrames || Infinity, Math.floor(currentTime * derivedFps) + 1) : 0;
 
   useEffect(() => {
-    // Check if browser natively claims support for HEVC
     if (isHevc) {
       const v = document.createElement('video');
       const canPlay = v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"');
@@ -90,6 +142,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
       setDuration(videoRef.current.duration);
+      setDims({ w: videoRef.current.videoWidth, h: videoRef.current.videoHeight });
       setPlaybackError(null);
     }
   };
@@ -100,6 +153,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.currentTime = targetTime;
       setCurrentTime(targetTime);
     }
+  };
+
+  const clamp = (t: number) => Math.max(0, Math.min(duration || 0, t));
+
+  /** Steps by `frames` (negative = backward), pausing playback like DVR Examiner. */
+  const stepFrames = (frames: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.pause();
+    const t = clamp(videoRef.current.currentTime + frames / derivedFps);
+    videoRef.current.currentTime = t;
+    setCurrentTime(t);
+  };
+
+  const goToEdge = (edge: 'first' | 'last') => {
+    if (!videoRef.current) return;
+    videoRef.current.pause();
+    const t = edge === 'first' ? 0 : Math.max(0, (duration || 0) - 1 / derivedFps);
+    videoRef.current.currentTime = t;
+    setCurrentTime(t);
   };
 
   const toggleMute = () => {
@@ -153,6 +225,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  // Derived presentation timestamps that advance with playback.
+  const origStamp = advanceStamp(nativeTime, currentTime);
+  const adjStamp = normalizedUtc ? advanceStamp(normalizedUtc, currentTime) : null;
+  const overlayHeadTime = adjStamp ?? origStamp;
+  const resolutionLabel = dims.w > 0 ? `${dims.w} × ${dims.h}` : '—';
+
   return (
     <div className="panel" style={{ padding: '0', overflow: 'hidden', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--surface)' }}>
       {/* Prominent Mandatory Forensic Authority Notice */}
@@ -190,7 +268,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', minHeight: '440px' }}>
-        {/* Left Column: Video Screen and Controls */}
+        {/* Left Column: Video Screen, Frame Info, and Transport */}
         <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#000', position: 'relative' }}>
           {isHevcUnsupported && (
             <div style={{
@@ -228,6 +306,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               }}
             />
 
+            {/* Burned-in timestamp overlay (DVR Examiner style) */}
+            {overlayEnabled && !playbackError && (
+              <div className={`dvr-overlay dvr-overlay-${overlayCorner}`} style={{ color: overlayColor }}>
+                <div className="dvr-overlay-ch">CH{String(channel).padStart(2, '0')}</div>
+                <div className="dvr-overlay-row">
+                  <span>{origStamp}</span>
+                  <span className="dvr-overlay-tag">ORIG</span>
+                </div>
+                {adjStamp && (
+                  <div className="dvr-overlay-row">
+                    <span>{adjStamp}</span>
+                    <span className="dvr-overlay-tag">ADJ</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {playbackError && (
               <div style={{
                 position: 'absolute',
@@ -260,72 +355,109 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <div style={{
             backgroundColor: 'rgba(15, 23, 42, 0.95)',
             borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-            padding: '8px 14px',
+            padding: '10px 14px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '6px'
+            gap: '10px'
           }}>
             {/* Seek Bar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="range"
-                min={0}
-                max={duration || 100}
-                value={currentTime}
-                onChange={handleSeek}
-                style={{ flex: 1, accentColor: 'var(--accent)', cursor: 'pointer', height: '4px' }}
-              />
-            </div>
+            <input
+              type="range"
+              min={0}
+              max={duration || 100}
+              step={0.001}
+              value={currentTime}
+              onChange={handleSeek}
+              style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'pointer', height: '4px' }}
+            />
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <button className="btn btn-icon btn-sm" onClick={togglePlay} title={isPlaying ? 'Pause' : 'Play'}>
-                  {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-                </button>
-                <button className="btn btn-icon btn-sm" onClick={() => { if (videoRef.current) videoRef.current.currentTime = 0; }} title="Reset to Start">
-                  <RotateCcw size={13} />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <button className="btn btn-icon btn-sm" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
-                    {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={isMuted ? 0 : volume}
-                    onChange={handleVolumeChange}
-                    style={{ width: '60px', accentColor: 'var(--accent)', cursor: 'pointer', height: '4px' }}
-                  />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '14px', flexWrap: 'wrap' }}>
+              {/* Current Frame Information (left, DVR Examiner style) */}
+              <div className="dvr-frameinfo">
+                <div className="dvr-frameinfo-title">Current Frame</div>
+                <div className="dvr-frameinfo-row">
+                  <span className="k">Timestamp</span>
+                  <span className="v">{overlayHeadTime}</span>
                 </div>
-                <span className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                  {formatSeconds(currentTime)} / {formatSeconds(duration)}
-                </span>
+                <div className="dvr-frameinfo-row">
+                  <span className="k">Frame</span>
+                  <span className="v">
+                    {currentFrame || '—'}{totalFrames ? ` of ${totalFrames}` : ''}
+                    {fpsIsDerived && <span style={{ color: '#64748b', fontWeight: 400 }}> (≈)</span>}
+                  </span>
+                </div>
+                <div className="dvr-frameinfo-row">
+                  <span className="k">Displayed Res.</span>
+                  <span className="v">{resolutionLabel}</span>
+                </div>
+                <div className="dvr-frameinfo-row">
+                  <span className="k">Native Res.</span>
+                  <span className="v">{resolutionLabel}</span>
+                </div>
+                <div className="dvr-frameinfo-row">
+                  <span className="k">Position</span>
+                  <span className="v accent">{formatSeconds(currentTime)} / {formatSeconds(duration)}</span>
+                </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ display: 'flex', gap: '2px' }}>
-                  {[1, 1.5, 2].map(r => (
-                    <button
-                      key={r}
-                      onClick={() => handleRateChange(r)}
-                      style={{
-                        padding: '2px 6px',
-                        fontSize: '10px',
-                        borderRadius: '3px',
-                        backgroundColor: playbackRate === r ? 'var(--accent)' : 'transparent',
-                        color: playbackRate === r ? '#fff' : 'var(--text-muted)',
-                        border: '1px solid rgba(255,255,255,0.1)'
-                      }}
-                    >
-                      {r}x
-                    </button>
-                  ))}
+              {/* Transport controls (right) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end' }}>
+                <div className="dvr-transport">
+                  <button className="dvr-tbtn" onClick={() => goToEdge('first')} disabled={!duration} title="First frame">
+                    <SkipBack size={15} />
+                  </button>
+                  <button className="dvr-tbtn" onClick={() => stepFrames(-25)} disabled={!duration} title="Jump back 25 frames">
+                    <Rewind size={15} />
+                  </button>
+                  <button className="dvr-tbtn" onClick={() => stepFrames(-1)} disabled={!duration} title="Previous frame">
+                    <ChevronLeft size={17} />
+                  </button>
+                  <button className="dvr-tbtn dvr-tbtn-play" onClick={togglePlay} title={isPlaying ? 'Pause' : 'Play'}>
+                    {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+                  </button>
+                  <button className="dvr-tbtn" onClick={() => stepFrames(1)} disabled={!duration} title="Next frame">
+                    <ChevronRight size={17} />
+                  </button>
+                  <button className="dvr-tbtn" onClick={() => stepFrames(25)} disabled={!duration} title="Jump forward 25 frames">
+                    <FastForward size={15} />
+                  </button>
+                  <button className="dvr-tbtn" onClick={() => goToEdge('last')} disabled={!duration} title="Last frame">
+                    <SkipForward size={15} />
+                  </button>
                 </div>
-                <button className="btn btn-icon btn-sm" onClick={toggleFullscreen} title="Fullscreen">
-                  <Maximize size={14} />
-                </button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <button className="dvr-tbtn" style={{ width: 28, height: 28 }} onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
+                      {isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                    </button>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={isMuted ? 0 : volume}
+                      onChange={handleVolumeChange}
+                      style={{ width: '54px', accentColor: 'var(--accent)', cursor: 'pointer', height: '4px' }}
+                    />
+                  </div>
+
+                  <div className="dvr-speed" title="Playback speed">
+                    {[0.5, 1, 2, 4].map(r => (
+                      <button
+                        key={r}
+                        className={playbackRate === r ? 'active' : ''}
+                        onClick={() => handleRateChange(r)}
+                      >
+                        {r}x
+                      </button>
+                    ))}
+                  </div>
+
+                  <button className="dvr-tbtn" style={{ width: 28, height: 28 }} onClick={toggleFullscreen} title="Fullscreen">
+                    <Maximize size={13} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -339,7 +471,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           flexDirection: 'column',
           gap: '14px',
           overflowY: 'auto',
-          maxHeight: '520px'
+          maxHeight: '600px'
         }}>
           <div>
             <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>
@@ -350,6 +482,46 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </div>
             <div className="text-muted" style={{ fontSize: '11px', marginTop: '2px' }}>
               OEM: <strong>{oemName}</strong> | Codec: <strong>{codec}</strong>
+            </div>
+          </div>
+
+          {/* Overlay Customization (DVR Examiner: Overlay on/off, Four Corners, Text Color) */}
+          <div style={{ backgroundColor: 'var(--surface-muted)', padding: '10px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+              Timestamp Overlay
+            </div>
+            <div className="dvr-overlay-controls">
+              <button
+                className={`dvr-chip ${overlayEnabled ? 'active' : ''}`}
+                onClick={() => setOverlayEnabled((v) => !v)}
+                title="Toggle the on-screen timestamp overlay"
+              >
+                {overlayEnabled ? <Eye size={13} /> : <EyeOff size={13} />}
+                <span>{overlayEnabled ? 'On' : 'Off'}</span>
+              </button>
+              <button
+                className="dvr-chip"
+                onClick={() => setOverlayCorner((c) => CORNERS[(CORNERS.indexOf(c) + 1) % CORNERS.length])}
+                disabled={!overlayEnabled}
+                title="Cycle overlay corner"
+              >
+                <Move size={13} />
+                <span>{overlayCorner.toUpperCase()}</span>
+              </button>
+              <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                <Type size={13} style={{ color: 'var(--text-muted)' }} />
+                {OVERLAY_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    className={`dvr-color-swatch ${overlayColor === c ? 'active' : ''}`}
+                    style={{ backgroundColor: c }}
+                    onClick={() => setOverlayColor(c)}
+                    disabled={!overlayEnabled}
+                    title={`Overlay color ${c}`}
+                    aria-label={`Overlay color ${c}`}
+                  />
+                ))}
+              </div>
             </div>
           </div>
 
@@ -366,11 +538,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
               <div>
                 <span style={{ color: 'var(--text-muted)' }}>Normalized UTC:</span>{' '}
-                <span className="mono">{normalizedUtc || '2026-09-18T18:30:00Z'}</span>
+                <span className="mono">{normalizedUtc || 'Unknown (unshifted)'}</span>
               </div>
               <div>
-                <span style={{ color: 'var(--text-muted)' }}>Container Timebase:</span>{' '}
-                <span className="mono" style={{ color: 'var(--accent)' }}>Derived Presentation ({formatSeconds(currentTime)})</span>
+                <span style={{ color: 'var(--text-muted)' }}>Presentation:</span>{' '}
+                <span className="mono" style={{ color: 'var(--accent)' }}>{overlayHeadTime} (+{formatSeconds(currentTime)})</span>
               </div>
             </div>
           </div>

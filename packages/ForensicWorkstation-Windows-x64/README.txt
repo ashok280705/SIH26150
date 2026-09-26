@@ -9,7 +9,7 @@ INSTRUCTIONS:
 
 OEM Storage Support:
 - Dahua (DHFS)
-- Hikvision (HIKBTREE / HKSEG)
+- Hikvision (HIKVISION@HANGZHOU boot / HIKBTREE index / MPEG-PS clips) - partial
 - CP Plus (UBS)
 - Uniview (UBIFS)
 - Honeywell (MAXPRO)

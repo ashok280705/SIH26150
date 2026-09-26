@@ -8,14 +8,18 @@ import { AcquisitionView } from './views/AcquisitionView';
 import { CustodyView } from './views/CustodyView';
 import { DetectionView } from './views/DetectionView';
 import { ParsingView } from './views/ParsingView';
+import { PreliminaryTimelineView } from './views/PreliminaryTimelineView';
 import { RecoveryView } from './views/RecoveryView';
 import { TimelineView } from './views/TimelineView';
+import { VideoPlayerView } from './views/VideoPlayerView';
 import { ReportsView } from './views/ReportsView';
+import { WorkflowState, loadWorkflow, saveWorkflow, computeAccess } from './workflow';
 import { HexViewer } from './components/HexViewer';
+import { ChatAssistant } from './components/assistant/ChatAssistant';
 import { WelcomeModal } from './components/onboarding/WelcomeModal';
 import { TourOverlay } from './components/onboarding/TourOverlay';
 import { HelpModal } from './components/onboarding/HelpModal';
-import { Case, Evidence, Acquisition, SourceSafetyReport } from './types';
+import { Case, Evidence, Acquisition, SourceSafetyReport, GapRecoveryTarget } from './types';
 import { OnboardingState, TourContext } from './types/onboarding';
 import { getSourceSafety, getCase, listCaseEvidence } from './services/api';
 import { loadStorage, saveStorage, removeStorage } from './utils/storage';
@@ -37,6 +41,21 @@ export const App: React.FC = () => {
   const [safetyReport, setSafetyReport] = useState<SourceSafetyReport | null>(() => loadStorage('forensic_safety_report', null));
   const [ingestHash, setIngestHash] = useState<string | null>(() => loadStorage('forensic_ingest_hash', null));
   const [hexOffset, setHexOffset] = useState<number | undefined>(() => loadStorage('forensic_hex_offset', undefined));
+  // A gap chosen in the Preliminary Timeline to recover in the Recovery Engine.
+  const [recoveryTarget, setRecoveryTarget] = useState<GapRecoveryTarget | null>(null);
+
+  // Sequential workflow state, keyed per evidence. Drives which analysis stages are unlocked.
+  const [workflow, setWorkflow] = useState<WorkflowState>(() => loadWorkflow(loadStorage<Evidence | null>('forensic_active_evidence', null)?.id ?? null));
+
+  const stageAccess = computeAccess(!!activeEvidence, workflow);
+
+  const patchWorkflow = (patch: Partial<WorkflowState>) => {
+    setWorkflow((prev) => {
+      const next = { ...prev, ...patch };
+      saveWorkflow(activeEvidence?.id ?? null, next);
+      return next;
+    });
+  };
 
   // Onboarding state management
   const [onboardingState, setOnboardingStateLocal] = useState<OnboardingState>(() => getOnboardingState());
@@ -78,6 +97,21 @@ export const App: React.FC = () => {
       setCaseEvidenceList([]);
     }
   }, [activeCase?.id]);
+
+  // Load the saved workflow whenever the active evidence changes.
+  useEffect(() => {
+    setWorkflow(loadWorkflow(activeEvidence?.id ?? null));
+  }, [activeEvidence?.id]);
+
+  // If the current tab becomes locked (e.g. after switching evidence), fall back to
+  // the last always-available stage so the analyst is never stranded on a locked page.
+  useEffect(() => {
+    const acc = computeAccess(!!activeEvidence, workflow);
+    if (acc[activeTab]?.locked) {
+      setActiveTab(acc.detection.locked ? 'overview' : 'detection');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, workflow, activeEvidence?.id]);
 
   useEffect(() => {
     saveStorage('forensic_active_tab', activeTab);
@@ -167,6 +201,11 @@ export const App: React.FC = () => {
     setActiveTab('hex_viewer');
   };
 
+  const handleNavigateToRecovery = (target: GapRecoveryTarget) => {
+    setRecoveryTarget(target);
+    setActiveTab('recovery');
+  };
+
   // Onboarding handlers
   const handleStartTour = () => {
     setOnboardingState('onboarding_in_progress');
@@ -229,6 +268,7 @@ export const App: React.FC = () => {
         activeTab={activeTab} 
         onSelectTab={setActiveTab}
         onOpenHelp={() => setIsHelpOpen(true)}
+        access={stageAccess}
       />
       
       <div className="main-content">
@@ -289,6 +329,8 @@ export const App: React.FC = () => {
             evidence={activeEvidence} 
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
           />
         )}
 
@@ -298,6 +340,20 @@ export const App: React.FC = () => {
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
             onNavigateToHex={handleNavigateToHex} 
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
+          />
+        )}
+
+        {activeTab === 'preliminary_timeline' && (
+          <PreliminaryTimelineView
+            evidence={activeEvidence}
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+            onNavigateToHex={handleNavigateToHex}
+            onNavigateToRecovery={handleNavigateToRecovery}
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
           />
         )}
 
@@ -307,6 +363,10 @@ export const App: React.FC = () => {
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
             onNavigateToHex={handleNavigateToHex} 
+            workflow={workflow}
+            onWorkflow={patchWorkflow}
+            gapTarget={recoveryTarget}
+            onClearGapTarget={() => setRecoveryTarget(null)}
           />
         )}
 
@@ -316,6 +376,16 @@ export const App: React.FC = () => {
             evidenceList={caseEvidenceList}
             onSelectEvidence={handleEvidenceSelected}
             onNavigateToHex={handleNavigateToHex} 
+            onWorkflow={patchWorkflow}
+          />
+        )}
+
+        {activeTab === 'video' && (
+          <VideoPlayerView
+            evidence={activeEvidence}
+            evidenceList={caseEvidenceList}
+            onSelectEvidence={handleEvidenceSelected}
+            workflow={workflow}
           />
         )}
 
@@ -357,6 +427,9 @@ export const App: React.FC = () => {
           setIsHelpOpen(false);
         }}
       />
+
+      {/* Offline AI assistant — reads the current screen, answers via local Ollama */}
+      <ChatAssistant activeTab={activeTab} evidenceName={activeEvidence?.source_device ?? null} />
     </div>
   );
 };

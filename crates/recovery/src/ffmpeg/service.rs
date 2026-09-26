@@ -1,15 +1,15 @@
 //! FFmpeg execution engine, executable discovery, and atomic artifact materialization.
 
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use chrono::Utc;
-use sha2::{Digest, Sha256};
-use forensic_core::{CancelToken, ForensicError, ValidationState, ValidationStateKind};
+use super::command::build_file_remux_command;
+use super::probe::{probe_media_file, validate_codec_consistency};
 use super::types::{
     ArtifactVerificationResult, FfmpegInfo, FfmpegSource, ProbeResult, RemuxOptions, RemuxResult,
 };
-use super::command::build_file_remux_command;
-use super::probe::{probe_media_file, validate_codec_consistency};
+use chrono::Utc;
+use forensic_core::{CancelToken, ForensicError, ValidationState, ValidationStateKind};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Service managing external FFmpeg and ffprobe discovery and execution.
 #[derive(Debug, Clone)]
@@ -33,7 +33,8 @@ impl FfmpegService {
     /// 3. Application-bundled runtime binary
     /// 4. System PATH
     pub fn discover(configured_path: Option<&Path>) -> Self {
-        let (ffmpeg_path, ffmpeg_source) = resolve_binary("ffmpeg", configured_path, "FORENSIC_FFMPEG_PATH");
+        let (ffmpeg_path, ffmpeg_source) =
+            resolve_binary("ffmpeg", configured_path, "FORENSIC_FFMPEG_PATH");
         let (ffprobe_path, _) = resolve_binary("ffprobe", None, "FORENSIC_FFPROBE_PATH");
 
         let version_string = if let Some(ref path) = ffmpeg_path {
@@ -97,8 +98,14 @@ impl FfmpegService {
 
         if !input_es_path.exists() {
             return Err(ForensicError::io(
-                format!("Input elementary stream '{}' not found", input_es_path.display()),
-                std::io::Error::new(std::io::ErrorKind::NotFound, "Elementary stream artifact missing"),
+                format!(
+                    "Input elementary stream '{}' not found",
+                    input_es_path.display()
+                ),
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Elementary stream artifact missing",
+                ),
             ));
         }
 
@@ -114,7 +121,10 @@ impl FfmpegService {
         let output_dir = output_final_path.parent().unwrap_or_else(|| Path::new("."));
         let tmp_dir = output_dir.join(".tmp");
         std::fs::create_dir_all(&tmp_dir).map_err(|e| {
-            ForensicError::io(format!("Creating temporary artifact dir '{}'", tmp_dir.display()), e)
+            ForensicError::io(
+                format!("Creating temporary artifact dir '{}'", tmp_dir.display()),
+                e,
+            )
         })?;
 
         // Generate isolated .partial file path
@@ -138,37 +148,59 @@ impl FfmpegService {
             ForensicError::io(format!("Spawning FFmpeg at '{}'", ffmpeg_bin.display()), e)
         })?;
 
-        let stderr = child.stderr.take();
-        let run_result = if let Some(token) = cancel {
-            tokio::select! {
-                status_res = child.wait() => {
-                    let mut stderr_bytes = Vec::new();
-                    if let Some(mut s) = stderr {
-                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut stderr_bytes).await;
+        let mut stderr = child.stderr.take();
+
+        // `options.timeout_secs` is a real budget, not a recorded intention: the wait below is
+        // wrapped in it, and when it expires the child is killed and reaped. A configured
+        // timeout that never terminates anything reads as a safety control in review while
+        // providing none, so it is enforced here rather than merely stored.
+        let timeout = options
+            .timeout_secs
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(std::time::Duration::MAX);
+
+        let wait_for_exit = async {
+            if let Some(token) = cancel {
+                tokio::select! {
+                    status_res = child.wait() => {
+                        let stderr_bytes = drain(&mut stderr).await;
+                        status_res.map(|status| (status, stderr_bytes, false))
                     }
-                    status_res.map(|status| (status, stderr_bytes, false))
+                    _ = async {
+                        while !token.is_cancelled() {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                    } => {
+                        let _ = child.kill().await;
+                        let status_res = child.wait().await;
+                        let stderr_bytes = drain(&mut stderr).await;
+                        status_res.map(|status| (status, stderr_bytes, true))
+                    }
                 }
-                _ = async {
-                    while !token.is_cancelled() {
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    }
-                } => {
-                    let _ = child.kill().await;
-                    let status_res = child.wait().await;
-                    let mut stderr_bytes = Vec::new();
-                    if let Some(mut s) = stderr {
-                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut stderr_bytes).await;
-                    }
-                    status_res.map(|status| (status, stderr_bytes, true))
-                }
+            } else {
+                let status_res = child.wait().await;
+                let stderr_bytes = drain(&mut stderr).await;
+                status_res.map(|status| (status, stderr_bytes, false))
             }
-        } else {
-            let status_res = child.wait().await;
-            let mut stderr_bytes = Vec::new();
-            if let Some(mut s) = stderr {
-                let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut stderr_bytes).await;
+        };
+
+        let run_result = match tokio::time::timeout(timeout, wait_for_exit).await {
+            Ok(res) => res,
+            Err(_elapsed) => {
+                // Terminate and reap, then delete the partial output. An over-running remux
+                // is FFMPEG_TIMEOUT — never a success, and never a half-written artifact.
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = std::fs::remove_file(&partial_path);
+                return Err(ForensicError::DecodeFailed {
+                    context: "remux_elementary_stream_file".into(),
+                    reason: format!(
+                        "FFMPEG_TIMEOUT: remux exceeded its {}s budget and the child process \
+                         was terminated",
+                        timeout.as_secs()
+                    ),
+                });
             }
-            status_res.map(|status| (status, stderr_bytes, false))
         };
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -196,7 +228,11 @@ impl FfmpegService {
             let _ = std::fs::remove_file(&partial_path);
             return Err(ForensicError::DecodeFailed {
                 context: "remux_elementary_stream_file".into(),
-                reason: format!("FFmpeg remux exited with code {}: {}", exit_code, stderr_str.trim()),
+                reason: format!(
+                    "FFmpeg remux exited with code {}: {}",
+                    exit_code,
+                    stderr_str.trim()
+                ),
             });
         }
 
@@ -216,9 +252,8 @@ impl FfmpegService {
         }
 
         // Calculate SHA-256 of the generated MP4 bitstream
-        let output_sha256 = hash_file_sha256(&partial_path).map_err(|e| {
+        let output_sha256 = hash_file_sha256(&partial_path).inspect_err(|_| {
             let _ = std::fs::remove_file(&partial_path);
-            e
         })?;
 
         // Run ffprobe QC if available
@@ -230,22 +265,30 @@ impl FfmpegService {
                     probe_result = pr;
                     val
                 }
-                Err(e) => {
-                    ValidationState::new(
-                        ValidationStateKind::Review,
-                        format!("MP4 generated; ffprobe QC check inconclusive: {e}"),
-                        "remux_elementary_stream_file",
-                        "DerivedMp4",
-                    ).unwrap()
-                }
+                Err(e) => ValidationState::new(
+                    ValidationStateKind::Review,
+                    format!("MP4 generated; ffprobe QC check inconclusive: {e}"),
+                    "remux_elementary_stream_file",
+                    "DerivedMp4",
+                )
+                .unwrap(),
             }
         } else {
+            // ffprobe is absent, so the container was never inspected. An unrun check is
+            // UNKNOWN, never PASS: "we could not look" must not render as "we looked and it
+            // was fine". The MP4 was written and FFmpeg exited zero — that is a successful
+            // *remux*, and it is stated as such — but nothing has validated the container.
             ValidationState::new(
-                ValidationStateKind::Pass,
-                format!("Stream-copy remux completed successfully ({:?})", options.codec),
+                ValidationStateKind::Unknown,
+                format!(
+                    "VALIDATION_UNAVAILABLE: stream-copy remux completed ({:?}) but ffprobe is \
+                     not available on this host, so the container was not validated",
+                    options.codec
+                ),
                 "remux_elementary_stream_file",
                 "DerivedMp4",
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         // Two-domain atomicity: filesystem atomic rename to finalized artifact path
@@ -259,7 +302,11 @@ impl FfmpegService {
         std::fs::rename(&partial_path, output_final_path).map_err(|e| {
             let _ = std::fs::remove_file(&partial_path);
             ForensicError::io(
-                format!("Atomically renaming '{}' to '{}'", partial_path.display(), output_final_path.display()),
+                format!(
+                    "Atomically renaming '{}' to '{}'",
+                    partial_path.display(),
+                    output_final_path.display()
+                ),
                 e,
             )
         })?;
@@ -271,7 +318,10 @@ impl FfmpegService {
             output_size_bytes: output_size,
             output_sha256,
             duration_ms,
-            ffmpeg_version: self.version_string.clone().unwrap_or_else(|| "unknown".into()),
+            ffmpeg_version: self
+                .version_string
+                .clone()
+                .unwrap_or_else(|| "unknown".into()),
             arguments: cmd_spec.args,
             exit_code,
             validation_state,
@@ -288,13 +338,19 @@ pub fn reverify_artifact_sha256(
 ) -> Result<ArtifactVerificationResult, ForensicError> {
     if !target_path.exists() {
         return Err(ForensicError::io(
-            format!("Artifact file '{}' not found for verification", target_path.display()),
+            format!(
+                "Artifact file '{}' not found for verification",
+                target_path.display()
+            ),
             std::io::Error::new(std::io::ErrorKind::NotFound, "Target artifact missing"),
         ));
     }
 
     let meta = std::fs::metadata(target_path).map_err(|e| {
-        ForensicError::io(format!("Reading metadata for '{}'", target_path.display()), e)
+        ForensicError::io(
+            format!("Reading metadata for '{}'", target_path.display()),
+            e,
+        )
     })?;
 
     let computed = hash_file_sha256(target_path)?;
@@ -304,7 +360,11 @@ pub fn reverify_artifact_sha256(
         artifact_id: artifact_id.to_string(),
         stored_sha256: stored_sha256.to_string(),
         computed_sha256: computed,
-        status: if is_match { "MATCH".to_string() } else { "MISMATCH".to_string() },
+        status: if is_match {
+            "MATCH".to_string()
+        } else {
+            "MISMATCH".to_string()
+        },
         verified_at: Utc::now().to_rfc3339(),
         size_bytes: meta.len(),
     })
@@ -320,9 +380,9 @@ pub fn hash_file_sha256(path: &Path) -> Result<String, ForensicError> {
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024]; // 64 KiB chunks
     loop {
-        let n = file.read(&mut buffer).map_err(|e| {
-            ForensicError::io("Reading chunk for SHA-256", e)
-        })?;
+        let n = file
+            .read(&mut buffer)
+            .map_err(|e| ForensicError::io("Reading chunk for SHA-256", e))?;
         if n == 0 {
             break;
         }
@@ -332,10 +392,29 @@ pub fn hash_file_sha256(path: &Path) -> Result<String, ForensicError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn resolve_binary(name: &str, configured: Option<&Path>, env_var: &str) -> (Option<PathBuf>, FfmpegSource) {
+/// Reads a child pipe to end, returning whatever arrived.
+///
+/// Diagnostics are best-effort: a read error here must not mask the process outcome, which is
+/// what the caller actually reports on.
+async fn drain(stream: &mut Option<tokio::process::ChildStderr>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if let Some(s) = stream.as_mut() {
+        let _ = tokio::io::AsyncReadExt::read_to_end(s, &mut bytes).await;
+    }
+    bytes
+}
+
+fn resolve_binary(
+    name: &str,
+    configured: Option<&Path>,
+    env_var: &str,
+) -> (Option<PathBuf>, FfmpegSource) {
     if let Some(cfg) = configured {
         if cfg.exists() {
-            return (Some(cfg.to_path_buf()), FfmpegSource::Configured(cfg.to_path_buf()));
+            return (
+                Some(cfg.to_path_buf()),
+                FfmpegSource::Configured(cfg.to_path_buf()),
+            );
         }
     }
 
@@ -356,14 +435,20 @@ fn resolve_binary(name: &str, configured: Option<&Path>, env_var: &str) -> (Opti
 
     for candidate in &bundled_candidates {
         if candidate.exists() {
-            return (Some(candidate.clone()), FfmpegSource::Bundled(candidate.clone()));
+            return (
+                Some(candidate.clone()),
+                FfmpegSource::Bundled(candidate.clone()),
+            );
         }
     }
 
     // Check system PATH
     if let Ok(output) = std::process::Command::new(name).arg("-version").output() {
         if output.status.success() {
-            return (Some(PathBuf::from(name)), FfmpegSource::Path(PathBuf::from(name)));
+            return (
+                Some(PathBuf::from(name)),
+                FfmpegSource::Path(PathBuf::from(name)),
+            );
         }
     }
 
@@ -403,7 +488,12 @@ mod tests {
         let reverify = reverify_artifact_sha256("test-art-1", &test_file, &hash).unwrap();
         assert_eq!(reverify.status, "MATCH");
 
-        let mismatch = reverify_artifact_sha256("test-art-1", &test_file, "0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let mismatch = reverify_artifact_sha256(
+            "test-art-1",
+            &test_file,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
         assert_eq!(mismatch.status, "MISMATCH");
 
         let _ = std::fs::remove_dir_all(&temp_dir);

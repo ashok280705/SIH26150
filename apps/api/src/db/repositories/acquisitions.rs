@@ -1,12 +1,9 @@
 use forensic_core::acquisition::{Acquisition, AcquisitionStatus};
-use forensic_core::{EvidenceId, ForensicError};
 use forensic_core::identifiers::AcquisitionId;
-use sqlx::{SqlitePool, Row};
+use forensic_core::{EvidenceId, ForensicError};
+use sqlx::{Row, SqlitePool};
 
-pub async fn create_acquisition(
-    pool: &SqlitePool,
-    acq: &Acquisition,
-) -> Result<(), ForensicError> {
+pub async fn create_acquisition(pool: &SqlitePool, acq: &Acquisition) -> Result<(), ForensicError> {
     let status_str = acq.status.to_string();
     let bad_sectors_json = serde_json::to_string(&acq.bad_sector_ranges).unwrap();
     let unresolved_json = serde_json::to_string(&acq.unresolved_ranges).unwrap();
@@ -20,7 +17,7 @@ pub async fn create_acquisition(
             map_reference, map_hash, bad_sector_ranges, unresolved_ranges,
             verification_state, verification_reason, created_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-        "#
+        "#,
     )
     .bind(acq.id.0)
     .bind(acq.evidence_id.0)
@@ -36,7 +33,12 @@ pub async fn create_acquisition(
     .bind(acq.created_at)
     .execute(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("create_acquisition_db", format!("Failed to insert acquisition: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "create_acquisition_db",
+            format!("Failed to insert acquisition: {e}"),
+        )
+    })?;
 
     Ok(())
 }
@@ -62,12 +64,17 @@ pub async fn get_acquisition(
             verification_state, verification_reason, created_at
         FROM acquisitions
         WHERE id = ?1
-        "#
+        "#,
     )
     .bind(id.0)
     .fetch_optional(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("get_acquisition_db", format!("Failed to fetch acquisition: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "get_acquisition_db",
+            format!("Failed to fetch acquisition: {e}"),
+        )
+    })?;
 
     if let Some(r) = row {
         Ok(Some(row_to_acquisition(&r)?))
@@ -90,12 +97,17 @@ pub async fn get_acquisition_for_evidence(
         WHERE evidence_id = ?1
         ORDER BY created_at DESC
         LIMIT 1
-        "#
+        "#,
     )
     .bind(evidence_id.0)
     .fetch_optional(pool)
     .await
-    .map_err(|e| ForensicError::corrupt("get_acquisition_for_evidence_db", format!("Failed to fetch acquisition: {e}")))?;
+    .map_err(|e| {
+        ForensicError::corrupt(
+            "get_acquisition_for_evidence_db",
+            format!("Failed to fetch acquisition: {e}"),
+        )
+    })?;
 
     if let Some(r) = row {
         Ok(Some(row_to_acquisition(&r)?))
@@ -110,7 +122,7 @@ fn row_to_acquisition(r: &sqlx::sqlite::SqliteRow) -> Result<Acquisition, Forens
     let status_str: String = r.try_get("status").unwrap();
     let bad_sectors_json: String = r.try_get("bad_sector_ranges").unwrap();
     let unresolved_json: String = r.try_get("unresolved_ranges").unwrap();
-    
+
     let verification_state_str: String = r.try_get("verification_state").unwrap();
     let verification_reason: String = r.try_get("verification_reason").unwrap();
 
@@ -124,7 +136,7 @@ fn row_to_acquisition(r: &sqlx::sqlite::SqliteRow) -> Result<Acquisition, Forens
         "REVIEW" | "review" => forensic_core::validation::ValidationStateKind::Review,
         _ => forensic_core::validation::ValidationStateKind::Unknown,
     };
-    
+
     let verification = forensic_core::validation::ValidationState {
         state: val_state_kind,
         reason: verification_reason,

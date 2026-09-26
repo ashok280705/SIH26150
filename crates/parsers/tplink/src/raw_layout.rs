@@ -2,8 +2,8 @@
 //!
 //! Validates `rawDiskLayout` metadata.
 
-use forensic_core::ForensicError;
 use evidence_reader::EvidenceReader;
+use forensic_core::ForensicError;
 
 pub struct RawLayout;
 

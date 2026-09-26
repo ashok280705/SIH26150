@@ -61,10 +61,7 @@ pub struct ReassemblyResult {
 
 /// Reassembles fragments by logical sequence index while independently tracking physical layout.
 /// Never synthesizes fill content for missing frames (Property 9).
-pub fn reassemble_fragments(
-    mut fragments: Vec<Fragment>,
-    max_fragments: u32,
-) -> ReassemblyResult {
+pub fn reassemble_fragments(mut fragments: Vec<Fragment>, max_fragments: u32) -> ReassemblyResult {
     let truncated = fragments.len() > max_fragments as usize;
     if truncated {
         fragments.truncate(max_fragments as usize);
@@ -89,7 +86,10 @@ pub fn reassemble_fragments(
                 previous_sequence: prev.sequence_index,
                 current_sequence: curr.sequence_index,
                 missing_count,
-                reason: format!("Sequence jump from #{} to #{} ({} missing frames)", prev.sequence_index, curr.sequence_index, missing_count),
+                reason: format!(
+                    "Sequence jump from #{} to #{} ({} missing frames)",
+                    prev.sequence_index, curr.sequence_index, missing_count
+                ),
             });
         }
 
@@ -103,18 +103,22 @@ pub fn reassemble_fragments(
             // Circular buffer wrap (offset went backwards)
             is_physically_contiguous = false;
             physical_discontinuities.push(PhysicalDiscontinuity {
-                previous_region: prev.region.clone(),
-                current_region: curr.region.clone(),
-                continuity: PhysicalContinuity::CircularWrap { wrap_offset: curr_start },
+                previous_region: prev.region,
+                current_region: curr.region,
+                continuity: PhysicalContinuity::CircularWrap {
+                    wrap_offset: curr_start,
+                },
             });
         } else {
             // Non-contiguous physical gap on disk (scatter-gather allocation)
             is_physically_contiguous = false;
             let distance = curr_start.saturating_sub(prev_end);
             physical_discontinuities.push(PhysicalDiscontinuity {
-                previous_region: prev.region.clone(),
-                current_region: curr.region.clone(),
-                continuity: PhysicalContinuity::Fragmented { physical_distance: distance },
+                previous_region: prev.region,
+                current_region: curr.region,
+                continuity: PhysicalContinuity::Fragmented {
+                    physical_distance: distance,
+                },
             });
         }
     }
@@ -126,29 +130,37 @@ pub fn reassemble_fragments(
             "Pathological fragmentation: fragment count bounded to maximum limit",
             "reassemble_fragments",
             "Fragments",
-        ).unwrap()
+        )
+        .unwrap()
     } else if !logical_gaps.is_empty() {
         let total_missing: u32 = logical_gaps.iter().map(|g| g.missing_count).sum();
         ValidationState::new(
             ValidationStateKind::Review,
-            format!("{} logical gap(s) detected with {} total missing frame(s)", logical_gaps.len(), total_missing),
+            format!(
+                "{} logical gap(s) detected with {} total missing frame(s)",
+                logical_gaps.len(),
+                total_missing
+            ),
             "reassemble_fragments",
             "Fragments",
-        ).unwrap()
+        )
+        .unwrap()
     } else if !is_physically_contiguous {
         ValidationState::new(
             ValidationStateKind::Pass,
             "Stream is logically complete; physical non-contiguity detected and recorded",
             "reassemble_fragments",
             "Fragments",
-        ).unwrap()
+        )
+        .unwrap()
     } else {
         ValidationState::new(
             ValidationStateKind::Pass,
             "All fragments logically complete and physically contiguous",
             "reassemble_fragments",
             "Fragments",
-        ).unwrap()
+        )
+        .unwrap()
     };
 
     ReassemblyResult {
@@ -169,8 +181,22 @@ mod tests {
     fn test_logical_gap_with_physical_contiguity() {
         // Frames are physically adjacent (0..100, 100..200), but sequence skips from 0 to 5
         let fragments = vec![
-            Fragment { region: Region { offset: 0, length: 100 }, sequence_index: 0, is_valid: true },
-            Fragment { region: Region { offset: 100, length: 100 }, sequence_index: 5, is_valid: true },
+            Fragment {
+                region: Region {
+                    offset: 0,
+                    length: 100,
+                },
+                sequence_index: 0,
+                is_valid: true,
+            },
+            Fragment {
+                region: Region {
+                    offset: 100,
+                    length: 100,
+                },
+                sequence_index: 5,
+                is_valid: true,
+            },
         ];
         let result = reassemble_fragments(fragments, 100);
 
@@ -184,23 +210,58 @@ mod tests {
     fn test_logical_contiguity_with_physical_fragmentation() {
         // Frames are consecutive (0, 1), but stored in non-adjacent clusters (0..100, 5000..5100)
         let fragments = vec![
-            Fragment { region: Region { offset: 0, length: 100 }, sequence_index: 0, is_valid: true },
-            Fragment { region: Region { offset: 5000, length: 100 }, sequence_index: 1, is_valid: true },
+            Fragment {
+                region: Region {
+                    offset: 0,
+                    length: 100,
+                },
+                sequence_index: 0,
+                is_valid: true,
+            },
+            Fragment {
+                region: Region {
+                    offset: 5000,
+                    length: 100,
+                },
+                sequence_index: 1,
+                is_valid: true,
+            },
         ];
         let result = reassemble_fragments(fragments, 100);
 
-        assert!(result.logical_gaps.is_empty(), "Consecutive sequences must have NO logical gap");
+        assert!(
+            result.logical_gaps.is_empty(),
+            "Consecutive sequences must have NO logical gap"
+        );
         assert!(!result.is_physically_contiguous);
         assert_eq!(result.physical_discontinuities.len(), 1);
-        assert_eq!(result.validation.state, ValidationStateKind::Pass, "Logically complete streams must PASS even if physically fragmented");
+        assert_eq!(
+            result.validation.state,
+            ValidationStateKind::Pass,
+            "Logically complete streams must PASS even if physically fragmented"
+        );
     }
 
     #[test]
     fn test_circular_wrap_detection() {
         // Sequence 0 is at offset 9000, Sequence 1 wraps around to offset 500
         let fragments = vec![
-            Fragment { region: Region { offset: 9000, length: 100 }, sequence_index: 0, is_valid: true },
-            Fragment { region: Region { offset: 500, length: 100 }, sequence_index: 1, is_valid: true },
+            Fragment {
+                region: Region {
+                    offset: 9000,
+                    length: 100,
+                },
+                sequence_index: 0,
+                is_valid: true,
+            },
+            Fragment {
+                region: Region {
+                    offset: 500,
+                    length: 100,
+                },
+                sequence_index: 1,
+                is_valid: true,
+            },
         ];
         let result = reassemble_fragments(fragments, 100);
 

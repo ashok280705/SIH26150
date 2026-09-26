@@ -1,7 +1,31 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Shield, ShieldAlert, CheckCircle2, Database, HardDrive, ShieldCheck } from 'lucide-react';
 
-import { Case, Evidence, Acquisition, SourceSafetyReport } from '../types';
+import { Case, Evidence, Acquisition, SourceSafetyReport, CapabilityStage, CapabilityStages } from '../types';
+import { getCapabilities } from '../services/api';
+
+/** Display names for the capability rows; the stages themselves come from the API. */
+const OEM_LABELS: Record<string, string> = {
+  dahua: 'Dahua (DHFS / DHFS4.1)',
+  hikvision: 'Hikvision (HIKVISION@HANGZHOU / HIKBTREE)',
+  tplink: 'TP-Link (VIGI)',
+  honeywell: 'Honeywell (MAXPRO / MAXPRO_NVR)',
+  cp_plus: 'CP Plus / UBS (CPPLUS_UBS)',
+  uniview: 'Uniview (SUPER / DI)',
+  godrej: 'Godrej',
+  matrix: 'Matrix',
+};
+
+const STAGE_BADGE: Record<CapabilityStage, [string, string]> = {
+  implemented: ['badge badge-pass', 'Implemented'],
+  partial: ['badge badge-review', 'Partial'],
+  not_implemented: ['badge badge-unknown', 'Not implemented'],
+};
+
+const StageBadge: React.FC<{ stage: CapabilityStage }> = ({ stage }) => {
+  const [cls, label] = STAGE_BADGE[stage] ?? ['badge badge-unknown', String(stage)];
+  return <span className={cls}>{label}</span>;
+};
 
 interface OverviewViewProps {
   activeCase: Case | null;
@@ -18,6 +42,16 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   safetyReport,
   ingestHash,
 }) => {
+  // The capability matrix is the server's own derivation. It used to be hardcoded here with
+  // every OEM "Implemented" in every stage, which advertised parsers that do not exist.
+  const [capabilities, setCapabilities] = useState<Record<string, CapabilityStages> | null>(null);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
+  useEffect(() => {
+    getCapabilities()
+      .then(setCapabilities)
+      .catch((e: unknown) => setCapabilityError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
   const getBadgeClass = (status?: string) => {
     switch (status?.toLowerCase()) {
       case 'pass':
@@ -219,46 +253,29 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td><strong>Dahua</strong> (DHFS / DHFS4.1)</td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-              </tr>
-              <tr>
-                <td><strong>Hikvision</strong> (HIK / HIKVISION_FS)</td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-              </tr>
-              <tr>
-                <td><strong>Honeywell</strong> (MAXPRO / MAXPRO_NVR)</td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-              </tr>
-              <tr>
-                <td><strong>CP Plus / UBS</strong> (CPPLUS_UBS)</td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-              </tr>
-              <tr>
-                <td><strong>Uniview</strong> (UBIFS / UNV)</td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-                <td><span className="badge badge-pass">Implemented</span></td>
-              </tr>
+              {capabilityError && (
+                <tr>
+                  <td colSpan={6}>Capabilities unavailable: {capabilityError}</td>
+                </tr>
+              )}
+              {!capabilityError && !capabilities && (
+                <tr>
+                  <td colSpan={6}>Loading capabilities…</td>
+                </tr>
+              )}
+              {capabilities &&
+                Object.entries(capabilities)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([oem, stages]) => (
+                    <tr key={oem}>
+                      <td><strong>{OEM_LABELS[oem] ?? oem}</strong></td>
+                      <td><StageBadge stage={stages.detection} /></td>
+                      <td><StageBadge stage={stages.profiling} /></td>
+                      <td><StageBadge stage={stages.parsing} /></td>
+                      <td><StageBadge stage={stages.reconstruction} /></td>
+                      <td><StageBadge stage={stages.validation} /></td>
+                    </tr>
+                  ))}
             </tbody>
           </table>
         </div>

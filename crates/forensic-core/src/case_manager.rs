@@ -4,9 +4,9 @@
 //! strict field validation (naming missing fields), acquisition verification, ingest hashing,
 //! source safety inspection, and chain-of-custody recording (Req 7.1–7.9, 1.9, 1.11, 23.1–23.4).
 
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::acquisition::{Acquisition, AcquisitionStatus};
 use crate::case::{Case, Evidence, ImageFormat, SourceState};
@@ -15,6 +15,7 @@ use crate::error::ForensicError;
 use crate::hash::Hash;
 use crate::identifiers::{AcquisitionId, CaseId, EvidenceId, ExaminerId};
 use crate::region::Region;
+use crate::time_evidence::ExaminerTimezone;
 use crate::validation::ValidationState;
 
 /// Input payload for registering a new piece of evidence into a case.
@@ -35,6 +36,9 @@ pub struct EvidenceRegistrationInput {
     pub bad_sector_ranges: Vec<Region>,
     pub unresolved_ranges: Vec<Region>,
     pub source_state: Option<SourceState>,
+    /// Optional examiner-established timezone (external evidence, not inferred from disk).
+    #[serde(default)]
+    pub examiner_timezone: Option<ExaminerTimezone>,
 }
 
 impl EvidenceRegistrationInput {
@@ -129,7 +133,9 @@ impl CaseManager {
         let evidence_id = EvidenceId::new();
 
         // Check acquisition completeness honestly (Req 7.8, 7.9, 23.4).
-        let status = input.acquisition_status.unwrap_or(AcquisitionStatus::Unknown);
+        let status = input
+            .acquisition_status
+            .unwrap_or(AcquisitionStatus::Unknown);
         let has_gaps = !input.bad_sector_ranges.is_empty() || !input.unresolved_ranges.is_empty();
 
         let honest_status = if has_gaps && status == AcquisitionStatus::Complete {
@@ -139,11 +145,19 @@ impl CaseManager {
         };
 
         let acq_val_state = if honest_status == AcquisitionStatus::Complete {
-            ValidationState::pass("acquisition reported complete without gaps", "ingest_verification", &input.path)
-                .map_err(|e| ForensicError::corrupt("register_evidence", format!("{e}")))?
+            ValidationState::pass(
+                "acquisition reported complete without gaps",
+                "ingest_verification",
+                &input.path,
+            )
+            .map_err(|e| ForensicError::corrupt("register_evidence", format!("{e}")))?
         } else if honest_status == AcquisitionStatus::Partial {
-            ValidationState::review("acquisition contains bad sectors or unresolved gaps", "ingest_verification", &input.path)
-                .map_err(|e| ForensicError::corrupt("register_evidence", format!("{e}")))?
+            ValidationState::review(
+                "acquisition contains bad sectors or unresolved gaps",
+                "ingest_verification",
+                &input.path,
+            )
+            .map_err(|e| ForensicError::corrupt("register_evidence", format!("{e}")))?
         } else {
             ValidationState::not_run("ingest_verification", &input.path)
         };
@@ -152,7 +166,10 @@ impl CaseManager {
             .with_bad_sectors(input.bad_sector_ranges)
             .with_unresolved(input.unresolved_ranges);
 
-        if let (Some(tool), ver) = (input.acquisition_tool.clone(), input.acquisition_tool_version.clone()) {
+        if let (Some(tool), ver) = (
+            input.acquisition_tool.clone(),
+            input.acquisition_tool_version.clone(),
+        ) {
             acquisition = acquisition.with_tool(tool, ver);
         }
 
@@ -177,6 +194,7 @@ impl CaseManager {
         evidence.acquisition_tool_version = input.acquisition_tool_version;
         evidence.source_state = input.source_state.unwrap_or(SourceState::Unknown);
         evidence.acquisition_id = Some(acq_id);
+        evidence.examiner_timezone = input.examiner_timezone;
 
         self.evidence_store.insert(evidence_id, evidence.clone());
 
@@ -220,7 +238,9 @@ mod tests {
     fn case_creation_and_evidence_registration() {
         let mut manager = CaseManager::new();
         let examiner = ExaminerId::new("examiner-1");
-        let case = manager.create_case("Homicide 2026", "DVR seized at scene", examiner.clone()).unwrap();
+        let case = manager
+            .create_case("Homicide 2026", "DVR seized at scene", examiner.clone())
+            .unwrap();
 
         let input = EvidenceRegistrationInput {
             source_device: "Hikvision DS-7204HGHI".into(),
@@ -237,10 +257,13 @@ mod tests {
             bad_sector_ranges: vec![],
             unresolved_ranges: vec![],
             source_state: Some(SourceState::ReadOnly),
+            examiner_timezone: None,
         };
 
         let dummy_hash = Hash::sha256(vec![0xAA; 32]);
-        let (ev, acq) = manager.register_evidence(case.id, input, dummy_hash).unwrap();
+        let (ev, acq) = manager
+            .register_evidence(case.id, input, dummy_hash)
+            .unwrap();
 
         assert_eq!(ev.case_id, case.id);
         assert_eq!(acq.unwrap().status, AcquisitionStatus::Complete);
@@ -252,7 +275,9 @@ mod tests {
     #[test]
     fn missing_required_field_is_rejected_with_field_name() {
         let mut manager = CaseManager::new();
-        let case = manager.create_case("Test", "", ExaminerId::new("ex")).unwrap();
+        let case = manager
+            .create_case("Test", "", ExaminerId::new("ex"))
+            .unwrap();
 
         let input = EvidenceRegistrationInput {
             source_device: "".into(), // Missing!
@@ -269,17 +294,22 @@ mod tests {
             bad_sector_ranges: vec![],
             unresolved_ranges: vec![],
             source_state: None,
+            examiner_timezone: None,
         };
 
         let dummy_hash = Hash::sha256(vec![0; 32]);
-        let err = manager.register_evidence(case.id, input, dummy_hash).unwrap_err();
+        let err = manager
+            .register_evidence(case.id, input, dummy_hash)
+            .unwrap_err();
         assert!(format!("{err}").contains("source_device"));
     }
 
     #[test]
     fn incomplete_acquisition_never_complete() {
         let mut manager = CaseManager::new();
-        let case = manager.create_case("Test", "", ExaminerId::new("ex")).unwrap();
+        let case = manager
+            .create_case("Test", "", ExaminerId::new("ex"))
+            .unwrap();
 
         let input = EvidenceRegistrationInput {
             source_device: "Dahua".into(),
@@ -296,10 +326,13 @@ mod tests {
             bad_sector_ranges: vec![Region::new(100, 50).unwrap()], // Has bad sectors!
             unresolved_ranges: vec![],
             source_state: None,
+            examiner_timezone: None,
         };
 
         let dummy_hash = Hash::sha256(vec![0; 32]);
-        let (_, acq) = manager.register_evidence(case.id, input, dummy_hash).unwrap();
+        let (_, acq) = manager
+            .register_evidence(case.id, input, dummy_hash)
+            .unwrap();
         // Incomplete acquisition must be downgraded from Complete to Partial (Req 7.9, 23.4)
         assert_eq!(acq.unwrap().status, AcquisitionStatus::Partial);
     }

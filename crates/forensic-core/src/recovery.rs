@@ -1,8 +1,8 @@
+use crate::{Provenance, Region, ValidationState};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use crate::{Region, ValidationState, Provenance};
 
 /// Represents the physical state of the data on the storage medium (Req 13.2).
 /// This is an independent dimension from RecoveryStatus (Req 13.8).
@@ -12,8 +12,21 @@ pub enum DataState {
     Active,
     /// Data is marked as deleted by the filesystem/index but remains structurally intact.
     Deleted,
-    /// Data exists on disk but is not referenced by any filesystem/index structure.
+    /// Data exists on disk but is **positively established** to be unreferenced by the
+    /// authoritative index structure that governs that physical region.
+    ///
+    /// Requires two independent facts: an authoritative OEM index was read, *and* the
+    /// region it governs does not claim these bytes. "The parser did not find an index"
+    /// is NOT sufficient — that is [`DataState::Unindexed`].
     Orphaned,
+    /// Valid data was discovered but there is insufficient index/metadata evidence to
+    /// associate it with an active recording or to support a stronger orphan/deleted
+    /// conclusion.
+    ///
+    /// This is the conservative fallback. It records an **absence of evidence**, not
+    /// evidence of deletion, and must never be reported or reasoned about as
+    /// `Deleted`/`Orphaned`.
+    Unindexed,
     /// Data structure or payload is mathematically/structurally invalid (e.g. invalid CRC or frame).
     Corrupted,
     /// Data has been partially or fully overwritten by new data.
@@ -70,32 +83,53 @@ mod tests {
             "test_component",
             "1.0",
             mock_hash,
-            ValidationState::pass("prov", "reason", "subject").unwrap()
+            ValidationState::pass("prov", "reason", "subject").unwrap(),
         );
 
         let candidate = RecoveryCandidate {
             recovery_level: RecoveryLevel::L2,
             data_state: DataState::Deleted,
             recovery_status: RecoveryStatus::PartiallyRecoverable,
-            source_offsets: vec![Region { offset: 1024, length: 512 }],
+            source_offsets: vec![Region {
+                offset: 1024,
+                length: 512,
+            }],
             validation: FrameValidationReport {
                 signatures: ValidationState::pass("sig", "Signature valid", "subject").unwrap(),
                 structure: ValidationState::pass("struct", "Structure valid", "subject").unwrap(),
-                timestamps: ValidationState::new(ValidationStateKind::Review, "timestamps", "Timestamp jump detected", "subject").unwrap(),
-                channel: ValidationState::new(ValidationStateKind::Unknown, "channel", "Channel ID missing", "subject").unwrap(),
-                continuity: ValidationState::fail("continuity", "Frame drop detected", "subject").unwrap(),
+                timestamps: ValidationState::new(
+                    ValidationStateKind::Review,
+                    "timestamps",
+                    "Timestamp jump detected",
+                    "subject",
+                )
+                .unwrap(),
+                channel: ValidationState::new(
+                    ValidationStateKind::Unknown,
+                    "channel",
+                    "Channel ID missing",
+                    "subject",
+                )
+                .unwrap(),
+                continuity: ValidationState::fail("continuity", "Frame drop detected", "subject")
+                    .unwrap(),
             },
             provenance: prov,
         };
 
-        let json = serde_json::to_string(&candidate).expect("Failed to serialize RecoveryCandidate");
-        let deserialized: RecoveryCandidate = serde_json::from_str(&json).expect("Failed to deserialize RecoveryCandidate");
+        let json =
+            serde_json::to_string(&candidate).expect("Failed to serialize RecoveryCandidate");
+        let deserialized: RecoveryCandidate =
+            serde_json::from_str(&json).expect("Failed to deserialize RecoveryCandidate");
 
         assert_eq!(candidate, deserialized);
-        
+
         // Assert both dimensions are explicitly present on the candidate
         assert_eq!(candidate.data_state, DataState::Deleted);
-        assert_eq!(candidate.recovery_status, RecoveryStatus::PartiallyRecoverable);
+        assert_eq!(
+            candidate.recovery_status,
+            RecoveryStatus::PartiallyRecoverable
+        );
     }
 
     #[test]
@@ -230,11 +264,11 @@ impl CancelToken {
             is_cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
-    
+
     pub fn is_cancelled(&self) -> bool {
         self.is_cancelled.load(Ordering::SeqCst)
     }
-    
+
     pub fn cancel(&self) {
         self.is_cancelled.store(true, Ordering::SeqCst);
     }
@@ -270,7 +304,7 @@ pub struct RecoveryRun {
     pub hypothesis_count: u32,
     pub truncated: bool,
     pub cancelled: bool,
-    pub validation_state: ValidationState,   // PASS | REVIEW | FAIL | UNKNOWN
+    pub validation_state: ValidationState, // PASS | REVIEW | FAIL | UNKNOWN
     pub reason: String,
 }
 
@@ -279,11 +313,26 @@ impl RecoveryRun {
     /// downgrades the validation state to REVIEW, as a bounded search can never
     /// guarantee a global optimum (Req 13.10).
     pub fn finalize(&mut self) {
+        // Argument order is (state, reason, operation, subject). The reason is the field an
+        // examiner reads, so it carries the explanation; "RecoveryRun" is the subject, not a
+        // reason, and putting it there left every bounded run explaining itself as a type name.
         if self.cancelled {
-            self.validation_state = ValidationState::new(crate::ValidationStateKind::Review, "RecoveryRun", "Run was cancelled by the user", "Search").unwrap();
+            self.validation_state = ValidationState::new(
+                crate::ValidationStateKind::Review,
+                "Run was cancelled by the user",
+                "RecoveryRun::finalize",
+                "Search",
+            )
+            .expect("static reason is non-empty");
             self.reason = "Search cancelled".to_string();
         } else if self.truncated {
-            self.validation_state = ValidationState::new(crate::ValidationStateKind::Review, "RecoveryRun", "Search space was truncated; global optimum not guaranteed", "Search").unwrap();
+            self.validation_state = ValidationState::new(
+                crate::ValidationStateKind::Review,
+                "Search space was truncated; global optimum not guaranteed",
+                "RecoveryRun::finalize",
+                "Search",
+            )
+            .expect("static reason is non-empty");
             self.reason = "Search bounds reached".to_string();
         }
     }

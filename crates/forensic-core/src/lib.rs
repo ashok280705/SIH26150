@@ -19,75 +19,85 @@
 
 // --- Foundational types ---
 pub mod error;
-pub mod identifiers;
+pub mod finding;
 pub mod hash;
-pub mod region;
+pub mod identifiers;
+pub mod range_set;
 pub mod recovery;
+pub mod region;
 
 // --- Cross-cutting state enums ---
-pub mod validation;
 pub mod capability;
 pub mod evidence_status;
+pub mod validation;
 
 // --- Checked arithmetic (Req 24) ---
 pub mod checked;
 
 // --- Domain models ---
-pub mod case;
 pub mod acquisition;
-pub mod provenance;
 pub mod artifact;
-pub mod chain_of_custody;
-pub mod write_guard;
-pub mod export;
+pub mod case;
 pub mod case_manager;
-pub mod profile;
+pub mod chain_of_custody;
 pub mod evidence_item;
+pub mod export;
+pub mod profile;
+pub mod provenance;
+pub mod write_guard;
 
 // --- Parsing Models ---
-pub mod time_evidence;
-pub mod recording;
-pub mod timeline_event;
-pub mod parser_run;
 pub mod ai;
 pub mod ai_pipeline;
+pub mod parser_run;
+pub mod recording;
+pub mod time_evidence;
+pub mod timeline_event;
 
 // --- Determinism harness (Req 20) ---
 pub mod determinism;
 
 // --- Convenience re-exports ---
-pub use error::ForensicError;
-pub use identifiers::{
-    AcquisitionId, ArtifactId, CaseId, EvidenceId, ExaminerId, ProfileId,
-};
+pub use acquisition::{Acquisition, AcquisitionStatus};
 pub use ai::AiFinding;
 pub use ai_pipeline::AiPipeline;
-pub use hash::{Hash, HashAlgorithm};
-pub use region::Region;
-pub use recovery::{DataState, RecoveryStatus, RecoveryAssessment, RecoveryLevel, FrameValidationReport, RecoveryCandidate, RecoveryBounds, RecoveryRun, CancelToken};
-pub use validation::{ValidationState, ValidationStateKind};
-pub use capability::{CapabilityStage, CapabilityStages};
-pub use evidence_status::EvidenceStatus;
-pub use case::{Case, Evidence, ImageFormat, SourceState};
-pub use acquisition::{Acquisition, AcquisitionStatus};
-pub use provenance::{Provenance, SourceRegion, TransformationStep};
 pub use artifact::{Artifact, DerivedArtifact, DerivedKind, NativeArtifact};
-pub use chain_of_custody::{CustodyAction, CustodyEvent, CustodyLog};
-pub use write_guard::WriteGuard;
-pub use export::{finalize_export, ExportRecord, ExportRequest};
+pub use capability::{CapabilityStage, CapabilityStages};
+pub use case::{Case, Evidence, ImageFormat, SourceState};
 pub use case_manager::{CaseManager, EvidenceRegistrationInput};
-pub use profile::{Applicability, ConfidenceWeights, OemProfile, OffsetConstraint, ProfileRegistry, SignatureRule, ValidationRule};
+pub use chain_of_custody::{CustodyAction, CustodyEvent, CustodyLog};
+pub use error::ForensicError;
 pub use evidence_item::{EvidenceItem, RuleMatchStatus};
+pub use evidence_status::EvidenceStatus;
+pub use export::{finalize_export, ExportRecord, ExportRequest};
+pub use finding::{Finding, FindingSeverity};
+pub use hash::{Hash, HashAlgorithm};
+pub use identifiers::{AcquisitionId, ArtifactId, CaseId, EvidenceId, ExaminerId, ProfileId};
+pub use profile::{
+    Applicability, ConfidenceWeights, OemProfile, OffsetConstraint, ProfileRegistry, SignatureRule,
+    ValidationRule,
+};
+pub use provenance::{Provenance, SourceRegion, TransformationStep};
+pub use range_set::RangeSet;
+pub use recovery::{
+    CancelToken, DataState, FrameValidationReport, RecoveryAssessment, RecoveryBounds,
+    RecoveryCandidate, RecoveryLevel, RecoveryRun, RecoveryStatus,
+};
+pub use region::Region;
+pub use validation::{ValidationState, ValidationStateKind};
+pub use write_guard::WriteGuard;
 
-
-pub use time_evidence::{TimeEvidence, RawTimestamp, RecorderNativeTime, NormalizedTime, ReferenceTime, TimeZoneState, ClockCorrection};
-pub use recording::{Recording, IntegrityFlag};
-pub use timeline_event::TimelineEvent;
 pub use parser_run::ParserRun;
+pub use recording::{IntegrityFlag, Recording};
+pub use time_evidence::{
+    ClockCorrection, ExaminerTimezone, NormalizedTime, RawTimestamp, RecorderNativeTime,
+    ReferenceTime, TimeEvidence, TimeZoneState,
+};
+pub use timeline_event::TimelineEvent;
 
 pub use determinism::{
-    compare_forensic_results, ComparisonResult, ComponentVersions,
-    DeterminismKey, ForensicResult, ResultMetadata,
+    compare_forensic_results, ComparisonResult, ComponentVersions, DeterminismKey, ForensicResult,
+    ResultMetadata,
 };
 
 /// Convenience type alias for forensic results.

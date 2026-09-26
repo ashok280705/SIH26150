@@ -10,8 +10,12 @@ import {
   Clock,
   FileSpreadsheet,
   Binary,
-  ScrollText
+  ScrollText,
+  ListTree,
+  MonitorPlay,
+  Lock,
 } from 'lucide-react';
+import type { StageAccess } from '../workflow';
 
 export type ActiveTab =
   | 'overview'
@@ -21,8 +25,10 @@ export type ActiveTab =
   | 'hex_viewer'
   | 'detection'
   | 'parsing'
+  | 'preliminary_timeline'
   | 'recovery'
   | 'timeline'
+  | 'video'
   | 'custody'
   | 'reports';
 
@@ -30,145 +36,78 @@ interface SidebarProps {
   activeTab: ActiveTab;
   onSelectTab: (tab: ActiveTab) => void;
   onOpenHelp?: () => void;
+  /** Per-tab lock state; locked analysis stages are disabled with a reason. */
+  access?: Partial<Record<ActiveTab, StageAccess>>;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, onOpenHelp }) => {
+interface NavDef {
+  tab: ActiveTab;
+  label: string;
+  icon: React.ReactNode;
+  badge?: string;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, onOpenHelp, access = {} }) => {
+  const core: NavDef[] = [
+    { tab: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} /> },
+    { tab: 'cases', label: 'Cases', icon: <FolderPlus size={16} /> },
+    { tab: 'evidence', label: 'Evidence', icon: <HardDriveDownload size={16} /> },
+    { tab: 'acquisition', label: 'Acquisition', icon: <FileCheck2 size={16} /> },
+    { tab: 'hex_viewer', label: 'Byte Inspector', icon: <Binary size={16} />, badge: 'P1' },
+    { tab: 'custody', label: 'Chain of Custody', icon: <ScrollText size={16} /> },
+  ];
+
+  // Ordered to match the investigation flow.
+  const pipeline: NavDef[] = [
+    { tab: 'detection', label: 'Detection & Confidence', icon: <ScanSearch size={16} />, badge: 'P2' },
+    { tab: 'parsing', label: 'Parsing & Extraction', icon: <FileCode2 size={16} />, badge: 'P3' },
+    { tab: 'preliminary_timeline', label: 'Preliminary Timeline', icon: <ListTree size={16} /> },
+    { tab: 'recovery', label: 'Recovery Engine', icon: <Video size={16} />, badge: 'P4' },
+    { tab: 'timeline', label: 'Final Timeline', icon: <Clock size={16} />, badge: 'P5' },
+    { tab: 'video', label: 'Video Player', icon: <MonitorPlay size={16} /> },
+    { tab: 'reports', label: 'Forensic Reports', icon: <FileSpreadsheet size={16} />, badge: 'P6' },
+  ];
+
+  const renderItem = (def: NavDef) => {
+    const acc = access[def.tab];
+    const locked = acc?.locked ?? false;
+    return (
+      <li key={def.tab}>
+        <div
+          className={`nav-item ${activeTab === def.tab ? 'active' : ''} ${locked ? 'nav-item-locked' : ''}`}
+          onClick={() => {
+            if (!locked) onSelectTab(def.tab);
+          }}
+          data-tour={`nav-${def.tab}`}
+          title={locked ? acc?.reason : undefined}
+          style={locked ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+          aria-disabled={locked}
+        >
+          {def.icon}
+          <span>{def.label}</span>
+          {locked ? (
+            <Lock size={12} style={{ marginLeft: 'auto', color: 'var(--text-muted)' }} />
+          ) : (
+            def.badge && <span className="nav-badge">{def.badge}</span>
+          )}
+        </div>
+      </li>
+    );
+  };
+
   return (
     <aside className="sidebar">
-      <div className="nav-section-title">Core & Ingest</div>
-      <ul className="nav-list">
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`}
-            onClick={() => onSelectTab('overview')}
-            data-tour="nav-overview"
-          >
-            <LayoutDashboard size={16} />
-            <span>Overview</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'cases' ? 'active' : ''}`}
-            onClick={() => onSelectTab('cases')}
-            data-tour="nav-cases"
-          >
-            <FolderPlus size={16} />
-            <span>Cases</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'evidence' ? 'active' : ''}`}
-            onClick={() => onSelectTab('evidence')}
-            data-tour="nav-evidence"
-          >
-            <HardDriveDownload size={16} />
-            <span>Evidence</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'acquisition' ? 'active' : ''}`}
-            onClick={() => onSelectTab('acquisition')}
-            data-tour="nav-acquisition"
-          >
-            <FileCheck2 size={16} />
-            <span>Acquisition</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'hex_viewer' ? 'active' : ''}`}
-            onClick={() => onSelectTab('hex_viewer')}
-            data-tour="nav-hex_viewer"
-          >
-            <Binary size={16} />
-            <span>Byte Inspector</span>
-            <span className="nav-badge">P1</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'custody' ? 'active' : ''}`}
-            onClick={() => onSelectTab('custody')}
-            data-tour="nav-custody"
-          >
-            <ScrollText size={16} />
-            <span>Chain of Custody</span>
-          </div>
-        </li>
-      </ul>
+      <div className="nav-section-title">Core &amp; Ingest</div>
+      <ul className="nav-list">{core.map(renderItem)}</ul>
 
       <div className="nav-section-title">Analysis Pipeline</div>
-      <ul className="nav-list">
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'detection' ? 'active' : ''}`}
-            onClick={() => onSelectTab('detection')}
-            data-tour="nav-detection"
-          >
-            <ScanSearch size={16} />
-            <span>Detection</span>
-            <span className="nav-badge">P2</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'parsing' ? 'active' : ''}`}
-            onClick={() => onSelectTab('parsing')}
-            data-tour="nav-parsing"
-          >
-            <FileCode2 size={16} />
-            <span>Parsing</span>
-            <span className="nav-badge">P3</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'recovery' ? 'active' : ''}`}
-            onClick={() => onSelectTab('recovery')}
-            data-tour="nav-recovery"
-          >
-            <Video size={16} />
-            <span>Recovery & Video</span>
-            <span className="nav-badge">P4</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'timeline' ? 'active' : ''}`}
-            onClick={() => onSelectTab('timeline')}
-            data-tour="nav-timeline"
-          >
-            <Clock size={16} />
-            <span>Timeline</span>
-            <span className="nav-badge">P5</span>
-          </div>
-        </li>
-        <li>
-          <div
-            className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`}
-            onClick={() => onSelectTab('reports')}
-            data-tour="nav-reports"
-          >
-            <FileSpreadsheet size={16} />
-            <span>Forensic Reports</span>
-            <span className="nav-badge">P6</span>
-          </div>
-        </li>
-      </ul>
+      <ul className="nav-list">{pipeline.map(renderItem)}</ul>
 
       {onOpenHelp && (
         <div style={{ marginTop: 'auto', padding: '12px 8px', borderTop: '1px solid var(--border-subtle)' }}>
-          <div
-            className="nav-item"
-            onClick={onOpenHelp}
-            data-tour="nav-help"
-            style={{ color: 'var(--accent)' }}
-          >
+          <div className="nav-item" onClick={onOpenHelp} data-tour="nav-help" style={{ color: 'var(--accent)' }}>
             <ScrollText size={16} />
-            <span>Help & Guide</span>
+            <span>Help &amp; Guide</span>
             <span className="nav-badge" style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>?</span>
           </div>
         </div>

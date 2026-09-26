@@ -18,5 +18,9 @@ pub trait Detector: Send + Sync {
     fn oem_key(&self) -> &'static str;
 
     /// Execute storage structure detection over the given evidence reader using profile rules.
-    fn detect(&self, reader: &dyn EvidenceReader, profile: &OemProfile) -> Result<DetectorOutput, ForensicError>;
+    fn detect(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+    ) -> Result<DetectorOutput, ForensicError>;
 }

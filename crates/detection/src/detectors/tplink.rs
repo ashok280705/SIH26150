@@ -8,7 +8,7 @@
 //! - Emits `DetectorOutput` without claiming attribution.
 
 use evidence_reader::EvidenceReader;
-use forensic_core::{EvidenceItem, ForensicError, Hash, OemProfile, Region, RuleMatchStatus};
+use forensic_core::{EvidenceItem, ForensicError, Hash, OemProfile, RuleMatchStatus};
 
 use crate::detector::Detector;
 use crate::output::{DetectionStatus, DetectorOutput};
@@ -21,8 +21,15 @@ impl Detector for TplinkDetector {
         "tplink"
     }
 
-    fn detect(&self, reader: &dyn EvidenceReader, profile: &OemProfile) -> Result<DetectorOutput, ForensicError> {
-        let profile_hash = profile.profile_hash.clone().unwrap_or_else(|| Hash::sha256(vec![0; 32]));
+    fn detect(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+    ) -> Result<DetectorOutput, ForensicError> {
+        let profile_hash = profile
+            .profile_hash
+            .clone()
+            .unwrap_or_else(|| Hash::sha256(vec![0; 32]));
         let profile_version = &profile.profile_version;
         let mut evidence_items = Vec::new();
         let mut warnings = Vec::new();
@@ -51,11 +58,14 @@ impl Detector for TplinkDetector {
             let sig_len = pattern.len() as u64;
 
             // Define a search window based on constraints, or default to first 10MB
-            let search_limit = if let Some(forensic_core::OffsetConstraint::HeaderWindow { max_offset }) = sig.offset_constraints.first() {
-                reader.len().min(*max_offset)
-            } else {
-                reader.len().min(10 * 1024 * 1024)
-            };
+            let search_limit =
+                if let Some(forensic_core::OffsetConstraint::HeaderWindow { max_offset }) =
+                    sig.offset_constraints.first()
+                {
+                    reader.len().min(*max_offset)
+                } else {
+                    reader.len().min(10 * 1024 * 1024)
+                };
 
             // In a real implementation, we'd use RegionScanner for efficiency,
             // but for detection within a reasonable window, reading a chunk is acceptable.
@@ -63,10 +73,13 @@ impl Detector for TplinkDetector {
             let mut chunk = vec![0u8; chunk_size];
             if let Ok(read_len) = reader.read_at(0, &mut chunk) {
                 let actual_chunk = &chunk[..read_len];
-                
-                if let Some(pos) = actual_chunk.windows(pattern.len()).position(|w| w == pattern.as_slice()) {
+
+                if let Some(pos) = actual_chunk
+                    .windows(pattern.len())
+                    .position(|w| w == pattern.as_slice())
+                {
                     let observed = &actual_chunk[pos..pos + pattern.len()];
-                    
+
                     match sig.name.as_str() {
                         "ext4_superblock" => ext4_matched = true,
                         "swap_signature" => swap_matched = true,
@@ -99,12 +112,13 @@ impl Detector for TplinkDetector {
         // Confirmed = requires exclusive TP-Link indicators + supporting structures
         // Ambiguous = missing strong metadata but has layout or SQLite
         // Insufficient = only EXT4/SWAP (which are generic)
-        
+
         let status = if tp_metadata_matched && tp_magic_matched && sqlite_matched && ext4_matched {
             DetectionStatus::Confirmed
         } else if tp_metadata_matched || tp_magic_matched || sqlite_matched {
             if !tp_metadata_matched {
-                warnings.push("TP-Link metadata string missing, but other indicators present".into());
+                warnings
+                    .push("TP-Link metadata string missing, but other indicators present".into());
             }
             DetectionStatus::Ambiguous
         } else if ext4_matched || swap_matched {
@@ -138,23 +152,35 @@ mod tests {
     }
 
     impl EvidenceReader for MockReader {
-        fn len(&self) -> u64 { self.data.len() as u64 }
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
             if offset >= self.len() {
-                return Err(ForensicError::out_of_bounds("test", offset, buf.len() as u64, self.len()));
+                return Err(ForensicError::out_of_bounds(
+                    "test",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let start = offset as usize;
             let n = (self.data.len() - start).min(buf.len());
             buf[..n].copy_from_slice(&self.data[start..start + n]);
             Ok(n)
         }
-        fn source_kind(&self) -> evidence_reader::SourceKind { evidence_reader::SourceKind::Raw }
-        fn source_path(&self) -> &str { "mock://tplink" }
+        fn source_kind(&self) -> evidence_reader::SourceKind {
+            evidence_reader::SourceKind::Raw
+        }
+        fn source_path(&self) -> &str {
+            "mock://tplink"
+        }
     }
 
     #[test]
     fn tplink_detector_not_detected_on_empty() {
-        let profile = OemProfile::from_toml_str(r#"
+        let profile = OemProfile::from_toml_str(
+            r#"
 profile_id = "tplink-1"
 profile_version = "1.0"
 schema_version = "1.0"
@@ -169,10 +195,14 @@ weight = 0.8
 is_exclusive = true
 [confidence_weights]
 max_possible_score = 1.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let detector = TplinkDetector;
-        let reader = MockReader { data: vec![0; 1024] };
+        let reader = MockReader {
+            data: vec![0; 1024],
+        };
         let output = detector.detect(&reader, &profile).unwrap();
         assert_eq!(output.status, DetectionStatus::NotDetected);
     }

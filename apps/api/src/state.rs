@@ -10,6 +10,7 @@ use evidence_reader::EvidenceReader;
 use forensic_core::profile::ProfileRegistry;
 use forensic_core::write_guard::WriteGuard;
 use forensic_core::EvidenceId;
+use media::MediaPipeline;
 use recovery::FfmpegService;
 use sqlx::SqlitePool;
 
@@ -19,6 +20,12 @@ pub struct AppState {
     pub readers: Arc<RwLock<HashMap<EvidenceId, Arc<dyn EvidenceReader>>>>,
     pub profile_registry: Arc<ProfileRegistry>,
     pub ffmpeg_service: Arc<FfmpegService>,
+    /// The downstream media pipeline: ffprobe validation, FFmpeg decoding to real frames,
+    /// image processing and the AI boundary.
+    ///
+    /// It is built once at startup so its bounded process runner is shared by every request —
+    /// a single pool of FFmpeg permits for the whole service, rather than one per request.
+    pub media_pipeline: Arc<MediaPipeline>,
     pub write_guard: Arc<WriteGuard>,
 }
 
@@ -30,6 +37,10 @@ impl AppState {
             ProfileRegistry::from_profiles(vec![])
         });
         let ffmpeg_service = Arc::new(FfmpegService::default());
+        // No analysis engine is registered, so the media pipeline reports
+        // AI_ANALYSIS_NOT_CONFIGURED and produces no findings. That is the honest state until
+        // a real engine exists; nothing here fabricates detections in its absence.
+        let media_pipeline = Arc::new(MediaPipeline::default());
         let write_guard = Arc::new(WriteGuard::new("evidence_samples", "artifacts"));
 
         Self {
@@ -37,6 +48,7 @@ impl AppState {
             readers: Arc::new(RwLock::new(HashMap::new())),
             profile_registry: Arc::new(registry),
             ffmpeg_service,
+            media_pipeline,
             write_guard,
         }
     }

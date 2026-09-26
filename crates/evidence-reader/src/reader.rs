@@ -50,8 +50,12 @@ pub trait EvidenceReader: Send + Sync {
     /// Read bytes at a positioned offset into `buf`.
     ///
     /// Returns the number of bytes actually read. Returns `OutOfBounds` if `offset`
-    /// is beyond the source length. Returns fewer bytes than `buf.len()` only at
-    /// end-of-source or in sparse regions.
+    /// is beyond the source length. May return fewer bytes than `buf.len()` at
+    /// end-of-source (a short read).
+    ///
+    /// The reader does not detect or specially handle sparse/unallocated regions: a hole
+    /// in a sparse file is read as its backing bytes (typically zeros) by the OS, not
+    /// reported as a short read.
     ///
     /// All offset arithmetic inside the implementation MUST use the checked helpers
     /// from `forensic_core::checked`.
