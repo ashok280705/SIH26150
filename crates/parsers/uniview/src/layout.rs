@@ -246,7 +246,11 @@ impl UniviewLayout {
             magic_offset: usize_from(profile, key::SUPER_MAGIC_OFFSET, 0),
             magic_old: magic(profile, sig::SUPER_MAGIC_OLD),
             magic_new: magic(profile, sig::SUPER_MAGIC_NEW),
-            super_last_write_time_offset: usize_from(profile, key::SUPER_LAST_WRITE_TIME_OFFSET, 0x14),
+            super_last_write_time_offset: usize_from(
+                profile,
+                key::SUPER_LAST_WRITE_TIME_OFFSET,
+                0x14,
+            ),
             super_start_storage_time_offset: usize_from(
                 profile,
                 key::SUPER_START_STORAGE_TIME_OFFSET,
@@ -269,7 +273,11 @@ impl UniviewLayout {
             old_ui_rewrited_offset: usize_from(profile, key::OLD_UI_REWRITED_OFFSET, 6),
             old_ui_unit_entry_slot_addend: u64_from(profile, key::OLD_UI_UNIT_ENTRY_SLOT_ADDEND, 1),
             old_ui_unit_count_adjust: i64_from(profile, key::OLD_UI_UNIT_COUNT_ADJUST, -1),
-            new_uictl_current_unit_offset: usize_from(profile, key::NEW_UICTL_CURRENT_UNIT_OFFSET, 0),
+            new_uictl_current_unit_offset: usize_from(
+                profile,
+                key::NEW_UICTL_CURRENT_UNIT_OFFSET,
+                0,
+            ),
             new_uictl_count_offset: usize_from(profile, key::NEW_UICTL_COUNT_OFFSET, 4),
             new_uictl_rewrited_offset: usize_from(profile, key::NEW_UICTL_REWRITED_OFFSET, 0x0C),
             new_uictl_entries_offset: usize_from(profile, key::NEW_UICTL_ENTRIES_OFFSET, 0x10),
@@ -300,8 +308,8 @@ impl UniviewLayout {
             h3crd_header_size: u64_from(profile, key::H3CRD_HEADER_SIZE, 0x68),
             h3crd_tag: magic(profile, sig::H3CRD_EXPORT_TAG),
             h3crd_constant_offset: usize_from(profile, key::H3CRD_CONSTANT_OFFSET, 0x64),
-            h3crd_constant: u64_from(profile, key::H3CRD_CONSTANT, 0x56B4_C275)
-                .min(u32::MAX as u64) as u32,
+            h3crd_constant: u64_from(profile, key::H3CRD_CONSTANT, 0x56B4_C275).min(u32::MAX as u64)
+                as u32,
 
             data_block_size: u64_from(profile, key::DATA_BLOCK_SIZE, 0x4000),
             sptoi_bits: u64_from(profile, key::SPTOI_BITS, 14).min(32) as u32,
@@ -317,9 +325,17 @@ impl UniviewLayout {
     /// Returns `None` when neither profile-declared magic matches — which means "not a
     /// Uniview SUPER", never "assume OLD".
     pub fn generation_for_magic(&self, observed: &[u8]) -> Option<Generation> {
-        if self.magic_old.as_deref().is_some_and(|m| observed.starts_with(m)) {
+        if self
+            .magic_old
+            .as_deref()
+            .is_some_and(|m| observed.starts_with(m))
+        {
             Some(Generation::Old)
-        } else if self.magic_new.as_deref().is_some_and(|m| observed.starts_with(m)) {
+        } else if self
+            .magic_new
+            .as_deref()
+            .is_some_and(|m| observed.starts_with(m))
+        {
             Some(Generation::New)
         } else {
             None
@@ -568,7 +584,10 @@ mod tests {
         empty.layout.clear();
         let fallback = UniviewLayout::from_profile(&empty);
         // Magic comes from signatures, not layout, so both carry it.
-        assert_eq!(resolved, fallback, "profile values and documented fallbacks diverged");
+        assert_eq!(
+            resolved, fallback,
+            "profile values and documented fallbacks diverged"
+        );
         for k in [
             key::SUPER_SIZE,
             key::UI_OFFSET,
@@ -586,11 +605,25 @@ mod tests {
     #[test]
     fn magic_values_identify_the_generation() {
         let l = UniviewLayout::from_profile(&uniview_profile());
-        assert_eq!(l.generation_for_magic(&0x1367u32.to_le_bytes()), Some(Generation::Old));
-        assert_eq!(l.generation_for_magic(&0x1587u32.to_le_bytes()), Some(Generation::New));
+        assert_eq!(
+            l.generation_for_magic(&0x1367u32.to_le_bytes()),
+            Some(Generation::Old)
+        );
+        assert_eq!(
+            l.generation_for_magic(&0x1587u32.to_le_bytes()),
+            Some(Generation::New)
+        );
         assert_eq!(l.generation_for_magic(&0x1368u32.to_le_bytes()), None);
-        assert_eq!(l.generation_for_magic(&0x6713u32.to_le_bytes()), None, "byte order matters");
-        assert_eq!(l.generation_for_magic(&[0x67, 0x13]), None, "a truncated magic never matches");
+        assert_eq!(
+            l.generation_for_magic(&0x6713u32.to_le_bytes()),
+            None,
+            "byte order matters"
+        );
+        assert_eq!(
+            l.generation_for_magic(&[0x67, 0x13]),
+            None,
+            "a truncated magic never matches"
+        );
     }
 
     #[test]
@@ -611,7 +644,11 @@ mod tests {
             l.unit_base(Generation::New, 70_000),
             Some(0x1001_4000u64 + 69_999u64 * 0x1000_0000)
         );
-        assert_eq!(l.unit_base(Generation::New, u32::MAX).map(|v| v > u32::MAX as u64), Some(true));
+        assert_eq!(
+            l.unit_base(Generation::New, u32::MAX)
+                .map(|v| v > u32::MAX as u64),
+            Some(true)
+        );
     }
 
     #[test]
@@ -620,16 +657,30 @@ mod tests {
         assert_eq!(l.sptoi_limit(), 0x4000);
         assert_eq!(l.di_blocks(), 16, "256 KiB DI / 16 KiB blocks");
         assert_eq!(l.blocks_per_unit(), 0x4000);
-        assert_eq!(l.data_offset(Generation::Old, 1, 16), Some(0x0001_4000 + 16 * 0x4000));
-        assert_eq!(l.data_offset(Generation::New, 1, 16), Some(0x1001_4000 + 16 * 0x4000));
+        assert_eq!(
+            l.data_offset(Generation::Old, 1, 16),
+            Some(0x0001_4000 + 16 * 0x4000)
+        );
+        assert_eq!(
+            l.data_offset(Generation::New, 1, 16),
+            Some(0x1001_4000 + 16 * 0x4000)
+        );
         assert_eq!(
             l.data_offset(Generation::New, 3, 0x3FFF),
             Some(0x1001_4000 + 2 * 0x1000_0000 + 0x3FFF * 0x4000)
         );
-        assert_eq!(l.data_offset(Generation::New, 1, 0x4000), None, "SPtoI is 14-bit");
+        assert_eq!(
+            l.data_offset(Generation::New, 1, 0x4000),
+            None,
+            "SPtoI is 14-bit"
+        );
         assert_eq!(l.di_max_entries(), 16_383);
         assert_eq!(l.di_count_max, 0x4000);
-        assert_eq!(l.di_count_max * l.di_entry_size as u64, l.di_size, "0x4000 records fill DI");
+        assert_eq!(
+            l.di_count_max * l.di_entry_size as u64,
+            l.di_size,
+            "0x4000 records fill DI"
+        );
         assert_eq!(l.ui_data_capacity(), 4096);
         assert_eq!(l.ui_data_offset(2), Some(0x14000 + 2 * 0x10000));
     }
@@ -639,8 +690,15 @@ mod tests {
         let l = UniviewLayout::from_profile(&uniview_profile());
         assert_eq!(l.unit_count_from_raw(Generation::Old, 5), 4, "OLD: raw - 1");
         assert_eq!(l.unit_count_from_raw(Generation::New, 5), 6, "NEW: raw + 1");
-        assert_eq!(l.unit_count_from_raw(Generation::Old, 0), -1, "reported, not clamped");
-        assert_eq!(l.unit_count_from_raw(Generation::New, u32::MAX), u32::MAX as i64 + 1);
+        assert_eq!(
+            l.unit_count_from_raw(Generation::Old, 0),
+            -1,
+            "reported, not clamped"
+        );
+        assert_eq!(
+            l.unit_count_from_raw(Generation::New, u32::MAX),
+            u32::MAX as i64 + 1
+        );
         assert_eq!(l.uictl_entry_count(0), 1);
         assert_eq!(l.uictl_entry_count(0x1FFF), 1);
         assert_eq!(l.uictl_entry_count(0x2000), 2);
@@ -654,7 +712,10 @@ mod tests {
         assert_eq!(l.old_ui_unit_entry_offset(7), Some(0x4000 + 8 * 8));
         assert_eq!(l.old_ui_unit_entry_offset(0), None);
         // The last slot that fits in the 64 KiB UI region is 0x1FFF, i.e. unit 0x1FFE.
-        assert_eq!(l.old_ui_unit_entry_offset(0x1FFE), Some(0x4000 + 0x1FFF * 8));
+        assert_eq!(
+            l.old_ui_unit_entry_offset(0x1FFE),
+            Some(0x4000 + 0x1FFF * 8)
+        );
         assert_eq!(l.old_ui_unit_entry_offset(0x1FFF), None);
     }
 
@@ -663,16 +724,27 @@ mod tests {
         let l = UniviewLayout::from_profile(&uniview_profile());
         assert_eq!(l.new_ui_data_unit_entry(1), Some((0, 0, 0x14000)));
         assert_eq!(l.new_ui_data_unit_entry(2), Some((0, 1, 0x14008)));
-        assert_eq!(l.new_ui_data_unit_entry(0x2000), Some((0, 0x1FFF, 0x14000 + 0x1FFF * 8)));
+        assert_eq!(
+            l.new_ui_data_unit_entry(0x2000),
+            Some((0, 0x1FFF, 0x14000 + 0x1FFF * 8))
+        );
         assert_eq!(l.new_ui_data_unit_entry(0x2001), Some((1, 0, 0x24000)));
         for u in [1u32, 77, 0x2001, 0x9ABC] {
             let (n, slot, off) = l.new_ui_data_unit_entry(u).unwrap();
             assert_eq!(n, u64::from(u - 1) >> 13);
             assert_eq!(slot, u64::from(u - 1) & 0x1FFF);
-            assert_eq!(off, 0x14000 + u64::from(u - 1) * 8, "units are contiguous across UI-DATA");
+            assert_eq!(
+                off,
+                0x14000 + u64::from(u - 1) * 8,
+                "units are contiguous across UI-DATA"
+            );
         }
         assert_eq!(l.new_ui_data_unit_entry(0), None);
-        assert_eq!(l.new_ui_data_unit_entry(4096 * 0x2000 + 1), None, "beyond UI-DATA capacity");
+        assert_eq!(
+            l.new_ui_data_unit_entry(4096 * 0x2000 + 1),
+            None,
+            "beyond UI-DATA capacity"
+        );
     }
 
     #[test]

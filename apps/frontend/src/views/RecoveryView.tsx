@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
   Video, HardDrive, RefreshCw, Play, Wrench, Scissors,
-  ArrowRight, CheckCircle2, XCircle, Layers,
+  CheckCircle2, XCircle, Layers, Filter,
 } from 'lucide-react';
 import {
   Evidence, GapRecoveryTarget, GapRecoveryResponse, GapRecoverySlot, RecordingSession,
-  ReconstructResponse,
+  ReconstructResponse, GapAnalysis, RecoveryTargetType,
 } from '../types';
 import { runFullPipeline, recoverGap, reconstructRecording } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
@@ -23,10 +23,22 @@ interface RecoveryViewProps {
   onClearGapTarget?: () => void;
 }
 
-type GapItem = GapRecoveryTarget & { id: string };
+export interface RecoveryTargetItem extends GapRecoveryTarget {
+  id: string;
+  targetType: RecoveryTargetType;
+  length: number;
+  source: string;
+  reason: string;
+  sessionRef?: string | null;
+}
+
+export type GapItem = RecoveryTargetItem;
 
 /** Add seconds to a recorder-native wall clock and return "HH:MM:SS" (no tz shift). */
 function nativeTimeAdd(target: GapRecoveryTarget, offsetSec: number): string {
+  if (!target.startNative && !target.startNormalized) {
+    return '—';
+  }
   const m = (target.startNative || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
   if (m) {
     const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) + offsetSec * 1000;
@@ -34,8 +46,10 @@ function nativeTimeAdd(target: GapRecoveryTarget, offsetSec: number): string {
     const p = (n: number) => String(n).padStart(2, '0');
     return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
   }
-  const base = new Date(target.startNormalized).getTime();
-  if (!isNaN(base)) return new Date(base + offsetSec * 1000).toLocaleTimeString();
+  if (target.startNormalized) {
+    const base = new Date(target.startNormalized).getTime();
+    if (!isNaN(base)) return new Date(base + offsetSec * 1000).toLocaleTimeString();
+  }
   return `+${offsetSec}s`;
 }
 
@@ -45,26 +59,79 @@ function fmtDur(s: number): string {
   return `${m}m ${rs}s`;
 }
 
-/** Pull every detected gap out of the pipeline's per-recording sessions. */
-function buildGapTargets(sessions: RecordingSession[]): GapItem[] {
-  const items: GapItem[] = [];
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/**
+ * Build recovery target candidates from both:
+ * 1. In-session temporal gaps (missing temporal segment within an identified recording)
+ * 2. Physical unaccounted storage regions (unindexed physical storage ranges not attributed to parsed recordings)
+ */
+export function buildRecoveryTargets(
+  sessions: RecordingSession[],
+  gapAnalysis?: GapAnalysis | null
+): RecoveryTargetItem[] {
+  const items: RecoveryTargetItem[] = [];
+
+  // 1. Temporal in-session gaps
   for (const s of sessions) {
     for (const g of s.gaps) {
+      const scanStart = g.previous_offset + g.previous_length;
+      const scanEnd = g.next_offset;
+      const length = scanEnd > scanStart ? scanEnd - scanStart : 0;
       items.push({
-        id: `ch${s.channel}-0x${g.next_offset.toString(16)}`,
+        id: `temporal-ch${s.channel}-0x${g.next_offset.toString(16)}`,
+        targetType: 'temporal_gap',
         channel: s.channel,
-        scanStart: g.previous_offset + g.previous_length,
-        scanEnd: g.next_offset,
+        scanStart,
+        scanEnd,
+        length,
         gapSeconds: g.missing_seconds,
         nominalSeconds: s.nominal_segment_seconds || 10,
         startNative: g.starts_after_native,
         startNormalized: g.starts_after_normalized,
         endNative: g.ends_before_native,
         endNormalized: g.ends_before_normalized,
+        source: `Recording Session (Ch ${s.channel})`,
+        reason: g.reason || `Missing footage for ${g.missing_seconds}s within recording session`,
+        sessionRef: s.id,
       });
     }
   }
-  return items.sort((a, b) => a.startNormalized.localeCompare(b.startNormalized) || a.channel - b.channel);
+
+  // 2. Physical unaccounted storage regions
+  const unaccounted = gapAnalysis?.coverage?.unaccounted_regions ?? [];
+  for (let idx = 0; idx < unaccounted.length; idx++) {
+    const u = unaccounted[idx];
+    const offset = u.region.offset;
+    const length = u.region.length;
+    const scanEnd = offset + length;
+    const nominal = sessions.find((s) => s.nominal_segment_seconds > 0)?.nominal_segment_seconds || 10;
+
+    items.push({
+      id: `physical-0x${offset.toString(16)}-0x${scanEnd.toString(16)}`,
+      targetType: 'physical_unaccounted',
+      channel: 0,
+      scanStart: offset,
+      scanEnd,
+      length,
+      gapSeconds: null,
+      nominalSeconds: nominal,
+      startNative: null,
+      startNormalized: null,
+      endNative: null,
+      endNormalized: null,
+      source: 'Physical Coverage Analysis',
+      reason: u.reason || `${fmtBytes(length)} unreferenced by parsed recordings`,
+      sessionRef: null,
+    });
+  }
+
+  // Sort by scanStart ascending for predictable physical ordering
+  return items.sort((a, b) => a.scanStart - b.scanStart);
 }
 
 const LEVEL_META: Record<string, { badge: string; label: string }> = {
@@ -96,16 +163,17 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
   gapTarget,
   onClearGapTarget,
 }) => {
-  const [gaps, setGaps] = useState<GapItem[]>([]);
+  const [gaps, setGaps] = useState<RecoveryTargetItem[]>([]);
+  const [targetFilter, setTargetFilter] = useState<'all' | 'temporal' | 'physical'>('all');
   const [loadingGaps, setLoadingGaps] = useState(false);
-  const [selected, setSelected] = useState<GapItem | GapRecoveryTarget | null>(null);
+  const [selected, setSelected] = useState<RecoveryTargetItem | GapRecoveryTarget | null>(null);
   const [result, setResult] = useState<GapRecoveryResponse | null>(null);
   const [loadingRec, setLoadingRec] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activePlayback, setActivePlayback] = useState<any | null>(null);
   const [reconstructing, setReconstructing] = useState<number | null>(null);
 
-  // Load the list of detected gaps for the current evidence.
+  // Load the list of recovery candidate targets for the current evidence.
   useEffect(() => {
     setGaps([]);
     setSelected(null);
@@ -131,9 +199,10 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
     try {
       const run = await runFullPipeline(evidence.id);
       const sessions = run.recordings_timeline?.sessions ?? [];
-      setGaps(buildGapTargets(sessions));
+      const targets = buildRecoveryTargets(sessions, run.gap_analysis);
+      setGaps(targets);
     } catch (e: any) {
-      setError(e?.message || 'Failed to load detected gaps');
+      setError(e?.message || 'Failed to load recovery candidates');
     } finally {
       setLoadingGaps(false);
     }
@@ -141,13 +210,12 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
 
   const runGapRecovery = async (target: GapRecoveryTarget) => {
     if (!evidence) return;
-    // A finite, ordered byte region is required. If scanStart is NaN it means the
-    // gap JSON had no `previous_length` — i.e. the API server is an older build.
+    // A finite, ordered byte region is required.
     if (!Number.isFinite(target.scanStart) || !Number.isFinite(target.scanEnd) || target.scanEnd <= target.scanStart) {
       setResult(null);
       setError(
-        'This gap has no valid byte region to scan. The API server is likely running an older build ' +
-        '(missing the gap byte-range field). Rebuild and restart the API server, then reload.'
+        'This recovery target has no valid byte region to scan. ' +
+        'Rebuild and restart the API server, then reload.'
       );
       return;
     }
@@ -156,12 +224,20 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
     setResult(null);
     setActivePlayback(null);
     try {
+      const nominal = target.nominalSeconds || 10;
+      const regionLen = target.scanEnd - target.scanStart;
+      // For physical unaccounted regions without missing_seconds, calculate gap_seconds
+      // so num_slots matches reasonable probing windows (e.g. 256KB-512KB per slot)
+      const gapSec = (target.gapSeconds != null && target.gapSeconds > 0)
+        ? target.gapSeconds
+        : Math.max(nominal, Math.min(300, Math.ceil(regionLen / (256 * 1024)) * nominal));
+
       const res = await recoverGap(evidence.id, {
         channel: target.channel,
         scan_start: target.scanStart,
         scan_end: target.scanEnd,
-        gap_seconds: target.gapSeconds,
-        nominal_seconds: target.nominalSeconds,
+        gap_seconds: gapSec,
+        nominal_seconds: nominal,
         // Lets the server carve with the OEM's own structures (Hikvision MPEG-PS).
         oem_key: workflow?.parserUsed || workflow?.attributedOem || undefined,
       });
@@ -172,13 +248,13 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
         : 'not_recovered';
       if (onWorkflow) onWorkflow({ recoveryDone: true, recoveryRequired: true, recoveryOutcome: outcome });
     } catch (e: any) {
-      setError(e?.message || 'Gap recovery failed');
+      setError(e?.message || 'Recovery failed');
     } finally {
       setLoadingRec(false);
     }
   };
 
-  const selectGap = (item: GapItem) => {
+  const selectGap = (item: RecoveryTargetItem) => {
     onClearGapTarget?.();
     setSelected(item);
     runGapRecovery(item);
@@ -319,18 +395,29 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
         </div>
       )}
 
-      {/* Staged recovery result for the selected gap */}
+      {/* Staged recovery result for the selected gap / physical candidate */}
       {selected && (
         <div className="panel mb-4" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Scissors size={18} style={{ color: 'var(--danger)' }} />
-              <strong style={{ fontSize: '15px' }}>
-                Recovering gap · Channel {selected.channel}
-              </strong>
-              <span className="mono" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                {nativeTimeAdd(selected, 0)} <ArrowRight size={11} style={{ display: 'inline', verticalAlign: 'middle' }} /> {nativeTimeAdd(selected, selected.gapSeconds)} · missing {fmtDur(selected.gapSeconds)}
-              </span>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <strong style={{ fontSize: '15px' }}>
+                    {selected.targetType === 'physical_unaccounted'
+                      ? 'Scanning Physical Storage Candidate'
+                      : `Recovering Temporal Gap · Channel ${selected.channel}`}
+                  </strong>
+                  <span className={selected.targetType === 'physical_unaccounted' ? 'badge badge-info' : 'badge badge-warning'}>
+                    {selected.targetType === 'physical_unaccounted' ? 'Unaccounted Storage Region' : 'In-Session Gap'}
+                  </span>
+                </div>
+                <div className="mono" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {selected.targetType === 'physical_unaccounted'
+                    ? `Region: 0x${selected.scanStart.toString(16).toUpperCase()} → 0x${selected.scanEnd.toString(16).toUpperCase()} (${fmtBytes(selected.length || (selected.scanEnd - selected.scanStart))}) · Basis: Unaccounted storage`
+                    : `${nativeTimeAdd(selected, 0)} → ${nativeTimeAdd(selected, selected.gapSeconds || 0)} · missing ${fmtDur(selected.gapSeconds || 0)} · 0x${selected.scanStart.toString(16).toUpperCase()} → 0x${selected.scanEnd.toString(16).toUpperCase()}`}
+                </div>
+              </div>
             </div>
             {loadingRec && <span className="badge badge-info"><RefreshCw size={11} className="spin" /> recovering…</span>}
           </div>
@@ -356,12 +443,12 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
                 <span className="badge badge-fail">Not recovered: {fmtDur(levelSeconds(null))}</span>
               </div>
 
-              {/* Staged sub-slot breakdown, in time order */}
+              {/* Staged sub-slot breakdown, in time/offset order */}
               <div className="table-container">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Sub-range (time)</th>
+                      <th>Sub-range</th>
                       <th>Stage</th>
                       <th>Data state</th>
                       <th>Status</th>
@@ -376,7 +463,9 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
                       return (
                         <tr key={slot.index}>
                           <td className="mono">
-                            {nativeTimeAdd(selected, slot.start_offset_sec)} → {nativeTimeAdd(selected, slot.end_offset_sec)}
+                            {selected.targetType === 'physical_unaccounted'
+                              ? `+${slot.start_offset_sec}s → +${slot.end_offset_sec}s`
+                              : `${nativeTimeAdd(selected, slot.start_offset_sec)} → ${nativeTimeAdd(selected, slot.end_offset_sec)}`}
                           </td>
                           <td><span className={`badge ${meta.badge}`}>{meta.label}</span></td>
                           {/* A slot where nothing was found carries no data state. Showing
@@ -427,12 +516,12 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
 
               {result.decision === 'not_recovered' && (
                 <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--danger)', fontSize: '13px' }}>
-                  <XCircle size={16} /> No footage could be carved from this gap at L1, L2, or L3.
+                  <XCircle size={16} /> No footage could be carved from this candidate region at L1, L2, or L3.
                 </div>
               )}
               {result.decision === 'completely_recovered' && (
                 <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--success)', fontSize: '13px' }}>
-                  <CheckCircle2 size={16} /> Every sub-slot of this gap was recovered.
+                  <CheckCircle2 size={16} /> Every sub-slot of this candidate region was recovered.
                 </div>
               )}
             </div>
@@ -440,64 +529,141 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({
         </div>
       )}
 
-      {/* Detected gaps list */}
-      <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
-        <div className="panel-header" style={{ margin: 0, padding: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Layers size={16} style={{ color: 'var(--accent)' }} />
-            <h3 style={{ margin: 0, fontSize: '14px' }}>Detected Gaps ({gaps.length})</h3>
-          </div>
-        </div>
-        {gaps.length === 0 ? (
-          <div className="empty-state" style={{ padding: '28px' }}>
-            <Wrench size={24} />
-            <p>{loadingGaps ? 'Scanning for gaps…' : 'No gaps detected in this evidence.'}</p>
-          </div>
-        ) : (
-          <div className="table-container" style={{ border: 'none', borderTop: '1px solid var(--border)', borderRadius: 0 }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Channel</th>
-                  <th>Gap window (recorder time)</th>
-                  <th>Missing</th>
-                  <th>Byte region</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {gaps.map((g) => {
-                  const isSel = selected != null &&
-                    selected.channel === g.channel && selected.scanStart === g.scanStart && selected.scanEnd === g.scanEnd;
-                  return (
-                    <tr key={g.id} style={isSel ? { background: 'var(--surface-muted)' } : undefined}>
-                      <td><strong>Ch {g.channel}</strong></td>
-                      <td className="mono" style={{ fontSize: '12px' }}>
-                        {nativeTimeAdd(g, 0)} → {nativeTimeAdd(g, g.gapSeconds)}
-                      </td>
-                      <td style={{ color: 'var(--warning)' }}>{fmtDur(g.gapSeconds)}</td>
-                      <td className="mono" style={{ fontSize: '11px' }}>
-                        0x{g.scanStart.toString(16).toUpperCase()} → 0x{g.scanEnd.toString(16).toUpperCase()}
-                      </td>
-                      <td>
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => selectGap(g)}
-                          disabled={loadingRec && isSel}
-                          title="Run staged L1 → L2 → L3 recovery on this gap"
-                        >
-                          {loadingRec && isSel ? <RefreshCw size={12} className="spin" /> : <Wrench size={12} />}
-                          <span>Recover</span>
-                        </button>
-                      </td>
+      {/* Recovery Candidates list (Temporal Gaps + Physical Unaccounted Regions) */}
+      {(() => {
+        const temporalTargets = gaps.filter((g) => g.targetType === 'temporal_gap');
+        const physicalTargets = gaps.filter((g) => g.targetType === 'physical_unaccounted');
+        const filteredGaps =
+          targetFilter === 'temporal' ? temporalTargets
+          : targetFilter === 'physical' ? physicalTargets
+          : gaps;
+
+        return (
+          <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+            <div className="panel-header" style={{ margin: 0, padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Layers size={16} style={{ color: 'var(--accent)' }} />
+                <h3 style={{ margin: 0, fontSize: '14px' }}>Recovery Candidates ({gaps.length})</h3>
+                <ContextHelp
+                  title="Recovery Candidates"
+                  content="Candidates for carving include both temporal gaps (continuity shortfalls within identified camera sessions) and physical unaccounted storage regions (unindexed physical disk ranges not attributed to parsed recordings). Both can be carved with the staged L1 → L2 → L3 cascade."
+                />
+              </div>
+
+              {/* Filter tabs */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Filter size={13} style={{ color: 'var(--text-muted)' }} />
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    className={`btn btn-sm ${targetFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setTargetFilter('all')}
+                  >
+                    All ({gaps.length})
+                  </button>
+                  <button
+                    className={`btn btn-sm ${targetFilter === 'temporal' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setTargetFilter('temporal')}
+                    title="Gaps within identified camera sessions"
+                  >
+                    Temporal ({temporalTargets.length})
+                  </button>
+                  <button
+                    className={`btn btn-sm ${targetFilter === 'physical' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setTargetFilter('physical')}
+                    title="Physical unindexed storage regions"
+                  >
+                    Physical ({physicalTargets.length})
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {filteredGaps.length === 0 ? (
+              <div className="empty-state" style={{ padding: '28px' }}>
+                <Wrench size={24} />
+                <p>
+                  {loadingGaps
+                    ? 'Scanning for recovery candidates…'
+                    : gaps.length === 0
+                    ? 'No recovery candidates detected in this evidence. All storage regions are accounted for and all recording sessions are continuous.'
+                    : 'No candidates match the selected filter.'}
+                </p>
+              </div>
+            ) : (
+              <div className="table-container" style={{ border: 'none', borderTop: '1px solid var(--border)', borderRadius: 0 }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Channel</th>
+                      <th>Temporal Window</th>
+                      <th>Missing / Size</th>
+                      <th>Physical Byte Region</th>
+                      <th>Basis / Provenance</th>
+                      <th>Action</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {filteredGaps.map((g) => {
+                      const isSel = selected != null &&
+                        selected.scanStart === g.scanStart && selected.scanEnd === g.scanEnd && selected.channel === g.channel;
+                      const isTemporal = g.targetType === 'temporal_gap';
+                      return (
+                        <tr key={g.id} style={isSel ? { background: 'var(--surface-muted)' } : undefined}>
+                          <td>
+                            <span className={isTemporal ? 'badge badge-warning' : 'badge badge-info'}>
+                              {isTemporal ? 'Temporal Gap' : 'Physical Candidate'}
+                            </span>
+                          </td>
+                          <td>
+                            {isTemporal ? <strong>Ch {g.channel}</strong> : <span className="text-muted">Unallocated</span>}
+                          </td>
+                          <td className="mono" style={{ fontSize: '12px' }}>
+                            {isTemporal ? (
+                              `${nativeTimeAdd(g, 0)} → ${nativeTimeAdd(g, g.gapSeconds ?? 0)}`
+                            ) : (
+                              <span className="text-muted" style={{ fontSize: '11px' }}>Unindexed storage</span>
+                            )}
+                          </td>
+                          <td style={isTemporal ? { color: 'var(--warning)', fontWeight: 600 } : undefined}>
+                            {isTemporal && g.gapSeconds != null ? `${fmtDur(g.gapSeconds)} (${fmtBytes(g.length)})` : fmtBytes(g.length)}
+                          </td>
+                          <td className="mono" style={{ fontSize: '11px' }}>
+                            0x{g.scanStart.toString(16).toUpperCase()} → 0x{g.scanEnd.toString(16).toUpperCase()}
+                          </td>
+                          <td className="text-muted" style={{ fontSize: '11px', maxWidth: '240px' }} title={g.reason}>
+                            {g.reason}
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() => selectGap(g)}
+                                disabled={loadingRec && isSel}
+                                title="Run staged L1 → L2 → L3 recovery on this candidate range"
+                              >
+                                {loadingRec && isSel ? <RefreshCw size={12} className="spin" /> : <Wrench size={12} />}
+                                <span>Recover</span>
+                              </button>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => onNavigateToHex(g.scanStart)}
+                                title="Inspect bytes at start of this candidate range in the Byte Inspector"
+                              >
+                                Hex
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
     </div>
   );
 };

@@ -115,7 +115,10 @@ impl UnvTimestamp {
 
     /// Whether the fields denote a real calendar instant (valid or merely implausible).
     pub fn is_decoded(&self) -> bool {
-        matches!(self.status, TimestampStatus::Valid | TimestampStatus::Implausible)
+        matches!(
+            self.status,
+            TimestampStatus::Valid | TimestampStatus::Implausible
+        )
     }
 
     /// The raw five bytes as a little-endian integer, for `RawTimestamp::value`.
@@ -142,8 +145,15 @@ impl UnvTimestamp {
         if !self.is_decoded() {
             return None;
         }
-        calendar(self.year, self.month, self.day, self.hour, self.minute, self.second)
-            .map(|dt| dt.and_utc().timestamp())
+        calendar(
+            self.year,
+            self.month,
+            self.day,
+            self.hour,
+            self.minute,
+            self.second,
+        )
+        .map(|dt| dt.and_utc().timestamp())
     }
 
     /// The wall-clock digits read as UTC, ISO-8601 with an explicit `Z`.
@@ -159,7 +169,10 @@ impl UnvTimestamp {
             TimestampStatus::Invalid => format!("invalid (raw {})", hex::encode(&self.raw)),
             TimestampStatus::Valid => self.wall_clock().unwrap_or_default(),
             TimestampStatus::Implausible => {
-                format!("{} (outside plausibility window)", self.wall_clock().unwrap_or_default())
+                format!(
+                    "{} (outside plausibility window)",
+                    self.wall_clock().unwrap_or_default()
+                )
             }
         }
     }
@@ -216,7 +229,10 @@ mod tests {
         assert_eq!(t.status, TimestampStatus::Valid);
         assert_eq!(t.wall_clock().as_deref(), Some("2024-03-15T13:45:30"));
         assert_eq!(t.unix_seconds_as_utc(), Some(1_710_510_330));
-        assert_eq!(encode(2024, 3, 15, 13, 45, 30), [0xE8, 0x37, 0xAF, 0xB5, 0x1E]);
+        assert_eq!(
+            encode(2024, 3, 15, 13, 45, 30),
+            [0xE8, 0x37, 0xAF, 0xB5, 0x1E]
+        );
     }
 
     #[test]
@@ -228,10 +244,16 @@ mod tests {
             (4095, 12, 31, 23, 59, 59),
         ] {
             let t = d(&encode(y, mo, da, h, mi, s));
-            assert_eq!((t.year, t.month, t.day, t.hour, t.minute, t.second), (y, mo, da, h, mi, s));
+            assert_eq!(
+                (t.year, t.month, t.day, t.hour, t.minute, t.second),
+                (y, mo, da, h, mi, s)
+            );
             assert!(t.is_decoded());
         }
-        assert_eq!(d(&encode(4095, 12, 31, 23, 59, 59)).status, TimestampStatus::Implausible);
+        assert_eq!(
+            d(&encode(4095, 12, 31, 23, 59, 59)).status,
+            TimestampStatus::Implausible
+        );
     }
 
     #[test]
@@ -247,12 +269,30 @@ mod tests {
     fn malformed_values_are_reported_not_coerced() {
         assert_eq!(d(&[0; 5]).status, TimestampStatus::Empty);
         assert_eq!(d(&[0xE8, 0x37]).status, TimestampStatus::Truncated);
-        assert_eq!(d(&encode(2024, 13, 1, 0, 0, 0)).status, TimestampStatus::Invalid);
-        assert_eq!(d(&encode(2023, 2, 29, 0, 0, 0)).status, TimestampStatus::Invalid);
-        assert_eq!(d(&encode(2024, 1, 1, 24, 0, 0)).status, TimestampStatus::Invalid);
-        assert_eq!(d(&encode(2024, 1, 1, 0, 60, 0)).status, TimestampStatus::Invalid);
-        assert_eq!(d(&encode(2024, 1, 1, 0, 0, 60)).status, TimestampStatus::Invalid);
-        assert_eq!(d(&encode(2024, 1, 0, 0, 0, 0)).status, TimestampStatus::Invalid);
+        assert_eq!(
+            d(&encode(2024, 13, 1, 0, 0, 0)).status,
+            TimestampStatus::Invalid
+        );
+        assert_eq!(
+            d(&encode(2023, 2, 29, 0, 0, 0)).status,
+            TimestampStatus::Invalid
+        );
+        assert_eq!(
+            d(&encode(2024, 1, 1, 24, 0, 0)).status,
+            TimestampStatus::Invalid
+        );
+        assert_eq!(
+            d(&encode(2024, 1, 1, 0, 60, 0)).status,
+            TimestampStatus::Invalid
+        );
+        assert_eq!(
+            d(&encode(2024, 1, 1, 0, 0, 60)).status,
+            TimestampStatus::Invalid
+        );
+        assert_eq!(
+            d(&encode(2024, 1, 0, 0, 0, 0)).status,
+            TimestampStatus::Invalid
+        );
         let bad = d(&[0xFF; 5]);
         assert_eq!(bad.status, TimestampStatus::Invalid);
         assert_eq!(bad.unix_seconds_as_utc(), None, "no instant is invented");

@@ -7,14 +7,18 @@ pub async fn create_evidence(pool: &SqlitePool, evidence: &Evidence) -> Result<(
     let image_format_str = evidence.image_format.to_string();
     let source_state_str = evidence.source_state.to_string();
     let capacity_i64 = evidence.capacity as i64; // sqlite uses i64
+    let examiner_tz_json = evidence
+        .examiner_timezone
+        .as_ref()
+        .map(|t| serde_json::to_string(t).unwrap_or_default());
 
     sqlx::query(
         r#"
         INSERT INTO evidence (
             id, case_id, source_device, acquisition_time, capacity, image_format,
             responsible_examiner, acquisition_tool, acquisition_tool_version,
-            source_state, acquisition_id, path, registered_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            source_state, acquisition_id, path, registered_at, examiner_timezone
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#,
     )
     .bind(evidence.id.0)
@@ -30,6 +34,7 @@ pub async fn create_evidence(pool: &SqlitePool, evidence: &Evidence) -> Result<(
     .bind(evidence.acquisition_id.map(|id| id.0))
     .bind(&evidence.path)
     .bind(evidence.registered_at)
+    .bind(examiner_tz_json)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -76,7 +81,7 @@ pub async fn get_evidence(
         SELECT
             id, case_id, source_device, acquisition_time, capacity, image_format,
             responsible_examiner, acquisition_tool, acquisition_tool_version,
-            source_state, acquisition_id, path, registered_at
+            source_state, acquisition_id, path, registered_at, examiner_timezone
         FROM evidence
         WHERE id = ?1
         "#,
@@ -104,7 +109,7 @@ pub async fn get_evidence_for_case(
         SELECT
             id, case_id, source_device, acquisition_time, capacity, image_format,
             responsible_examiner, acquisition_tool, acquisition_tool_version,
-            source_state, acquisition_id, path, registered_at
+            source_state, acquisition_id, path, registered_at, examiner_timezone
         FROM evidence
         WHERE case_id = ?1
         ORDER BY registered_at ASC
@@ -128,6 +133,26 @@ pub async fn get_evidence_for_case(
     Ok(res)
 }
 
+pub async fn update_evidence_timezone(
+    pool: &SqlitePool,
+    id: &EvidenceId,
+    tz: Option<&forensic_core::ExaminerTimezone>,
+) -> Result<(), ForensicError> {
+    let val = tz.map(|t| serde_json::to_string(t).unwrap_or_default());
+    sqlx::query("UPDATE evidence SET examiner_timezone = ?1 WHERE id = ?2")
+        .bind(val)
+        .bind(id.0)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            ForensicError::corrupt(
+                "update_evidence_timezone_db",
+                format!("Failed to update evidence timezone: {e}"),
+            )
+        })?;
+    Ok(())
+}
+
 fn row_to_evidence(r: &sqlx::sqlite::SqliteRow) -> Result<Evidence, ForensicError> {
     let id_val: uuid::Uuid = r.try_get("id").unwrap();
     let case_id_val: uuid::Uuid = r.try_get("case_id").unwrap();
@@ -136,6 +161,9 @@ fn row_to_evidence(r: &sqlx::sqlite::SqliteRow) -> Result<Evidence, ForensicErro
     let source_state_str: String = r.try_get("source_state").unwrap();
     let capacity_i64: i64 = r.try_get("capacity").unwrap();
     let acq_id_val: Option<uuid::Uuid> = r.try_get("acquisition_id").unwrap();
+    let examiner_tz_raw: Option<String> = r.try_get("examiner_timezone").unwrap_or(None);
+    let examiner_timezone: Option<forensic_core::ExaminerTimezone> =
+        examiner_tz_raw.and_then(|s| serde_json::from_str(&s).ok());
 
     let ev = Evidence {
         id: EvidenceId(id_val),
@@ -151,6 +179,7 @@ fn row_to_evidence(r: &sqlx::sqlite::SqliteRow) -> Result<Evidence, ForensicErro
         acquisition_id: acq_id_val.map(forensic_core::identifiers::AcquisitionId),
         path: r.try_get("path").unwrap(),
         registered_at: r.try_get("registered_at").unwrap(),
+        examiner_timezone,
     };
 
     Ok(ev)

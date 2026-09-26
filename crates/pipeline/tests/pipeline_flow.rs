@@ -84,6 +84,33 @@ fn dahua_fixture_runs_full_flow_to_final_timeline() {
     assert!(run.preliminary_timeline.is_some());
     assert!(run.gap_analysis.is_some());
 
+    // Phase 1 Temporal Semantics: Dahua recordings with unknown timezone must be included
+    let tl = run
+        .recordings_timeline
+        .as_ref()
+        .expect("recordings timeline present");
+    assert_eq!(
+        tl.recordings_without_time, 0,
+        "Dahua recordings with valid native timestamps must not be counted as missing time"
+    );
+    assert_eq!(
+        tl.recordings_with_unknown_timezone, 8,
+        "8 Dahua recordings must be counted as unknown timezone"
+    );
+    assert_eq!(
+        tl.total_segments, 8,
+        "8 Dahua segments must be present in the timeline"
+    );
+    assert!(
+        tl.total_recordings >= 1,
+        "Dahua sessions must be formed and not discarded"
+    );
+    assert_eq!(
+        tl.sessions[0].temporal_basis,
+        timeline::TemporalBasis::DeviceLocal
+    );
+    assert_eq!(tl.sessions[0].timezone, "Unknown");
+
     // A final timeline must always be produced when not halted for an analyst.
     if !run.requires_analyst {
         assert!(run.final_timeline.is_some());

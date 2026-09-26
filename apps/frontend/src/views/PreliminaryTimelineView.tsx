@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   ListTree, RefreshCw, HardDrive, CheckCircle2, AlertTriangle, ArrowRight,
-  Film, Clock, Scissors, Video, Play, ChevronUp, ChevronDown, Filter, Calendar, Wrench,
+  Film, Clock, Scissors, Video, Play, ChevronUp, ChevronDown, Filter, Calendar, Wrench, Globe,
 } from 'lucide-react';
 import {
   Evidence, PipelineRun, RecordingSession, GapRecoveryTarget, ReconstructResponse,
 } from '../types';
-import { runFullPipeline, reconstructRecording } from '../services/api';
+import { runFullPipeline, reconstructRecording, setEvidenceTimezone, clearEvidenceTimezone } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { VideoPlayer } from '../components/video/VideoPlayer';
 import { WorkflowState } from '../workflow';
@@ -25,9 +25,9 @@ function parseNative(s: string | null | undefined): { date: string; time: string
   return { date: `${d}/${mo}/${y}`, time: `${hh}:${mm}:${ss}` };
 }
 
-/** "DD/MM/YYYY HH:MM:SS" from a native string, or a UTC fallback. */
+/** "DD/MM/YYYY HH:MM:SS" from a native string, or a fallback. */
 function fmtDateTime(native: string | null | undefined, normalizedFallback?: string | null): string {
-  const p = parseNative(native);
+  const p = parseNative(native) || parseNative(normalizedFallback);
   if (p) return `${p.date} ${p.time}`;
   if (normalizedFallback) {
     const dt = new Date(normalizedFallback);
@@ -36,9 +36,9 @@ function fmtDateTime(native: string | null | undefined, normalizedFallback?: str
   return '—';
 }
 
-/** "HH:MM:SS" from a native string, or a UTC fallback. */
+/** "HH:MM:SS" from a native string, or a fallback. */
 function fmtTime(native: string | null | undefined, normalizedFallback?: string | null): string {
-  const p = parseNative(native);
+  const p = parseNative(native) || parseNative(normalizedFallback);
   if (p) return p.time;
   if (normalizedFallback) {
     const dt = new Date(normalizedFallback);
@@ -47,9 +47,9 @@ function fmtTime(native: string | null | undefined, normalizedFallback?: string 
   return '—';
 }
 
-/** "DD/MM/YYYY" from a native string, or a UTC fallback. */
+/** "DD/MM/YYYY" from a native string, or a fallback. */
 function fmtDate(native: string | null | undefined, normalizedFallback?: string | null): string {
-  const p = parseNative(native);
+  const p = parseNative(native) || parseNative(normalizedFallback);
   if (p) return p.date;
   if (normalizedFallback) {
     const dt = new Date(normalizedFallback);
@@ -117,6 +117,10 @@ function nativeAddSeconds(native: string | null | undefined, secs: number): stri
 }
 
 function isoAddSeconds(iso: string, secs: number): string {
+  if (!iso.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(iso)) {
+    const res = nativeAddSeconds(iso, secs);
+    if (res) return res;
+  }
   const t = new Date(iso).getTime();
   return isNaN(t) ? iso : new Date(t + secs * 1000).toISOString();
 }
@@ -244,6 +248,81 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
   const [activePlayback, setActivePlayback] = useState<any | null>(null);
   const [reconstructing, setReconstructing] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
+
+  // Examiner-established timezone modal state
+  const [showTzModal, setShowTzModal] = useState(false);
+  const [tzValue, setTzValue] = useState('');
+  const [tzSource, setTzSource] = useState('');
+  const [tzEstablishedBy, setTzEstablishedBy] = useState('');
+  const [tzNotes, setTzNotes] = useState('');
+  const [tzSaving, setTzSaving] = useState(false);
+  const [tzError, setTzError] = useState<string | null>(null);
+
+  const openTzModal = () => {
+    if (evidence?.examiner_timezone) {
+      setTzValue(evidence.examiner_timezone.timezone);
+      setTzSource(evidence.examiner_timezone.source);
+      setTzEstablishedBy(evidence.examiner_timezone.established_by);
+      setTzNotes(evidence.examiner_timezone.notes || '');
+    } else {
+      setTzValue('');
+      setTzSource('');
+      setTzEstablishedBy('');
+      setTzNotes('');
+    }
+    setTzError(null);
+    setShowTzModal(true);
+  };
+
+  const handleSaveTz = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!evidence) return;
+    if (!tzValue.trim()) {
+      setTzError('Timezone string is required (e.g. Asia/Kolkata or UTC+05:30)');
+      return;
+    }
+    if (!tzSource.trim()) {
+      setTzError('External source / evidentiary basis is required');
+      return;
+    }
+    if (!tzEstablishedBy.trim()) {
+      setTzError('Examiner identity is required');
+      return;
+    }
+    setTzSaving(true);
+    setTzError(null);
+    try {
+      const updated = await setEvidenceTimezone(evidence.id, {
+        timezone: tzValue.trim(),
+        source: tzSource.trim(),
+        established_by: tzEstablishedBy.trim(),
+        notes: tzNotes.trim() || undefined,
+      });
+      evidence.examiner_timezone = updated;
+      setShowTzModal(false);
+      await build();
+    } catch (err: any) {
+      setTzError(err?.message || 'Failed to establish timezone');
+    } finally {
+      setTzSaving(false);
+    }
+  };
+
+  const handleClearTz = async () => {
+    if (!evidence) return;
+    setTzSaving(true);
+    setTzError(null);
+    try {
+      await clearEvidenceTimezone(evidence.id);
+      evidence.examiner_timezone = null;
+      setShowTzModal(false);
+      await build();
+    } catch (err: any) {
+      setTzError(err?.message || 'Failed to remove timezone');
+    } finally {
+      setTzSaving(false);
+    }
+  };
 
   useEffect(() => {
     setRun(null);
@@ -423,15 +502,45 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
 
       {/* Target bar */}
       <div className="panel" style={{ padding: '16px', marginBottom: '20px', backgroundColor: 'var(--surface)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <HardDrive size={18} style={{ color: 'var(--accent)' }} />
-          <div>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>Active Target</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-              <strong style={{ fontSize: '14px' }}>{evidence.source_device}</strong>
-              <span className="badge badge-info">{evidence.image_format}</span>
-              {workflow?.parserUsed && <span className="badge badge-pass">parser: {workflow.parserUsed}</span>}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <HardDrive size={18} style={{ color: 'var(--accent)' }} />
+            <div>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>Active Target</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                <strong style={{ fontSize: '14px' }}>{evidence.source_device}</strong>
+                <span className="badge badge-info">{evidence.image_format}</span>
+                {workflow?.parserUsed && <span className="badge badge-pass">parser: {workflow.parserUsed}</span>}
+              </div>
             </div>
+          </div>
+
+          {/* Timezone Provenance & Quick Action */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>
+                Forensic Timezone
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                {evidence.examiner_timezone ? (
+                  <span className="badge badge-info" title={`Source: ${evidence.examiner_timezone.source} (${evidence.examiner_timezone.established_by})`}>
+                    Examiner: {evidence.examiner_timezone.timezone}
+                  </span>
+                ) : (
+                  <span className="badge badge-warning" title="Filesystem timezone is unknown. Timestamps are displayed in naive recorder wall-clock time without UTC conversion.">
+                    Filesystem: Unknown
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={openTzModal}
+              title="Establish or modify examiner timezone with external documentation"
+            >
+              <Globe size={14} />
+              <span>{evidence.examiner_timezone ? 'Edit TZ' : 'Establish TZ'}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -566,6 +675,71 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
             </div>
           )}
 
+          {/* Timezone Information Callout */}
+          {recordingsTimeline?.examiner_timezone ? (
+            <div
+              className="panel mb-4"
+              style={{
+                borderLeft: '4px solid var(--accent)',
+                background: 'rgba(59, 130, 246, 0.05)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+                padding: '12px 16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                <Globe size={20} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ fontSize: '13px' }}>
+                  <div>
+                    <strong>Examiner-Established Timezone: {recordingsTimeline.examiner_timezone.timezone}</strong>
+                    <span className="badge badge-info" style={{ marginLeft: '8px', fontSize: '10px' }}>External Assertion</span>
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    Documented Basis: <em>{recordingsTimeline.examiner_timezone.source}</em> · Examiner: <em>{recordingsTimeline.examiner_timezone.established_by}</em>
+                    {recordingsTimeline.examiner_timezone.notes && ` · Notes: ${recordingsTimeline.examiner_timezone.notes}`}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                    Physical filesystem timestamps remain intact wall-clock. Timestamps are converted to absolute UTC instants using this externally established timezone.
+                  </div>
+                </div>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={openTzModal}>
+                Manage Timezone
+              </button>
+            </div>
+          ) : (recordingsTimeline && (recordingsTimeline.recordings_with_unknown_timezone ?? 0) > 0) ? (
+            <div
+              className="panel mb-4"
+              style={{
+                borderLeft: '4px solid var(--warning)',
+                background: 'rgba(234, 179, 8, 0.05)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+                padding: '12px 16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                <Clock size={20} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ fontSize: '13px' }}>
+                  <strong>Device Local Time:</strong> {recordingsTimeline.recordings_with_unknown_timezone} recording(s) carry recorder-native wall-clock timestamps with <strong>Filesystem Timezone: Unknown</strong>.
+                  Timestamps are ordered within this recorder domain. In accordance with forensic standards, no timezone was assumed or silently converted to UTC.
+                  <div style={{ color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    If you have documented external evidence (e.g. DVR on-screen menu or site logbook), you may establish an examiner timezone.
+                  </div>
+                </div>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={openTzModal}>
+                Establish Timezone
+              </button>
+            </div>
+          ) : null}
+
           {/* ── Clip List (DVR-Examiner style) ─────────────────────────────── */}
           {recordingsTimeline && (
             <div className="panel mb-4" style={{ padding: '0', overflow: 'hidden' }}>
@@ -675,7 +849,7 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
                 <div className="text-muted" style={{ fontSize: '13px', padding: '16px' }}>
                   No clips match the current filters
                   {recordingsTimeline.recordings_without_time > 0
-                    ? ` (${recordingsTimeline.recordings_without_time} recording(s) excluded: unknown timezone).`
+                    ? ` (${recordingsTimeline.recordings_without_time} recording(s) excluded: missing timestamp).`
                     : '.'}
                 </div>
               ) : (
@@ -696,6 +870,7 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
                     <tbody>
                       {clips.map((clip) => {
                         const isGap = clip.kind === 'gap';
+                        const isDeviceLocal = recordingsTimeline?.sessions.find(s => s.channel === clip.channel)?.temporal_basis === 'device_local';
                         return (
                           <tr
                             key={clip.key}
@@ -711,7 +886,24 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
                             <td><strong>Ch {clip.channel}</strong></td>
                             <td>
                               <div>{fmtDate(clip.startNative, clip.startNormalized)}</div>
-                              <div className="text-muted" style={{ fontSize: '11px' }}>{fmtTime(clip.startNative, clip.startNormalized)}</div>
+                              <div className="text-muted" style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <span>{fmtTime(clip.startNative, clip.startNormalized)}</span>
+                                {isDeviceLocal && (
+                                  <span
+                                    title="Recorder wall-clock timestamp (Timezone Unknown). Not converted to UTC."
+                                    style={{
+                                      fontSize: '9px',
+                                      padding: '1px 4px',
+                                      borderRadius: '3px',
+                                      background: 'var(--surface-muted)',
+                                      color: 'var(--text-secondary)',
+                                      border: '1px solid var(--border)'
+                                    }}
+                                  >
+                                    Device Local
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td>{fmtTime(clip.endNative, clip.endNormalized)}</td>
                             <td style={isGap ? { color: 'var(--warning)', fontWeight: 600 } : undefined}>
@@ -743,19 +935,27 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
                                 {isGap && onNavigateToRecovery && (
                                   <button
                                     className="btn btn-primary btn-sm"
-                                    onClick={() =>
+                                    onClick={() => {
+                                      const sStart = clip.scanStart ?? clip.offset;
+                                      const sEnd = clip.scanEnd ?? clip.offset;
                                       onNavigateToRecovery({
+                                        id: `temporal-ch${clip.channel}-0x${sStart.toString(16)}`,
+                                        targetType: 'temporal_gap',
                                         channel: clip.channel,
-                                        scanStart: clip.scanStart ?? clip.offset,
-                                        scanEnd: clip.scanEnd ?? clip.offset,
+                                        scanStart: sStart,
+                                        scanEnd: sEnd,
+                                        length: sEnd > sStart ? sEnd - sStart : 0,
                                         gapSeconds: clip.durationSec,
                                         nominalSeconds: clip.nominalSeconds || 10,
                                         startNative: clip.startNative,
                                         startNormalized: clip.startNormalized,
                                         endNative: clip.endNative,
                                         endNormalized: clip.endNormalized,
-                                      })
-                                    }
+                                        source: `Preliminary Timeline (Ch ${clip.channel})`,
+                                        reason: `Missing footage for ${clip.durationSec}s between segments`,
+                                        sessionRef: clip.key,
+                                      });
+                                    }}
                                     title="Recover this gap in the Recovery Engine (staged L1 → L2 → L3)"
                                   >
                                     <Wrench size={12} />
@@ -783,6 +983,182 @@ export const PreliminaryTimelineView: React.FC<Props> = ({ evidence, workflow, o
 
         </>
       )}
+
+      {/* Examiner-Established Timezone Modal */}
+      {showTzModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            backdropFilter: 'blur(2px)',
+          }}
+        >
+          <div
+            className="panel"
+            style={{
+              width: '520px',
+              maxWidth: '90vw',
+              padding: '24px',
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Globe size={20} style={{ color: 'var(--accent)' }} />
+                <h3 style={{ margin: 0, fontSize: '16px' }}>Examiner-Established Timezone</h3>
+              </div>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowTzModal(false)}
+                disabled={tzSaving}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                padding: '10px 14px',
+                background: 'rgba(234, 179, 8, 0.1)',
+                border: '1px solid var(--warning)',
+                borderRadius: '6px',
+                fontSize: '12px',
+                color: 'var(--text-secondary)',
+                marginBottom: '16px',
+              }}
+            >
+              <strong style={{ color: 'var(--warning)' }}>Forensic Integrity Note:</strong>
+              <div>
+                Filesystem-derived timezone remains <strong>{recordingsTimeline?.sessions[0]?.filesystem_timezone || 'Unknown'}</strong>.
+                Do NOT infer timezone from your local computer or browser.
+                Specify an external documented basis (e.g. DVR configuration screenshot, acquisition report, or site log).
+              </div>
+            </div>
+
+            {tzError && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid var(--danger)',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  color: 'var(--danger)',
+                  marginBottom: '14px',
+                }}
+              >
+                {tzError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveTz}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                  Timezone / UTC Offset *
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  style={{ width: '100%' }}
+                  placeholder="e.g. Asia/Kolkata, UTC+05:30, or +05:30"
+                  value={tzValue}
+                  onChange={(e) => setTzValue(e.target.value)}
+                  disabled={tzSaving}
+                  required
+                />
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                  Standard IANA name (e.g. America/New_York) or offset (e.g. +05:30, -08:00).
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                  Documented Evidentiary Source / Basis *
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  style={{ width: '100%' }}
+                  placeholder="e.g. DVR on-screen menu photo, acquisition sheet, site interview"
+                  value={tzSource}
+                  onChange={(e) => setTzSource(e.target.value)}
+                  disabled={tzSaving}
+                  required
+                />
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                  Established By (Examiner Identity) *
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  style={{ width: '100%' }}
+                  placeholder="e.g. Det. Smith #4421 or Examiner Jane Doe"
+                  value={tzEstablishedBy}
+                  onChange={(e) => setTzEstablishedBy(e.target.value)}
+                  disabled={tzSaving}
+                  required
+                />
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                  Notes / Justification (Optional)
+                </label>
+                <textarea
+                  className="form-input"
+                  style={{ width: '100%', minHeight: '60px', resize: 'vertical' }}
+                  placeholder="Additional notes explaining the temporal determination or cross-referencing..."
+                  value={tzNotes}
+                  onChange={(e) => setTzNotes(e.target.value)}
+                  disabled={tzSaving}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  {evidence?.examiner_timezone && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      style={{ color: 'var(--danger)' }}
+                      onClick={handleClearTz}
+                      disabled={tzSaving}
+                    >
+                      Clear Examiner Timezone
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setShowTzModal(false)}
+                    disabled={tzSaving}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={tzSaving}
+                  >
+                    {tzSaving ? <RefreshCw size={12} className="spin" /> : <CheckCircle2 size={12} />}
+                    <span>Save &amp; Rebuild Timeline</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -802,12 +1178,16 @@ const RecordingCard: React.FC<{
   const coveragePct = (session.coverage_ratio * 100).toFixed(1);
   const complete = session.gaps.length === 0;
   const span = Math.max(1, session.span_seconds);
-  const startMs = new Date(session.start_normalized).getTime();
+  const toMs = (iso: string) => {
+    const s = iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + 'Z';
+    return new Date(s).getTime();
+  };
+  const startMs = toMs(session.start_normalized);
 
   // Position each gap proportionally along the recording's span for the bar overlay.
   const gapBlocks = session.gaps.map((g) => {
-    const gStart = new Date(g.starts_after_normalized).getTime();
-    const gEnd = new Date(g.ends_before_normalized).getTime();
+    const gStart = toMs(g.starts_after_normalized);
+    const gEnd = toMs(g.ends_before_normalized);
     const left = Math.max(0, Math.min(100, ((gStart - startMs) / 1000 / span) * 100));
     const width = Math.max(1.5, Math.min(100 - left, ((gEnd - gStart) / 1000 / span) * 100));
     return { left, width, gap: g };
@@ -824,7 +1204,7 @@ const RecordingCard: React.FC<{
       }}
     >
       {/* Header: channel + wall-clock range + verdict */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Video size={16} style={{ color: 'var(--accent)' }} />
           <strong style={{ fontSize: '14px' }}>Channel {session.channel}</strong>
@@ -834,11 +1214,98 @@ const RecordingCard: React.FC<{
             <ArrowRight size={12} />
             {fmtTime(session.end_native, session.end_normalized)}
           </span>
-          <span className="badge badge-info">{session.timezone}</span>
+          <span
+            className={session.temporal_basis === 'device_local' || session.timezone === 'Unknown' ? 'badge badge-warning' : 'badge badge-info'}
+            title={session.temporal_basis === 'device_local' || session.timezone === 'Unknown' ? 'Recorder wall-clock timestamp with Unknown timezone. Valid for device-local ordering; not converted to UTC.' : undefined}
+          >
+            {session.temporal_basis === 'device_local' || session.timezone === 'Unknown'
+              ? 'Device Local Time · Timezone Unknown'
+              : session.timezone}
+          </span>
         </div>
         <span className={complete ? 'badge badge-pass' : 'badge badge-review'}>
           {complete ? 'CONTINUOUS' : `${session.gaps.length} GAP${session.gaps.length > 1 ? 'S' : ''}`}
         </span>
+      </div>
+
+      {/* Forensic Timezone Conflict Alert if detected */}
+      {session.timezone_conflict && (
+        <div
+          style={{
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid var(--danger)',
+            borderRadius: '6px',
+            padding: '8px 12px',
+            marginBottom: '10px',
+            fontSize: '12px',
+            color: 'var(--danger)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+          <div>
+            <strong>Forensic Timezone Conflict:</strong> {session.timezone_conflict}
+          </div>
+        </div>
+      )}
+
+      {/* Forensic Temporal Provenance Matrix */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '8px',
+          padding: '8px 12px',
+          background: 'var(--background)',
+          borderRadius: '6px',
+          fontSize: '11px',
+          marginBottom: '10px',
+          border: '1px solid var(--border)',
+        }}
+      >
+        <div>
+          <span style={{ color: 'var(--text-muted)' }}>Recorder Time: </span>
+          <strong style={{ fontFamily: 'monospace' }}>
+            {fmtDateTime(session.start_native, session.start_normalized)}
+          </strong>
+        </div>
+        <div>
+          <span style={{ color: 'var(--text-muted)' }}>Filesystem Timezone: </span>
+          <span
+            className={session.filesystem_timezone ? 'badge badge-info' : 'badge badge-warning'}
+            style={{ fontSize: '10px' }}
+          >
+            {session.filesystem_timezone || 'Unknown'}
+          </span>
+        </div>
+        <div>
+          <span style={{ color: 'var(--text-muted)' }}>Examiner Timezone: </span>
+          {session.examiner_timezone ? (
+            <span
+              className="badge badge-info"
+              style={{ fontSize: '10px' }}
+              title={`Source: ${session.examiner_timezone.source} · Established by: ${session.examiner_timezone.established_by}${session.examiner_timezone.notes ? ` · Notes: ${session.examiner_timezone.notes}` : ''}`}
+            >
+              {session.examiner_timezone.timezone} (External)
+            </span>
+          ) : (
+            <span style={{ color: 'var(--text-muted)' }}>None (Unestablished)</span>
+          )}
+        </div>
+        <div>
+          <span style={{ color: 'var(--text-muted)' }}>Effective Interpretation: </span>
+          {session.temporal_basis === 'absolute_utc' && session.start_normalized ? (
+            <strong style={{ color: 'var(--accent)', fontFamily: 'monospace' }}>
+              {session.start_normalized} (UTC)
+            </strong>
+          ) : (
+            <span style={{ color: 'var(--warning)', fontStyle: 'italic' }}>
+              Device Local Time (No UTC conversion)
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Coverage bar: green track (found footage), red overlays (missing windows) */}

@@ -18,7 +18,10 @@ use parser_uniview::{UniviewLayout, UniviewParser};
 use recovery::RecoveryEngine;
 
 fn profile() -> OemProfile {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../profiles/uniview/uniview-ubifs-v1.0.toml");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../profiles/uniview/uniview-ubifs-v1.0.toml"
+    );
     OemProfile::from_file(std::path::Path::new(path)).expect("the real Uniview profile loads")
 }
 
@@ -38,9 +41,13 @@ fn bounds(max_scan_bytes: u64) -> RecoveryBounds {
 /// only to give the engine's OEM-independent classifier something real to find: the Uniview
 /// parser itself never claims a codec.
 fn h264_clip(seed: u8) -> Vec<u8> {
-    let mut v = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1F, 0x96, 0x54, 0x0A, 0x0F];
+    let mut v = vec![
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1F, 0x96, 0x54, 0x0A, 0x0F,
+    ];
     v.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80]);
-    v.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04, seed, 0x11, 0x22, 0x33]);
+    v.extend_from_slice(&[
+        0x00, 0x00, 0x00, 0x01, 0x65, 0xB8, 0x00, 0x04, seed, 0x11, 0x22, 0x33,
+    ]);
     for i in 0..8u8 {
         v.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, seed, i]);
     }
@@ -87,9 +94,18 @@ fn recovery_is_index_aware_and_never_orphans_on_a_partial_index() {
         .execute_recovery(request(&reader, &profile, &parser, &b))
         .unwrap();
 
-    assert!(outcome.metrics.geometry_available, "Uniview geometry comes from SUPER + layout");
-    assert!(!outcome.metrics.authoritative_index, "the DI index is never authoritative");
-    assert_eq!(outcome.metrics.orphaned_count, 0, "a partial index cannot support an orphan finding");
+    assert!(
+        outcome.metrics.geometry_available,
+        "Uniview geometry comes from SUPER + layout"
+    );
+    assert!(
+        !outcome.metrics.authoritative_index,
+        "the DI index is never authoritative"
+    );
+    assert_eq!(
+        outcome.metrics.orphaned_count, 0,
+        "a partial index cannot support an orphan finding"
+    );
     assert!(outcome.metrics.claimed_bytes > 0, "DI spans are claimed");
 
     let base = l.unit_base(parser_uniview::Generation::Old, 1).unwrap();
@@ -101,7 +117,11 @@ fn recovery_is_index_aware_and_never_orphans_on_a_partial_index() {
         .iter()
         .find(|c| c.source_offsets.iter().any(|r| r.contains(claimed_block)))
         .expect("video in a DI-referenced block is found");
-    assert_eq!(claimed.data_state, DataState::Active, "the recorder's DI references it");
+    assert_eq!(
+        claimed.data_state,
+        DataState::Active,
+        "the recorder's DI references it"
+    );
 
     let loose = outcome
         .candidates
@@ -110,7 +130,11 @@ fn recovery_is_index_aware_and_never_orphans_on_a_partial_index() {
         .expect("video in an unreferenced block is still discovered");
     assert_eq!(loose.data_state, DataState::Unindexed);
     for c in &outcome.candidates {
-        assert_ne!(c.data_state, DataState::Deleted, "no Uniview deletion structure is known");
+        assert_ne!(
+            c.data_state,
+            DataState::Deleted,
+            "no Uniview deletion structure is known"
+        );
         assert_ne!(c.data_state, DataState::Orphaned);
     }
 }
@@ -154,9 +178,15 @@ fn non_uniview_evidence_under_the_uniview_profile_degrades_to_an_unindexed_sweep
     assert!(!outcome.metrics.authoritative_index);
     assert_eq!(outcome.metrics.active_count, 0);
     assert_eq!(outcome.metrics.orphaned_count, 0);
-    assert!(!outcome.candidates.is_empty(), "the video is still discovered");
+    assert!(
+        !outcome.candidates.is_empty(),
+        "the video is still discovered"
+    );
     for c in &outcome.candidates {
         assert_eq!(c.data_state, DataState::Unindexed);
     }
-    assert_eq!(outcome.run.validation_state.state, ValidationStateKind::Pass);
+    assert_eq!(
+        outcome.run.validation_state.state,
+        ValidationStateKind::Pass
+    );
 }

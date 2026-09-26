@@ -106,12 +106,19 @@ impl UniviewRecoveryReport {
     }
 }
 
-fn probe_nonzero(reader: &dyn EvidenceReader, region: &Region, block: u64) -> Result<bool, ForensicError> {
+fn probe_nonzero(
+    reader: &dyn EvidenceReader,
+    region: &Region,
+    block: u64,
+) -> Result<bool, ForensicError> {
     let len = usize::try_from(region.length.min(block)).unwrap_or(0);
     if len == 0 {
         return Ok(false);
     }
-    Ok(reader.read_exact_at(region.offset, len)?.iter().any(|&b| b != 0))
+    Ok(reader
+        .read_exact_at(region.offset, len)?
+        .iter()
+        .any(|&b| b != 0))
 }
 
 /// Subtract `taken` (ascending, disjoint) from `whole`.
@@ -178,7 +185,9 @@ pub fn build_recovery_report(
     let block = l.data_block_size;
 
     'units: for u in &volume.units {
-        let Some(detail) = volume::unit_detail(reader, volume, u.unit)? else { continue };
+        let Some(detail) = volume::unit_detail(reader, volume, u.unit)? else {
+            continue;
+        };
 
         // ── INDEXED ─────────────────────────────────────────────────────────
         for s in &detail.spans {
@@ -209,7 +218,11 @@ pub fn build_recovery_report(
                         s.blocks,
                         region.offset,
                         s.basis.label(),
-                        if s.truncated_by_image { ", clipped by the end of the image" } else { "" }
+                        if s.truncated_by_image {
+                            ", clipped by the end of the image"
+                        } else {
+                            ""
+                        }
                     ),
                 },
             );
@@ -220,7 +233,9 @@ pub fn build_recovery_report(
 
         // ── STRUCTURAL ──────────────────────────────────────────────────────
         if options.include_structural && !matches!(u.header_state, DiHeaderState::NotPresent) {
-            let data_start = u.unit_base.saturating_add(l.di_blocks().saturating_mul(block));
+            let data_start = u
+                .unit_base
+                .saturating_add(l.di_blocks().saturating_mul(block));
             let unit_end = u.unit_base.saturating_add(u.bytes_in_image);
             if unit_end > data_start {
                 let whole = Region::new(data_start, unit_end - data_start)?;
@@ -270,7 +285,9 @@ pub fn build_recovery_report(
         if options.include_heuristic {
             for e in di::scan_residual_slots(reader, l, &detail.di)? {
                 let Some(off) = e.data_offset else { continue };
-                let Ok(region) = Region::new(off, block) else { continue };
+                let Ok(region) = Region::new(off, block) else {
+                    continue;
+                };
                 let referenced = u.data_regions.iter().any(|r| r.overlaps(&region));
                 let ok = report.push(
                     cap,
@@ -322,7 +339,10 @@ mod tests {
     #[test]
     fn gaps_are_the_exact_complement() {
         let r = |o, l| Region::new(o, l).unwrap();
-        assert_eq!(gaps(r(0, 100), &[r(10, 10), r(50, 60)]), vec![r(0, 10), r(20, 30)]);
+        assert_eq!(
+            gaps(r(0, 100), &[r(10, 10), r(50, 60)]),
+            vec![r(0, 10), r(20, 30)]
+        );
         assert_eq!(gaps(r(0, 100), &[]), vec![r(0, 100)]);
         assert_eq!(gaps(r(0, 100), &[r(0, 100)]), Vec::<Region>::new());
         assert_eq!(gaps(r(100, 10), &[r(0, 50)]), vec![r(100, 10)]);

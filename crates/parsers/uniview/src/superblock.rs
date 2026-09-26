@@ -39,7 +39,10 @@ pub enum SuperRecognition {
     /// A profile-declared magic matched and the whole SUPER block was readable.
     Recognized { generation: Generation },
     /// A magic matched but the image ends inside the SUPER block.
-    Truncated { generation: Generation, available: u64 },
+    Truncated {
+        generation: Generation,
+        available: u64,
+    },
     /// The magic bytes match neither generation.
     MagicMismatch { observed_hex: String },
     /// Not even the magic could be read.
@@ -54,7 +57,9 @@ pub enum SuperRecognition {
 impl SuperRecognition {
     pub fn generation(&self) -> Option<Generation> {
         match self {
-            Self::Recognized { generation } | Self::Truncated { generation, .. } => Some(*generation),
+            Self::Recognized { generation } | Self::Truncated { generation, .. } => {
+                Some(*generation)
+            }
             // The export reproduces the OLD layout (UI at 0x4000, unit 1 at 0x14000).
             Self::H3crdExport { .. } => Some(Generation::Old),
             _ => None,
@@ -259,7 +264,9 @@ pub fn read_super(
         // Only when no raw-disk magic matched: a disktool .h3crd export header.
         if let Some(tag) = layout.h3crd_tag.as_deref().filter(|t| !t.is_empty()) {
             if buf.starts_with(tag) {
-                let constant_matched = if (layout.h3crd_constant_offset as u64) < layout.h3crd_header_size {
+                let constant_matched = if (layout.h3crd_constant_offset as u64)
+                    < layout.h3crd_header_size
+                {
                     u32_at(&buf, layout.h3crd_constant_offset).map(|v| v == layout.h3crd_constant)
                 } else {
                     None
@@ -304,7 +311,8 @@ pub fn read_super(
         magic_raw,
         last_write_time: ts(layout.super_last_write_time_offset),
         start_storage_time: ts(layout.super_start_storage_time_offset),
-        ec_port_id: bytes_at(&buf, layout.ec_port_id_offset, layout.ec_port_id_size).map(<[u8]>::to_vec),
+        ec_port_id: bytes_at(&buf, layout.ec_port_id_offset, layout.ec_port_id_size)
+            .map(<[u8]>::to_vec),
     })
 }
 
@@ -325,7 +333,10 @@ mod tests {
         for (gen, magic) in [(Generation::Old, 0x1367u32), (Generation::New, 0x1587u32)] {
             let r = SparseReader::new(0x8000).with(0, &build::super_block(magic, None, None, None));
             let s = read_super(&r, &l).unwrap();
-            assert_eq!(s.recognition, SuperRecognition::Recognized { generation: gen });
+            assert_eq!(
+                s.recognition,
+                SuperRecognition::Recognized { generation: gen }
+            );
             assert_eq!(s.magic_raw, Some(magic));
         }
     }
@@ -336,17 +347,30 @@ mod tests {
         let hdr = build::h3crd_header();
         let r = SparseReader::new(0x8000).with(0, &hdr);
         let s = read_super(&r, &l).unwrap();
-        assert_eq!(s.recognition, SuperRecognition::H3crdExport { constant_matched: Some(true) });
+        assert_eq!(
+            s.recognition,
+            SuperRecognition::H3crdExport {
+                constant_matched: Some(true)
+            }
+        );
         assert_eq!(s.generation(), Some(Generation::Old));
         assert!(s.is_h3crd_export());
-        assert!(s.recognition.label().contains("not an original physical disk"));
+        assert!(s
+            .recognition
+            .label()
+            .contains("not an original physical disk"));
         assert_eq!(s.fields(&l)[0].name, "h3crd.header_tag");
 
         // Tag present, constant absent: still an export, flagged.
         let mut no_const = hdr.clone();
         no_const[0x64..0x68].copy_from_slice(&[0; 4]);
         let s = read_super(&SparseReader::new(0x8000).with(0, &no_const), &l).unwrap();
-        assert_eq!(s.recognition, SuperRecognition::H3crdExport { constant_matched: Some(false) });
+        assert_eq!(
+            s.recognition,
+            SuperRecognition::H3crdExport {
+                constant_matched: Some(false)
+            }
+        );
 
         // A raw-disk magic always wins: the tag is consulted only when no magic matched.
         let r = SparseReader::new(0x8000).with(0, &build::super_block(0x1367, None, None, None));
@@ -360,9 +384,15 @@ mod tests {
     fn unknown_magic_is_not_uniview() {
         let r = SparseReader::new(0x8000).with(0, &build::super_block(0x1234, None, None, None));
         let s = read_super(&r, &layout()).unwrap();
-        assert!(matches!(s.recognition, SuperRecognition::MagicMismatch { .. }));
+        assert!(matches!(
+            s.recognition,
+            SuperRecognition::MagicMismatch { .. }
+        ));
         assert_eq!(s.generation(), None);
-        assert_eq!(s.recognition.validation().state, ValidationStateKind::Unknown);
+        assert_eq!(
+            s.recognition.validation().state,
+            ValidationStateKind::Unknown
+        );
     }
 
     #[test]
@@ -372,14 +402,23 @@ mod tests {
         let s = read_super(&r, &layout()).unwrap();
         assert_eq!(
             s.recognition,
-            SuperRecognition::Truncated { generation: Generation::New, available: 0x100 }
+            SuperRecognition::Truncated {
+                generation: Generation::New,
+                available: 0x100
+            }
         );
-        assert_eq!(s.recognition.validation().state, ValidationStateKind::Review);
+        assert_eq!(
+            s.recognition.validation().state,
+            ValidationStateKind::Review
+        );
 
         for len in [0u64, 1, 3] {
             let r = SparseReader::new(len).with(0, &full[..len as usize]);
             let s = read_super(&r, &layout()).unwrap();
-            assert!(matches!(s.recognition, SuperRecognition::NotFound { .. }), "len {len}");
+            assert!(
+                matches!(s.recognition, SuperRecognition::NotFound { .. }),
+                "len {len}"
+            );
         }
     }
 
@@ -405,7 +444,10 @@ mod tests {
         assert_eq!(s.ec_port_id_text().as_deref(), Some("EC1001"));
 
         let fields = s.fields(&layout());
-        let ec = fields.iter().find(|f| f.name == "super.ec_port_id").unwrap();
+        let ec = fields
+            .iter()
+            .find(|f| f.name == "super.ec_port_id")
+            .unwrap();
         assert_eq!(ec.physical_offset, 0x2C);
         assert_eq!(ec.size_bits, 512);
     }
@@ -415,9 +457,24 @@ mod tests {
         let sb = build::super_block(0x1587, Some([0xFF; 5]), Some([0; 5]), Some([0xFF; 64]));
         let r = SparseReader::new(0x8000).with(0, &sb);
         let s = read_super(&r, &layout()).unwrap();
-        assert_eq!(s.recognition, SuperRecognition::Recognized { generation: Generation::New });
-        assert_eq!(s.last_write_time.as_ref().unwrap().status, TimestampStatus::Invalid);
-        assert_eq!(s.start_storage_time.as_ref().unwrap().status, TimestampStatus::Empty);
-        assert_eq!(s.ec_port_id_text(), None, "non-printable EcPortId gets no text rendering");
+        assert_eq!(
+            s.recognition,
+            SuperRecognition::Recognized {
+                generation: Generation::New
+            }
+        );
+        assert_eq!(
+            s.last_write_time.as_ref().unwrap().status,
+            TimestampStatus::Invalid
+        );
+        assert_eq!(
+            s.start_storage_time.as_ref().unwrap().status,
+            TimestampStatus::Empty
+        );
+        assert_eq!(
+            s.ec_port_id_text(),
+            None,
+            "non-printable EcPortId gets no text rendering"
+        );
     }
 }

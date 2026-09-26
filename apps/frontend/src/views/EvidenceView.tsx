@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { HardDriveDownload, AlertCircle, CheckCircle2, FileWarning, List } from 'lucide-react';
-import { registerEvidence, listCaseEvidence } from '../services/api';
+import { HardDriveDownload, AlertCircle, CheckCircle2, FileWarning, List, Clock, Globe, X } from 'lucide-react';
+import { registerEvidence, listCaseEvidence, setEvidenceTimezone, clearEvidenceTimezone } from '../services/api';
 import { Case, Evidence, Acquisition } from '../types';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 import { loadStorage, saveStorage, removeStorage } from '../utils/storage';
@@ -28,6 +28,19 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Examiner-established timezone fields (never prefilled from browser/OS)
+  const [examinerTz, setExaminerTz] = useState('');
+  const [examinerTzSource, setExaminerTzSource] = useState('');
+  const [examinerTzNotes, setExaminerTzNotes] = useState('');
+
+  // Editing timezone modal
+  const [editingEvidence, setEditingEvidence] = useState<Evidence | null>(null);
+  const [modalTz, setModalTz] = useState('');
+  const [modalSource, setModalSource] = useState('');
+  const [modalNotes, setModalNotes] = useState('');
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [evidenceList, setEvidenceList] = useState<Evidence[]>([]);
 
@@ -125,6 +138,15 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
         bad_sector_ranges: [],
         unresolved_ranges: [],
         source_state: sourceState,
+        examiner_timezone: examinerTz.trim()
+          ? {
+              timezone: examinerTz.trim(),
+              source: examinerTzSource.trim() || 'Documented during evidence ingest',
+              established_by: examiner || activeCase.examiner,
+              notes: examinerTzNotes.trim() || null,
+              established_at: new Date().toISOString(),
+            }
+          : null,
       };
 
       const result = await registerEvidence(activeCase.id, payload);
@@ -135,12 +157,80 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
       // Reset form
       setSourceDevice('');
       setPath('');
+      setExaminerTz('');
+      setExaminerTzSource('');
+      setExaminerTzNotes('');
       removeStorage('forensic_draft_ev_device');
       removeStorage('forensic_draft_ev_path');
     } catch (err: any) {
       setError(err.message || 'Failed to register evidence');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openTimezoneModal = (e: Evidence) => {
+    setEditingEvidence(e);
+    setModalTz(e.examiner_timezone?.timezone || '');
+    setModalSource(e.examiner_timezone?.source || '');
+    setModalNotes(e.examiner_timezone?.notes || '');
+    setModalError(null);
+  };
+
+  const handleSaveModalTz = async () => {
+    if (!editingEvidence) return;
+    if (!modalTz.trim()) {
+      setModalError('Please specify a timezone or UTC offset (e.g. Asia/Kolkata, UTC+05:30)');
+      return;
+    }
+    if (!modalSource.trim()) {
+      setModalError('Please document the evidentiary source/basis (e.g. DVR Setup Menu Photo)');
+      return;
+    }
+    setModalLoading(true);
+    setModalError(null);
+    try {
+      const res = await setEvidenceTimezone(editingEvidence.id, {
+        timezone: modalTz.trim(),
+        source: modalSource.trim(),
+        notes: modalNotes.trim() || undefined,
+        examiner: activeCase?.examiner,
+      });
+      const updatedList = evidenceList.map((e) =>
+        e.id === editingEvidence.id ? { ...e, examiner_timezone: res } : e
+      );
+      setEvidenceList(updatedList);
+      if (activeEvidence?.id === editingEvidence.id) {
+        onEvidenceSelected({ ...editingEvidence, examiner_timezone: res });
+      }
+      setSuccess(`Examiner timezone for '${editingEvidence.source_device}' established as ${res.timezone}.`);
+      setEditingEvidence(null);
+    } catch (err: any) {
+      setModalError(err.message || 'Failed to save timezone');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleClearModalTz = async () => {
+    if (!editingEvidence) return;
+    setModalLoading(true);
+    setModalError(null);
+    try {
+      await clearEvidenceTimezone(editingEvidence.id);
+      const updatedList = evidenceList.map((e) =>
+        e.id === editingEvidence.id ? { ...e, examiner_timezone: null } : e
+      );
+      setEvidenceList(updatedList);
+      if (activeEvidence?.id === editingEvidence.id) {
+        onEvidenceSelected({ ...editingEvidence, examiner_timezone: null });
+      }
+      setSuccess(`Examiner timezone removed for '${editingEvidence.source_device}'. Reverted to filesystem facts.`);
+      setEditingEvidence(null);
+    } catch (err: any) {
+      setModalError(err.message || 'Failed to remove timezone');
+    } finally {
+      setModalLoading(false);
     }
   };
 
@@ -316,6 +406,55 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
               </div>
             </div>
 
+            {/* Examiner-Established Timezone (External Evidence) */}
+            <div style={{ border: '1px solid var(--border)', borderRadius: '6px', padding: '12px', background: 'var(--surface-muted)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Clock size={14} style={{ color: 'var(--accent)' }} />
+                  <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Examiner-Established Timezone (Optional)</span>
+                </div>
+                <ContextHelp
+                  title="Examiner-Established Timezone"
+                  content="Forensic Principle: Timezone is NEVER detected from disk for OEM recorder formats like Dahua and must NEVER be assumed to be UTC or inferred from the browser/OS. Specify only if you have documented external evidence (e.g. DVR on-screen setup menu photo, site dispatch log, or camera configuration sheet)."
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label" style={{ fontSize: '11px' }}>Timezone / Offset</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. Asia/Kolkata, UTC+05:30, -05:00"
+                    value={examinerTz}
+                    onChange={(e) => setExaminerTz(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label" style={{ fontSize: '11px' }}>Documented Source / Basis</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. DVR Setup Menu Photo (Item #1042)"
+                    value={examinerTzSource}
+                    onChange={(e) => setExaminerTzSource(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group" style={{ margin: '8px 0 0 0' }}>
+                <label className="form-label" style={{ fontSize: '11px' }}>Investigative Notes / Justification</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Verified DVR system configuration page showed Indian Standard Time"
+                  value={examinerTzNotes}
+                  onChange={(e) => setExaminerTzNotes(e.target.value)}
+                />
+              </div>
+            </div>
+
             <div style={{ marginTop: '8px' }}>
               <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '10px' }} disabled={loading}>
                 <HardDriveDownload size={15} />
@@ -347,12 +486,14 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
                   <th>Format</th>
                   <th>Capacity</th>
                   <th>Status</th>
+                  <th>Timezone</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {evidenceList.map((e) => {
                   const isLoaded = activeEvidence?.id === e.id;
+                  const hasExaminerTz = Boolean(e.examiner_timezone);
                   return (
                     <tr key={e.id} style={{ backgroundColor: isLoaded ? 'var(--accent-light)' : undefined }}>
                       <td>
@@ -371,14 +512,41 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
                         </span>
                       </td>
                       <td>
-                        <button 
-                          className={`btn ${isLoaded ? 'btn-primary' : 'btn-secondary'}`}
-                          style={{ padding: '4px 10px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
-                          onClick={() => onEvidenceSelected(e)}
-                          disabled={isLoaded}
-                        >
-                          {isLoaded ? 'Active' : 'Load'}
-                        </button>
+                        {hasExaminerTz ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <span className="badge badge-info" title={`Basis: ${e.examiner_timezone?.source} | Established by: ${e.examiner_timezone?.established_by}`}>
+                              {e.examiner_timezone?.timezone} (Examiner)
+                            </span>
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.examiner_timezone?.source}>
+                              {e.examiner_timezone?.source}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="badge badge-secondary" title="Filesystem timezone is Unknown; local wall-clock retained without assuming UTC">
+                            Filesystem (Unknown)
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button 
+                            className={`btn ${isLoaded ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{ padding: '4px 10px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                            onClick={() => onEvidenceSelected(e)}
+                            disabled={isLoaded}
+                          >
+                            {isLoaded ? 'Active' : 'Load'}
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                            onClick={() => openTimezoneModal(e)}
+                            title="Establish, edit, or remove examiner timezone"
+                          >
+                            <Clock size={12} />
+                            <span>TZ</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -388,6 +556,117 @@ export const EvidenceView: React.FC<EvidenceViewProps> = ({ activeCase, activeEv
           )}
         </div>
       </div>
+
+      {/* Examiner Timezone Modal */}
+      {editingEvidence && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div className="panel" style={{ width: '100%', maxWidth: '520px', margin: 0, padding: 0, overflow: 'hidden' }}>
+            <div className="panel-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Globe size={16} style={{ color: 'var(--accent)' }} />
+                <h3 style={{ margin: 0, fontSize: '15px' }}>Examiner Timezone Assertion</h3>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setEditingEvidence(null)} style={{ padding: '4px' }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ background: 'var(--surface-muted)', padding: '10px 12px', borderRadius: '6px', fontSize: '12px' }}>
+                <div><strong>Target Evidence:</strong> {editingEvidence.source_device}</div>
+                <div style={{ marginTop: '4px', color: 'var(--text-muted)' }}>
+                  Filesystem Timezone: <strong>Unknown (from disk bytes)</strong>
+                </div>
+                {editingEvidence.examiner_timezone && (
+                  <div style={{ marginTop: '4px', color: 'var(--accent)' }}>
+                    Current Assertion: <strong>{editingEvidence.examiner_timezone.timezone}</strong> (Source: {editingEvidence.examiner_timezone.source})
+                  </div>
+                )}
+              </div>
+
+              {modalError && (
+                <div style={{ color: '#991b1b', background: '#fee2e2', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                  <span>{modalError}</span>
+                </div>
+              )}
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Timezone or UTC Offset *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Asia/Kolkata, UTC+05:30, +05:30, -05:00"
+                  value={modalTz}
+                  onChange={(e) => setModalTz(e.target.value)}
+                />
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Accepts IANA names (e.g. Asia/Kolkata, America/New_York) or numerical offsets (+05:30, -05:00).
+                </span>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Evidentiary Documentation Basis *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. DVR Setup Menu Photo (Item #1042), Station Log Sheet"
+                  value={modalSource}
+                  onChange={(e) => setModalSource(e.target.value)}
+                />
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Forensic audit requires documenting the external basis for this assertion.
+                </span>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Notes & Justification</label>
+                <textarea
+                  className="form-input"
+                  rows={2}
+                  placeholder="e.g. Confirmed camera clock matched local IST dispatch broadcast"
+                  value={modalNotes}
+                  onChange={(e) => setModalNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                {editingEvidence.examiner_timezone ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleClearModalTz}
+                    disabled={modalLoading}
+                    style={{ color: 'var(--danger)' }}
+                    title="Remove examiner assertion and revert to filesystem facts"
+                  >
+                    Clear Assertion
+                  </button>
+                ) : <div />}
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setEditingEvidence(null)}
+                    disabled={modalLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSaveModalTz}
+                    disabled={modalLoading}
+                  >
+                    {modalLoading ? 'Saving...' : 'Establish Timezone'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

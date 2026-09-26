@@ -1,4 +1,4 @@
-import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording } from '../types';
+import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording, ExaminerTimezone } from '../types';
 
 const API_BASE = '/api';
 
@@ -328,6 +328,52 @@ export async function listEvidenceArtifacts(evidenceId: string): Promise<Artifac
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to list artifacts');
+  }
+  return res.json();
+}
+
+/** Sets or updates the examiner-established timezone assertion for evidence. */
+export async function setEvidenceTimezone(
+  evidenceId: string,
+  payload: { timezone: string; source: string; established_by?: string; examiner?: string; notes?: string }
+): Promise<ExaminerTimezone> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to set evidence timezone');
+  }
+  return res.json();
+}
+
+/** Removes examiner-established timezone, reverting interpretation to filesystem facts. */
+export async function clearEvidenceTimezone(
+  evidenceId: string
+): Promise<{ status: string; message: string }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to clear evidence timezone');
+  }
+  return res.json();
+}
+
+/** Retrieves the current examiner-established timezone for evidence. */
+export async function getEvidenceTimezone(
+  evidenceId: string
+): Promise<{ evidence_id: string; examiner_timezone: ExaminerTimezone | null }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to get evidence timezone');
   }
   return res.json();
 }

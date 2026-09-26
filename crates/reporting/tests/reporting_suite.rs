@@ -29,6 +29,7 @@ fn create_full_test_report() -> ForensicReport {
             sha256: Hash::sha256(vec![0xAA; 32]),
             acquisition_status: "Complete".into(),
             source_safety_decision: "SafeReadOnly (Strict Kernel Write Guard)".into(),
+            examiner_timezone: None,
         },
         detection_summary: DetectionSummaryReport {
             detection_status: "Detected".into(),

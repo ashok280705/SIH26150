@@ -22,7 +22,9 @@ use confidence::engine::ConfidenceEngine;
 use detection::orchestrator::DetectionOrchestrator;
 use detection::DetectionStatus;
 use evidence_reader::{EvidenceReader, RawReader};
-use forensic_core::{CancelToken, DataState, EvidenceId, ProfileRegistry, RecoveryBounds, ValidationStateKind};
+use forensic_core::{
+    CancelToken, DataState, EvidenceId, ProfileRegistry, RecoveryBounds, ValidationStateKind,
+};
 use parser_uniview::testing::image;
 use parser_uniview::{volume, UniviewLayout};
 use parsing::orchestrator::ParsingOrchestrator;
@@ -43,7 +45,10 @@ fn registry() -> ProfileRegistry {
 }
 
 fn layout(reg: &ProfileRegistry) -> UniviewLayout {
-    UniviewLayout::from_profile(reg.find_applicable("uniview", None, None, None).expect("uniview profile"))
+    UniviewLayout::from_profile(
+        reg.find_applicable("uniview", None, None, None)
+            .expect("uniview profile"),
+    )
 }
 
 /// The small OLD-generation volume, written to disk and opened through the production reader.
@@ -62,16 +67,28 @@ fn detection_confirms_uniview_from_the_super_magic_alone() {
     let (_d, old) = open_old(&reg);
     let new = image::new_volume(&layout(&reg));
 
-    for (reader, gen) in [(&old as &dyn EvidenceReader, "OLD"), (&new as &dyn EvidenceReader, "NEW")] {
+    for (reader, gen) in [
+        (&old as &dyn EvidenceReader, "OLD"),
+        (&new as &dyn EvidenceReader, "NEW"),
+    ] {
         let outputs = DetectionOrchestrator::new().run(reader, &reg).unwrap();
-        let unv = outputs.iter().find(|o| o.oem_key == "uniview").expect("uniview output");
+        let unv = outputs
+            .iter()
+            .find(|o| o.oem_key == "uniview")
+            .expect("uniview output");
         assert_eq!(unv.status, DetectionStatus::Confirmed, "{:?}", unv.warnings);
         assert!(unv.evidence[0].explanation.contains(gen));
         for other in outputs.iter().filter(|o| o.oem_key != "uniview") {
-            assert_ne!(other.status, DetectionStatus::Confirmed, "{} confirmed a Uniview volume", other.oem_key);
+            assert_ne!(
+                other.status,
+                DetectionStatus::Confirmed,
+                "{} confirmed a Uniview volume",
+                other.oem_key
+            );
         }
         let classified =
-            ConfidenceEngine::classify(&outputs, &reg, &ConfidenceConfig::provisional_default()).unwrap();
+            ConfidenceEngine::classify(&outputs, &reg, &ConfidenceConfig::provisional_default())
+                .unwrap();
         assert_eq!(classified.detector_output.oem_key, "uniview");
     }
 }
@@ -79,7 +96,9 @@ fn detection_confirms_uniview_from_the_super_magic_alone() {
 #[test]
 fn random_bytes_and_a_lookalike_tag_are_not_uniview() {
     let reg = registry();
-    let random: Vec<u8> = (0..(1u32 << 18)).map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8).collect();
+    let random: Vec<u8> = (0..(1u32 << 18))
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8)
+        .collect();
     let mut ascii = vec![0u8; 1 << 16];
     ascii[..4].copy_from_slice(b"UNIV");
     for bytes in [random, ascii] {
@@ -98,12 +117,20 @@ fn parsing_orchestrator_runs_every_uniview_stage() {
     let reg = registry();
     let (_d, reader) = open_old(&reg);
     let profile = reg.find_applicable("uniview", None, None, None).unwrap();
-    let result = ParsingOrchestrator::new().run_parsing("uniview", &reader, profile).unwrap();
+    let result = ParsingOrchestrator::new()
+        .run_parsing("uniview", &reader, profile)
+        .unwrap();
 
     assert_eq!(result.parser_runs.len(), 5);
     for run in &result.parser_runs {
         assert_eq!(run.parser_id, "uniview-super-di-parser");
-        assert_eq!(run.validation_state.state, ValidationStateKind::Pass, "{}: {}", run.operation_name, run.validation_state.reason);
+        assert_eq!(
+            run.validation_state.state,
+            ValidationStateKind::Pass,
+            "{}: {}",
+            run.operation_name,
+            run.validation_state.reason
+        );
     }
     assert_eq!(result.recordings.len(), 1);
     assert_eq!(result.timeline_events.len(), 1);
@@ -141,13 +168,20 @@ fn recovery_and_extraction_over_the_production_reader() {
     assert!(!outcome.metrics.authoritative_index);
     assert_eq!(outcome.metrics.deleted_count, 0);
     for c in &outcome.candidates {
-        assert!(!matches!(c.data_state, DataState::Orphaned | DataState::Deleted));
+        assert!(!matches!(
+            c.data_state,
+            DataState::Orphaned | DataState::Deleted
+        ));
     }
 
     let vol = volume::read_volume(&reader, profile).unwrap();
-    let x = parser_uniview::extract_recording(&reader, &vol, "unv:u1").unwrap().unwrap();
+    let x = parser_uniview::extract_recording(&reader, &vol, "unv:u1")
+        .unwrap()
+        .unwrap();
     // The extracted bytes are the evidence bytes at the recorded offsets.
-    let direct = reader.read_exact_at(x.regions[0].offset, x.regions[0].length as usize).unwrap();
+    let direct = reader
+        .read_exact_at(x.regions[0].offset, x.regions[0].length as usize)
+        .unwrap();
     assert_eq!(x.bytes, direct);
     assert_eq!(x.region_sha256.len(), 1);
 }
@@ -166,9 +200,16 @@ fn the_audited_pipeline_runs_end_to_end_on_a_uniview_volume() {
     )
     .expect("the pipeline runs");
 
-    assert_eq!(run.oem_key_used.as_deref(), Some("uniview"), "the Uniview parser was used");
+    assert_eq!(
+        run.oem_key_used.as_deref(),
+        Some("uniview"),
+        "the Uniview parser was used"
+    );
     assert!(!run.used_unified_fallback);
-    assert_eq!(run.attribution.as_ref().expect("attribution").oem_key, "uniview");
+    assert_eq!(
+        run.attribution.as_ref().expect("attribution").oem_key,
+        "uniview"
+    );
     assert_eq!(run.parsing.as_ref().expect("parsing").recordings.len(), 1);
     if let Some(r) = &run.recovery {
         assert_eq!(r.metrics.deleted_count, 0);

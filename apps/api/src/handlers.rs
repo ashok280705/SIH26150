@@ -148,6 +148,7 @@ pub async fn register_evidence(
         acquisition_id: Some(acq_id.clone()),
         path: input.path.clone(),
         registered_at: now,
+        examiner_timezone: input.examiner_timezone,
     };
 
     let acquisition = Acquisition {
@@ -2276,8 +2277,17 @@ pub async fn run_full_pipeline(
     let evidence_id = EvidenceId(id);
     let reader = get_or_open_reader(&state, &evidence_id).await?;
 
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
+
     let config = ConfidenceConfig::provisional_default();
-    let options = PipelineOptions::default();
+    let mut options = PipelineOptions::default();
+    options.examiner_timezone = evidence.examiner_timezone.clone();
 
     let run: PipelineRun = run_pipeline(
         evidence_id,
@@ -2499,6 +2509,12 @@ pub async fn get_report(
         sha256,
         acquisition_status: "Registered (read-only)".to_string(),
         source_safety_decision: format!("{:?}", evidence.source_state),
+        examiner_timezone: evidence.examiner_timezone.as_ref().map(|t| {
+            format!(
+                "{} (Source: {}, Established by: {})",
+                t.timezone, t.source, t.established_by
+            )
+        }),
     };
 
     // ---- Section 2: Detection & attribution --------------------------------
@@ -2901,6 +2917,9 @@ pub async fn get_report(
                         next_offset: g.next_offset,
                     })
                     .collect(),
+                filesystem_timezone: s.filesystem_timezone.clone(),
+                examiner_timezone: s.examiner_timezone.as_ref().map(|t| t.timezone.clone()),
+                timezone_conflict: s.timezone_conflict.clone(),
             })
             .collect();
         PreliminaryTimelineReport {
@@ -3041,4 +3060,114 @@ pub async fn get_report(
         .body(axum::body::Body::from(body))
         .unwrap();
     Ok(response)
+}
+
+// ============================================================================
+// Phase 3 — Examiner-Established Timezone Endpoints
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct SetExaminerTimezoneRequest {
+    pub timezone: String,
+    pub source: String,
+    pub notes: Option<String>,
+    pub examiner: Option<String>,
+}
+
+/// POST /api/evidence/:id/timezone
+///
+/// Sets or updates the examiner-established timezone assertion for an evidence source.
+/// Forensically records basis/source, establishing examiner, and timestamp.
+/// Does NOT mutate parser-derived filesystem facts.
+pub async fn set_evidence_timezone(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Json(payload): Json<SetExaminerTimezoneRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
+
+    if payload.timezone.trim().is_empty() {
+        return Err(ApiError {
+            error: "timezone cannot be empty".to_string(),
+            details: None,
+        });
+    }
+
+    if payload.source.trim().is_empty() {
+        return Err(ApiError {
+            error: "source/provenance basis must be documented (e.g. DVR configuration sheet)".to_string(),
+            details: None,
+        });
+    }
+
+    let established_by = payload
+        .examiner
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or_else(|| evidence.responsible_examiner.0.clone());
+
+    let examiner_tz = forensic_core::ExaminerTimezone {
+        timezone: payload.timezone.trim().to_string(),
+        source: payload.source.trim().to_string(),
+        established_by,
+        notes: payload.notes,
+        established_at: Utc::now(),
+    };
+
+    repositories::evidence::update_evidence_timezone(
+        &state.db_pool,
+        &evidence_id,
+        Some(&examiner_tz),
+    )
+    .await
+    .map_err(map_err)?;
+
+    Ok(Json(serde_json::to_value(&examiner_tz).unwrap()))
+}
+
+/// DELETE /api/evidence/:id/timezone
+///
+/// Removes an examiner-established timezone assertion from an evidence source.
+/// Reverts interpretation cleanly back to filesystem-derived facts without modifying disk bytes.
+pub async fn clear_evidence_timezone(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    repositories::evidence::update_evidence_timezone(&state.db_pool, &evidence_id, None)
+        .await
+        .map_err(map_err)?;
+
+    Ok(Json(serde_json::json!({
+        "status": "cleared",
+        "message": "Examiner-established timezone removed. Evidence reverts to filesystem-derived timezone.",
+    })))
+}
+
+/// GET /api/evidence/:id/timezone
+///
+/// Retrieves current examiner-established timezone metadata and provenance for an evidence source.
+pub async fn get_evidence_timezone(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "evidence_id": evidence.id.0,
+        "examiner_timezone": evidence.examiner_timezone,
+    })))
 }

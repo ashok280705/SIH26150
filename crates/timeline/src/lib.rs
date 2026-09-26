@@ -30,5 +30,7 @@ pub use gaps::{
     analyze as analyze_gaps, CoverageEstimate, GapAnalysis, TimelineGap, UnaccountedRegion,
 };
 pub use sessions::{
-    build_recording_timeline, RecordingSegment, RecordingSession, RecordingTimeline, SessionGap,
+    build_recording_timeline, build_recording_timeline_with_examiner_tz, parse_timezone_offset,
+    resolve_timezone_offset, RecordingSegment, RecordingSession, RecordingTimeline, SessionGap,
+    TemporalBasis,
 };

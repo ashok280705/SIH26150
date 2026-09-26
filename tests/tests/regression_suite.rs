@@ -206,17 +206,25 @@ fn test_regression_uniview_super_requires_a_generation_magic() {
     let mut ascii_tag = vec![0u8; 0x8000];
     ascii_tag[..4].copy_from_slice(b"UNIV");
     for data in [deleted_marker, ascii_tag] {
-        let runs = parser.parse_filesystem(&MockEvidence { data }, &profile).unwrap();
+        let runs = parser
+            .parse_filesystem(&MockEvidence { data }, &profile)
+            .unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].validation_state.state, ValidationStateKind::Unknown);
-        assert!(!runs[0].validation_state.reason.to_lowercase().contains("deleted"));
+        assert!(!runs[0]
+            .validation_state
+            .reason
+            .to_lowercase()
+            .contains("deleted"));
     }
 
     // A genuine NEW-generation magic heading a SUPER block the image cannot hold is reported
     // for review, never accepted as a complete structure.
     let mut truncated = vec![0u8; 1024];
     truncated[..4].copy_from_slice(&0x1587u32.to_le_bytes());
-    let runs = parser.parse_filesystem(&MockEvidence { data: truncated }, &profile).unwrap();
+    let runs = parser
+        .parse_filesystem(&MockEvidence { data: truncated }, &profile)
+        .unwrap();
     assert_eq!(runs[0].validation_state.state, ValidationStateKind::Review);
     assert!(runs[0].validation_state.reason.contains("NEW"));
 }

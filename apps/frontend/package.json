@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "esbuild src/views/__tests__/recoveryTargets.test.ts --bundle --platform=node --outfile=node_modules/.test_runner1.cjs && node node_modules/.test_runner1.cjs && esbuild src/views/__tests__/examinerTimezone.test.ts --bundle --platform=node --outfile=node_modules/.test_runner2.cjs && node node_modules/.test_runner2.cjs",
     "preview": "vite preview",
     "assistant:setup": "bash ../../scripts/ollama/setup.sh",
     "assistant:serve": "bash ../../scripts/ollama/serve.sh"

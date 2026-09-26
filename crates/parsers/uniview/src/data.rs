@@ -43,7 +43,10 @@ impl std::fmt::Display for AddressError {
         match self {
             Self::UnitZero => write!(f, "unit numbers are 1-based; unit 0 does not exist"),
             Self::SptoiOutOfRange { sptoi, limit } => {
-                write!(f, "SPtoI {sptoi} does not fit the 14-bit field (limit {limit})")
+                write!(
+                    f,
+                    "SPtoI {sptoi} does not fit the 14-bit field (limit {limit})"
+                )
             }
             Self::PointsIntoDi { sptoi, di_blocks } => write!(
                 f,
@@ -89,7 +92,9 @@ pub fn resolve(
     if u64::from(sptoi) < di_blocks {
         return Err(AddressError::PointsIntoDi { sptoi, di_blocks });
     }
-    let unit_base = layout.unit_base(generation, unit).ok_or(AddressError::Overflow)?;
+    let unit_base = layout
+        .unit_base(generation, unit)
+        .ok_or(AddressError::Overflow)?;
     let physical_offset = layout
         .data_offset(generation, unit, sptoi)
         .ok_or(AddressError::Overflow)?;
@@ -189,7 +194,12 @@ pub fn read_data_block(
     let addr = resolve(layout, generation, unit, sptoi)
         .map_err(|e| ForensicError::corrupt("uniview_data_block", e.to_string()))?;
     let region = addr.region().ok_or_else(|| {
-        ForensicError::out_of_bounds("uniview_data_block", addr.physical_offset, addr.length, reader.len())
+        ForensicError::out_of_bounds(
+            "uniview_data_block",
+            addr.physical_offset,
+            addr.length,
+            reader.len(),
+        )
     })?;
     Ok((addr, extract_regions(reader, layout, &[region])?))
 }
@@ -211,10 +221,22 @@ mod tests {
         assert_eq!(a.unit_base, 0x2001_4000);
         assert_eq!(a.physical_offset, 0x2001_4000 + 0x3FFF * 0x4000);
         assert_eq!(a.length, 0x4000);
-        assert_eq!(resolve(&l, Generation::Old, 1, 16).unwrap().physical_offset, 0x0001_4000 + 0x40000);
-        assert_eq!(resolve(&l, Generation::Old, 0, 16), Err(AddressError::UnitZero));
-        assert!(matches!(resolve(&l, Generation::Old, 1, 0x4000), Err(AddressError::SptoiOutOfRange { .. })));
-        assert!(matches!(resolve(&l, Generation::Old, 1, 15), Err(AddressError::PointsIntoDi { .. })));
+        assert_eq!(
+            resolve(&l, Generation::Old, 1, 16).unwrap().physical_offset,
+            0x0001_4000 + 0x40000
+        );
+        assert_eq!(
+            resolve(&l, Generation::Old, 0, 16),
+            Err(AddressError::UnitZero)
+        );
+        assert!(matches!(
+            resolve(&l, Generation::Old, 1, 0x4000),
+            Err(AddressError::SptoiOutOfRange { .. })
+        ));
+        assert!(matches!(
+            resolve(&l, Generation::Old, 1, 15),
+            Err(AddressError::PointsIntoDi { .. })
+        ));
     }
 
     #[test]
@@ -244,7 +266,12 @@ mod tests {
         assert!(read_data_block(&r, &small, Generation::Old, 1, 16).is_err());
         // Multi-region concatenation keeps order.
         let r = SparseReader::new(0x100).with(0, &[1, 2, 3, 4]);
-        let x = extract_regions(&r, &l, &[Region::new(2, 2).unwrap(), Region::new(0, 2).unwrap()]).unwrap();
+        let x = extract_regions(
+            &r,
+            &l,
+            &[Region::new(2, 2).unwrap(), Region::new(0, 2).unwrap()],
+        )
+        .unwrap();
         assert_eq!(x.bytes, vec![3, 4, 1, 2]);
     }
 }

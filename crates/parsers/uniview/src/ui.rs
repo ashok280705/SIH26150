@@ -160,10 +160,20 @@ impl TimeIndexSummary {
             TimestampStatus::Empty => {}
         }
         if let Some(t) = e.timestamp.unix_seconds_as_utc() {
-            if self.earliest.as_ref().and_then(|x| x.unix_seconds_as_utc()).is_none_or(|x| t < x) {
+            if self
+                .earliest
+                .as_ref()
+                .and_then(|x| x.unix_seconds_as_utc())
+                .is_none_or(|x| t < x)
+            {
                 self.earliest = Some(e.timestamp.clone());
             }
-            if self.latest.as_ref().and_then(|x| x.unix_seconds_as_utc()).is_none_or(|x| t > x) {
+            if self
+                .latest
+                .as_ref()
+                .and_then(|x| x.unix_seconds_as_utc())
+                .is_none_or(|x| t > x)
+            {
                 self.latest = Some(e.timestamp.clone());
             }
         }
@@ -259,9 +269,12 @@ impl UniviewUi {
     /// The raw `+0x00` value, exactly as stored.
     pub fn current_unit_raw(&self) -> Option<u32> {
         match self.header.as_ref()? {
-            UiHeader::Old { current_unit_raw, .. } | UiHeader::New { current_unit_raw, .. } => {
-                Some(*current_unit_raw)
+            UiHeader::Old {
+                current_unit_raw, ..
             }
+            | UiHeader::New {
+                current_unit_raw, ..
+            } => Some(*current_unit_raw),
         }
     }
 
@@ -315,7 +328,11 @@ impl UniviewUi {
         };
         match &self.header {
             None => Vec::new(),
-            Some(UiHeader::Old { current_unit_raw, field_04, rewrited_raw }) => vec![
+            Some(UiHeader::Old {
+                current_unit_raw,
+                field_04,
+                rewrited_raw,
+            }) => vec![
                 FieldEvidence::new(
                     "ui.current_unit_raw",
                     base + layout.old_ui_current_unit_offset as u64,
@@ -347,7 +364,13 @@ impl UniviewUi {
                     Confidence::StrongInference,
                 ),
             ],
-            Some(UiHeader::New { current_unit_raw, count_raw, bytes_08_0b, rewrited_raw, bytes_0e_0f }) => {
+            Some(UiHeader::New {
+                current_unit_raw,
+                count_raw,
+                bytes_08_0b,
+                rewrited_raw,
+                bytes_0e_0f,
+            }) => {
                 vec![
                     FieldEvidence::new(
                         "ui_ctl.current_unit_raw",
@@ -432,13 +455,25 @@ fn new_capacity(layout: &UniviewLayout) -> u64 {
     if layout.ui_entry_size == 0 {
         return 0;
     }
-    layout.ui_size.saturating_sub(layout.new_uictl_entries_offset as u64) / layout.ui_entry_size as u64
+    layout
+        .ui_size
+        .saturating_sub(layout.new_uictl_entries_offset as u64)
+        / layout.ui_entry_size as u64
 }
 
 /// `(declared run, beyond-declared run, declared count)` for the region's entry table.
-fn entry_runs(layout: &UniviewLayout, generation: Generation, header: &UiHeader) -> (Run, Run, u64) {
+fn entry_runs(
+    layout: &UniviewLayout,
+    generation: Generation,
+    header: &UiHeader,
+) -> (Run, Run, u64) {
     match (generation, header) {
-        (Generation::Old, UiHeader::Old { current_unit_raw, .. }) => {
+        (
+            Generation::Old,
+            UiHeader::Old {
+                current_unit_raw, ..
+            },
+        ) => {
             let max = old_max_units(layout);
             let declared = layout
                 .unit_count_from_raw(Generation::Old, *current_unit_raw)
@@ -449,8 +484,16 @@ fn entry_runs(layout: &UniviewLayout, generation: Generation, header: &UiHeader)
                     .saturating_mul(layout.ui_entry_size)
             };
             (
-                Run { first: slot(1), len: declared, label0: 1 },
-                Run { first: slot(declared + 1), len: max - declared, label0: declared + 1 },
+                Run {
+                    first: slot(1),
+                    len: declared,
+                    label0: 1,
+                },
+                Run {
+                    first: slot(declared + 1),
+                    len: max - declared,
+                    label0: declared + 1,
+                },
                 declared,
             )
         }
@@ -459,20 +502,38 @@ fn entry_runs(layout: &UniviewLayout, generation: Generation, header: &UiHeader)
             let declared = layout.uictl_entry_count(*count_raw).min(cap);
             let at = |k: u64| {
                 layout.new_uictl_entries_offset.saturating_add(
-                    usize::try_from(k).unwrap_or(usize::MAX).saturating_mul(layout.ui_entry_size),
+                    usize::try_from(k)
+                        .unwrap_or(usize::MAX)
+                        .saturating_mul(layout.ui_entry_size),
                 )
             };
             (
-                Run { first: at(0), len: declared, label0: 0 },
-                Run { first: at(declared), len: cap - declared, label0: declared },
+                Run {
+                    first: at(0),
+                    len: declared,
+                    label0: 0,
+                },
+                Run {
+                    first: at(declared),
+                    len: cap - declared,
+                    label0: declared,
+                },
                 declared,
             )
         }
         // An OLD header is only ever built for the OLD generation; this arm is unreachable in
         // practice and yields empty runs rather than a panic.
         (_, UiHeader::Old { .. }) => (
-            Run { first: 0, len: 0, label0: 0 },
-            Run { first: 0, len: 0, label0: 0 },
+            Run {
+                first: 0,
+                len: 0,
+                label0: 0,
+            },
+            Run {
+                first: 0,
+                len: 0,
+                label0: 0,
+            },
             0,
         ),
     }
@@ -613,7 +674,9 @@ pub fn unit_time_entry(
             None => return Ok(None),
         },
     };
-    let Some(end) = offset.checked_add(8) else { return Ok(None) };
+    let Some(end) = offset.checked_add(8) else {
+        return Ok(None);
+    };
     if end > reader.len() {
         return Ok(None);
     }
@@ -656,7 +719,10 @@ pub struct UiDataArea {
 
 impl UiDataArea {
     pub fn populated_entries(&self) -> u64 {
-        self.populated_units.iter().map(|u| u.summary.populated).sum()
+        self.populated_units
+            .iter()
+            .map(|u| u.summary.populated)
+            .sum()
     }
 }
 
@@ -674,7 +740,9 @@ pub fn read_ui_data(
     let mut examined = 0u64;
 
     for n in 0..limit {
-        let Some(offset) = layout.ui_data_offset(n) else { break };
+        let Some(offset) = layout.ui_data_offset(n) else {
+            break;
+        };
         if offset >= reader.len() {
             break;
         }
@@ -684,7 +752,11 @@ pub fn read_ui_data(
             empty_units += 1;
             continue;
         }
-        let run = Run { first: 0, len: per, label0: n.saturating_mul(per) };
+        let run = Run {
+            first: 0,
+            len: per,
+            label0: n.saturating_mul(per),
+        };
         let summary = summarise_run(&buf, offset, run, layout);
         populated_units.push(UiDataUnitSummary {
             n,
@@ -695,7 +767,12 @@ pub fn read_ui_data(
     }
 
     let vendor_display_last_index = ui_ctl.and_then(|u| match &u.header {
-        Some(UiHeader::New { current_unit_raw, count_raw, rewrited_raw, .. }) => {
+        Some(UiHeader::New {
+            current_unit_raw,
+            count_raw,
+            rewrited_raw,
+            ..
+        }) => {
             let mut last = u64::from(*count_raw);
             if *rewrited_raw == 0 {
                 last = last.min(u64::from(*current_unit_raw));
@@ -719,7 +796,11 @@ pub fn read_ui_data(
              storage unit i + 1; no link from an entry to an individual DI entry is established",
             layout.ui_data_base,
             populated_units.len(),
-            if capped { "; the profile scan cap stopped the walk" } else { "" }
+            if capped {
+                "; the profile scan cap stopped the walk"
+            } else {
+                ""
+            }
         ),
         "read_ui_data",
         "uniview_ui_data",
@@ -747,13 +828,19 @@ pub fn read_ui_data_unit(
     if n >= layout.ui_data_capacity() {
         return Ok(None);
     }
-    let Some(offset) = layout.ui_data_offset(n) else { return Ok(None) };
+    let Some(offset) = layout.ui_data_offset(n) else {
+        return Ok(None);
+    };
     if offset >= reader.len() {
         return Ok(None);
     }
     let buf = read_region(reader, offset, layout.ui_data_unit_size)?;
     let per = layout.ui_data_entries_per_unit as u64;
-    let run = Run { first: 0, len: per, label0: n.saturating_mul(per) };
+    let run = Run {
+        first: 0,
+        len: per,
+        label0: n.saturating_mul(per),
+    };
     Ok(Some(
         run_entries(&buf, offset, run, layout)
             .filter(|e| !e.is_blank())
@@ -797,22 +884,48 @@ mod tests {
         let parsed = read_ui(&r, &l, Generation::Old).unwrap();
         assert_eq!(
             parsed.header,
-            Some(UiHeader::Old { current_unit_raw: 3, field_04: 0xBEEF, rewrited_raw: 0x0100 })
+            Some(UiHeader::Old {
+                current_unit_raw: 3,
+                field_04: 0xBEEF,
+                rewrited_raw: 0x0100
+            })
         );
-        assert_eq!(parsed.rewrited_raw(), Some(0x0100), "the flag is a u16, not one byte");
+        assert_eq!(
+            parsed.rewrited_raw(),
+            Some(0x0100),
+            "the flag is a u16, not one byte"
+        );
         assert_eq!(parsed.rewrited(), Some(true));
-        assert_eq!(parsed.unit_count(&l), Some(2), "OLD written units = raw - 1");
+        assert_eq!(
+            parsed.unit_count(&l),
+            Some(2),
+            "OLD written units = raw - 1"
+        );
         assert_eq!(parsed.declared_entries, Some(2));
         assert_eq!(parsed.entries.populated, 2);
         assert_eq!(parsed.populated_beyond_declared, 1);
         let listed = read_ui_entries(&r, &l, Generation::Old).unwrap();
-        assert_eq!(listed.iter().map(|e| (e.index, e.offset)).collect::<Vec<_>>(), vec![(1, 0x4010), (2, 0x4018)]);
-        let u2 = unit_time_entry(&r, &l, Generation::Old, 2).unwrap().unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|e| (e.index, e.offset))
+                .collect::<Vec<_>>(),
+            vec![(1, 0x4010), (2, 0x4018)]
+        );
+        let u2 = unit_time_entry(&r, &l, Generation::Old, 2)
+            .unwrap()
+            .unwrap();
         assert_eq!((u2.offset, u2.lock, u2.index), (0x4000 + 3 * 8, 43, 2));
         let f = parsed.fields(&l);
         let rw = f.iter().find(|f| f.name == "ui.rewrited").unwrap();
         assert_eq!((rw.physical_offset, rw.size_bits), (0x4006, 16));
-        assert_eq!(f.iter().find(|f| f.name == "ui.field_04").unwrap().confidence, Confidence::Unknown);
+        assert_eq!(
+            f.iter()
+                .find(|f| f.name == "ui.field_04")
+                .unwrap()
+                .confidence,
+            Confidence::Unknown
+        );
     }
 
     #[test]
@@ -829,13 +942,23 @@ mod tests {
         let ui = read_ui(&r, &l, Generation::New).unwrap();
         assert_eq!(ui.current_unit_raw(), Some(4));
         assert_eq!(ui.unit_count(&l), Some(5), "NEW written units = raw + 1");
-        assert_eq!(ui.rewrited_raw(), Some(1), "u16 at +0x0C; +0x0E is not part of the flag");
+        assert_eq!(
+            ui.rewrited_raw(),
+            Some(1),
+            "u16 at +0x0C; +0x0E is not part of the flag"
+        );
         assert_eq!(ui.declared_entries, Some(2));
         assert_eq!(ui.entries.populated, 2);
         assert_eq!(ui.entries.first_populated_index, Some(0));
         let listed = read_ui_entries(&r, &l, Generation::New).unwrap();
         assert_eq!(listed[1].offset, 0x4000 + 0x10 + 8);
-        assert!(matches!(ui.header, Some(UiHeader::New { bytes_0e_0f: [0xAB, 0], .. })));
+        assert!(matches!(
+            ui.header,
+            Some(UiHeader::New {
+                bytes_0e_0f: [0xAB, 0],
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -851,7 +974,11 @@ mod tests {
         let r = SparseReader::new(0x20000).with(0x4000, &build::old_ui(0xFFFF_FFFF, 0, 0, &[]));
         let ui = read_ui(&r, &l, Generation::Old).unwrap();
         assert_eq!(ui.unit_count(&l), Some(0xFFFF_FFFE));
-        assert_eq!(ui.declared_entries, Some(old_max_units(&l)), "clamped to what the UI holds");
+        assert_eq!(
+            ui.declared_entries,
+            Some(old_max_units(&l)),
+            "clamped to what the UI holds"
+        );
         assert_eq!(unit_time_entry(&r, &l, Generation::Old, 0).unwrap(), None);
     }
 
@@ -869,23 +996,45 @@ mod tests {
         assert_eq!(area.populated_units.len(), 1);
         let u = &area.populated_units[0];
         assert_eq!((u.n, u.offset), (1, 0x24000));
-        assert_eq!(u.summary.first_populated_index, Some(0x2000), "global index n * 0x2000 + slot");
+        assert_eq!(
+            u.summary.first_populated_index,
+            Some(0x2000),
+            "global index n * 0x2000 + slot"
+        );
         assert_eq!(u.summary.valid_timestamps, 1);
         assert_eq!(u.summary.invalid_timestamps, 1);
         assert_eq!(area.empty_units, 2);
         assert_eq!(area.vendor_display_last_index, None);
 
         let entries = read_ui_data_unit(&r, &l, 1).unwrap().unwrap();
-        assert_eq!(entries.iter().map(|e| (e.index, e.offset)).collect::<Vec<_>>(), vec![(0x2000, 0x24000), (0x2001, 0x24008)]);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| (e.index, e.offset))
+                .collect::<Vec<_>>(),
+            vec![(0x2000, 0x24000), (0x2001, 0x24008)]
+        );
         assert_eq!(read_ui_data_unit(&r, &l, 4096).unwrap(), None);
-        assert_eq!(read_ui_data_unit(&r, &l, 10).unwrap(), None, "outside the image");
+        assert_eq!(
+            read_ui_data_unit(&r, &l, 10).unwrap(),
+            None,
+            "outside the image"
+        );
 
         // Storage unit 0x2001 is UI-DATA unit 1, slot 0.
-        let e = unit_time_entry(&r, &l, Generation::New, 0x2001).unwrap().unwrap();
+        let e = unit_time_entry(&r, &l, Generation::New, 0x2001)
+            .unwrap()
+            .unwrap();
         assert_eq!((e.offset, e.index, e.lock), (0x24000, 0x2000, 1));
-        let e = unit_time_entry(&r, &l, Generation::New, 0x2002).unwrap().unwrap();
+        let e = unit_time_entry(&r, &l, Generation::New, 0x2002)
+            .unwrap()
+            .unwrap();
         assert_eq!(e.offset, 0x24008);
-        assert_eq!(unit_time_entry(&r, &l, Generation::New, 3 * 0x2000 + 1).unwrap(), None, "not in image");
+        assert_eq!(
+            unit_time_entry(&r, &l, Generation::New, 3 * 0x2000 + 1).unwrap(),
+            None,
+            "not in image"
+        );
     }
 
     #[test]
@@ -893,9 +1042,19 @@ mod tests {
         let l = layout();
         let clear = SparseReader::new(0x20000).with(0x4000, &build::new_ui_ctl(5, 100, 0, &[]));
         let ctl = read_ui(&clear, &l, Generation::New).unwrap();
-        assert_eq!(read_ui_data(&clear, &l, Some(&ctl)).unwrap().vendor_display_last_index, Some(5));
+        assert_eq!(
+            read_ui_data(&clear, &l, Some(&ctl))
+                .unwrap()
+                .vendor_display_last_index,
+            Some(5)
+        );
         let set = SparseReader::new(0x20000).with(0x4000, &build::new_ui_ctl(5, 100, 1, &[]));
         let ctl = read_ui(&set, &l, Generation::New).unwrap();
-        assert_eq!(read_ui_data(&set, &l, Some(&ctl)).unwrap().vendor_display_last_index, Some(100));
+        assert_eq!(
+            read_ui_data(&set, &l, Some(&ctl))
+                .unwrap()
+                .vendor_display_last_index,
+            Some(100)
+        );
     }
 }

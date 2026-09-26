@@ -115,8 +115,14 @@ fn layout_i64_or(profile: &OemProfile, key: &str, fallback: i64) -> i64 {
 }
 
 /// Read up to `len` bytes at `offset`; `None` when fewer than `len` are in the image.
-fn read_exact(reader: &dyn EvidenceReader, offset: u64, len: usize) -> Result<Option<Vec<u8>>, ForensicError> {
-    let Some(end) = offset.checked_add(len as u64) else { return Ok(None) };
+fn read_exact(
+    reader: &dyn EvidenceReader,
+    offset: u64,
+    len: usize,
+) -> Result<Option<Vec<u8>>, ForensicError> {
+    let Some(end) = offset.checked_add(len as u64) else {
+        return Ok(None);
+    };
     if end > reader.len() {
         return Ok(None);
     }
@@ -124,7 +130,10 @@ fn read_exact(reader: &dyn EvidenceReader, offset: u64, len: usize) -> Result<Op
 }
 
 fn u16_le(b: &[u8], off: usize) -> Option<u16> {
-    Some(u16::from_le_bytes([*b.get(off)?, *b.get(off.checked_add(1)?)?]))
+    Some(u16::from_le_bytes([
+        *b.get(off)?,
+        *b.get(off.checked_add(1)?)?,
+    ]))
 }
 
 fn u32_le(b: &[u8], off: usize) -> Option<u32> {
@@ -218,7 +227,8 @@ fn corroborate(
             layout_i64_or(profile, KEY_NEW_ADJUST, 1),
         ),
     };
-    let max_units = i64::try_from(layout_u64_or(profile, KEY_MAX_UNITS, 65_536)).unwrap_or(i64::MAX);
+    let max_units =
+        i64::try_from(layout_u64_or(profile, KEY_MAX_UNITS, 65_536)).unwrap_or(i64::MAX);
     match read_exact(reader, ui_offset, 16)? {
         Some(ui) => {
             let cur = usize::try_from(cur_off).ok().and_then(|o| u32_le(&ui, o));
@@ -332,7 +342,8 @@ impl Detector for UniviewDetector {
         let image_len = reader.len();
         let super_offset = layout_u64(profile, KEY_SUPER_OFFSET).unwrap_or(0);
         let super_size = layout_u64(profile, KEY_SUPER_SIZE);
-        let magic_offset = super_offset.checked_add(layout_u64(profile, KEY_MAGIC_OFFSET).unwrap_or(0));
+        let magic_offset =
+            super_offset.checked_add(layout_u64(profile, KEY_MAGIC_OFFSET).unwrap_or(0));
 
         // Resolve the declared magic rules. A profile that declares none cannot detect
         // Uniview, which is reported rather than substituted with a built-in value.
@@ -458,7 +469,8 @@ impl Detector for UniviewDetector {
                                 profile_hash.clone(),
                             ));
                             status = DetectionStatus::Confirmed;
-                            let header = layout_u64_or(profile, KEY_H3CRD_HEADER_SIZE, 0x68).min(image_len);
+                            let header =
+                                layout_u64_or(profile, KEY_H3CRD_HEADER_SIZE, 0x68).min(image_len);
                             if let Ok(r) = Region::new(0, header) {
                                 candidate_regions.push(r);
                             }
@@ -499,7 +511,12 @@ mod tests {
         }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ForensicError> {
             if offset >= self.len() {
-                return Err(ForensicError::out_of_bounds("mem", offset, buf.len() as u64, self.len()));
+                return Err(ForensicError::out_of_bounds(
+                    "mem",
+                    offset,
+                    buf.len() as u64,
+                    self.len(),
+                ));
             }
             let s = offset as usize;
             let n = (self.0.len() - s).min(buf.len());
@@ -515,7 +532,10 @@ mod tests {
     }
 
     fn profile() -> OemProfile {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../profiles/uniview/uniview-ubifs-v1.0.toml");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../profiles/uniview/uniview-ubifs-v1.0.toml"
+        );
         OemProfile::from_file(std::path::Path::new(path)).unwrap()
     }
 
@@ -532,7 +552,7 @@ mod tests {
         d[0x4000..0x4004].copy_from_slice(&2u32.to_le_bytes()); // raw 2 -> 1 written unit
         d[0x4006..0x4008].copy_from_slice(&1u16.to_le_bytes()); // rewrited
         d[0x14004..0x14008].copy_from_slice(&2u32.to_le_bytes()); // header + 1 entry
-        // 2024-03-15 13:45:30, SPtoI 16.
+                                                                  // 2024-03-15 13:45:30, SPtoI 16.
         d[0x14010..0x14015].copy_from_slice(&[0xE8, 0x37, 0xAF, 0xB5, 0x1E]);
         d[0x14016] = (16 & 0x3F) << 2;
         d[0x14017] = 0;
@@ -542,20 +562,32 @@ mod tests {
     #[test]
     fn old_and_new_magic_are_confirmed_even_without_structure() {
         for (magic, gen) in [(0x1367u32, "OLD"), (0x1587u32, "NEW")] {
-            let out = UniviewDetector.detect(&image(magic, 0x4000), &profile()).unwrap();
+            let out = UniviewDetector
+                .detect(&image(magic, 0x4000), &profile())
+                .unwrap();
             assert_eq!(out.status, DetectionStatus::Confirmed);
-            assert_eq!(out.evidence.len(), 1, "failed corroboration adds no evidence item");
+            assert_eq!(
+                out.evidence.len(),
+                1,
+                "failed corroboration adds no evidence item"
+            );
             assert_eq!(out.evidence[0].rule_match_status, RuleMatchStatus::Match);
             assert!(out.evidence[0].is_exclusive);
             assert!(out.evidence[0].explanation.contains(gen));
             assert_eq!(out.candidate_regions, vec![Region::new(0, 0x4000).unwrap()]);
-            assert!(out.warnings.iter().any(|w| w.contains("degraded")), "{:?}", out.warnings);
+            assert!(
+                out.warnings.iter().any(|w| w.contains("degraded")),
+                "{:?}",
+                out.warnings
+            );
         }
     }
 
     #[test]
     fn structural_corroboration_adds_non_exclusive_evidence() {
-        let out = UniviewDetector.detect(&structured_old(), &profile()).unwrap();
+        let out = UniviewDetector
+            .detect(&structured_old(), &profile())
+            .unwrap();
         assert_eq!(out.status, DetectionStatus::Confirmed);
         let kinds: Vec<_> = out.evidence.iter().map(|e| e.kind.as_str()).collect();
         assert_eq!(
@@ -580,13 +612,18 @@ mod tests {
         assert_eq!(out.status, DetectionStatus::Confirmed);
         assert_eq!(out.evidence.len(), 1);
         assert_eq!(out.warnings.len(), 2);
-        assert!(out.warnings.iter().any(|w| w.contains("data index head abnormal")));
+        assert!(out
+            .warnings
+            .iter()
+            .any(|w| w.contains("data index head abnormal")));
     }
 
     #[test]
     fn unknown_magic_is_not_detected() {
         for magic in [0u32, 0x1368, 0x6713, 0x8715, 0x5649_4E55 /* "UNIV" */] {
-            let out = UniviewDetector.detect(&image(magic, 0x4000), &profile()).unwrap();
+            let out = UniviewDetector
+                .detect(&image(magic, 0x4000), &profile())
+                .unwrap();
             assert_eq!(out.status, DetectionStatus::NotDetected, "magic {magic:#x}");
         }
     }
@@ -599,20 +636,30 @@ mod tests {
         assert_eq!(out.status, DetectionStatus::Confirmed);
         assert_eq!(out.evidence.len(), 1);
         assert_eq!(out.evidence[0].kind, "uniview_h3crd_export_tag");
-        assert!(out.warnings.iter().any(|w| w.contains("not an original physical disk")));
+        assert!(out
+            .warnings
+            .iter()
+            .any(|w| w.contains("not an original physical disk")));
         // A lookalike prefix is not an export.
         let mut d = vec![0u8; 0x100];
         d[..8].copy_from_slice(b"iVS8000@");
-        assert_eq!(UniviewDetector.detect(&Mem(d), &profile()).unwrap().status, DetectionStatus::NotDetected);
+        assert_eq!(
+            UniviewDetector.detect(&Mem(d), &profile()).unwrap().status,
+            DetectionStatus::NotDetected
+        );
     }
 
     #[test]
     fn a_truncated_super_is_insufficient_and_short_images_do_not_panic() {
-        let out = UniviewDetector.detect(&image(0x1587, 0x100), &profile()).unwrap();
+        let out = UniviewDetector
+            .detect(&image(0x1587, 0x100), &profile())
+            .unwrap();
         assert_eq!(out.status, DetectionStatus::Insufficient);
         assert!(!out.warnings.is_empty());
         for len in [0usize, 1, 3] {
-            let out = UniviewDetector.detect(&image(0x1367, len), &profile()).unwrap();
+            let out = UniviewDetector
+                .detect(&image(0x1367, len), &profile())
+                .unwrap();
             assert_eq!(out.status, DetectionStatus::NotDetected, "len {len}");
         }
     }

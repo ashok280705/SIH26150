@@ -160,7 +160,12 @@ pub mod build {
 
     /// NEW-generation UI-CTL region (`0x10000` bytes): raw `+0x00`, raw count base `+0x04`,
     /// u16 rewrited flag at `+0x0C`, entries from `+0x10`.
-    pub fn new_ui_ctl(current_unit_raw: u32, count_raw: u32, rewrited: u16, entries: &[[u8; 8]]) -> Vec<u8> {
+    pub fn new_ui_ctl(
+        current_unit_raw: u32,
+        count_raw: u32,
+        rewrited: u16,
+        entries: &[[u8; 8]],
+    ) -> Vec<u8> {
         let mut b = vec![0u8; 0x10000];
         b[0..4].copy_from_slice(&current_unit_raw.to_le_bytes());
         b[4..8].copy_from_slice(&count_raw.to_le_bytes());
@@ -278,7 +283,12 @@ pub mod image {
     }
 
     /// Place a unit's DI region and DATA blocks.
-    pub fn place_unit(r: &mut SparseReader, l: &UniviewLayout, generation: Generation, spec: &UnitSpec) {
+    pub fn place_unit(
+        r: &mut SparseReader,
+        l: &UniviewLayout,
+        generation: Generation,
+        spec: &UnitSpec,
+    ) {
         let base = l.unit_base(generation, spec.unit).expect("unit base");
         r.place(
             base + l.di_offset_in_unit,
@@ -310,7 +320,10 @@ pub mod image {
         let base = l.unit_base(Generation::Old, 1).unwrap();
         let len = base + l.di_size + 64 * l.data_block_size;
         let mut r = SparseReader::new(len).with(0, &super_for(0x1367));
-        let ui_entries = [(1u32, build::time_index_entry(build::timestamp(2024, 5, 3, 10, 0, 0), 11))];
+        let ui_entries = [(
+            1u32,
+            build::time_index_entry(build::timestamp(2024, 5, 3, 10, 0, 0), 11),
+        )];
         r.place(l.ui_offset, &build::old_ui(2, 0x0002, 1, &ui_entries));
         let ts = |m: u8| build::timestamp(2024, 5, 3, 10, m, 0);
         let tail = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
@@ -320,7 +333,12 @@ pub mod image {
             build::di_entry(ts(2), 1, 25, tail),
         ];
         // Residue beyond the declared count of 3.
-        entries.push(build::di_entry(build::timestamp(2024, 4, 30, 23, 59, 0), 1, 40, tail));
+        entries.push(build::di_entry(
+            build::timestamp(2024, 4, 30, 23, 59, 0),
+            1,
+            40,
+            tail,
+        ));
         let spec = UnitSpec::new(1, 9 * 0x4000, entries)
             .with_declared_count(4)
             .with_block(16, build::data_block(0x16))
@@ -338,12 +356,21 @@ pub mod image {
     pub fn new_volume(l: &UniviewLayout) -> SparseReader {
         let len = l.unit_base(Generation::New, 2).unwrap() + l.di_size + 64 * l.data_block_size;
         let mut r = SparseReader::new(len).with(0, &super_for(0x1587));
-        let ctl = [build::time_index_entry(build::timestamp(2024, 6, 1, 0, 0, 0), 5)];
+        let ctl = [build::time_index_entry(
+            build::timestamp(2024, 6, 1, 0, 0, 0),
+            5,
+        )];
         r.place(l.ui_offset, &build::new_ui_ctl(1, 1, 0, &ctl));
         for n in [0u64, 1] {
             let unit = build::ui_data_unit(&[
-                build::time_index_entry(build::timestamp(2024, 6, 1, n as u8, 0, 0), 100 + n as u32),
-                build::time_index_entry(build::timestamp(2024, 6, 1, n as u8, 30, 0), 200 + n as u32),
+                build::time_index_entry(
+                    build::timestamp(2024, 6, 1, n as u8, 0, 0),
+                    100 + n as u32,
+                ),
+                build::time_index_entry(
+                    build::timestamp(2024, 6, 1, n as u8, 30, 0),
+                    200 + n as u32,
+                ),
             ]);
             r.place(l.ui_data_offset(n).unwrap(), &unit);
         }
@@ -392,10 +419,18 @@ pub mod image {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                build::di_entry(build::timestamp(2024, 7, 1, 9, i as u8, 0), 2, s - start + 16, [0; 8])
+                build::di_entry(
+                    build::timestamp(2024, 7, 1, 9, i as u8, 0),
+                    2,
+                    s - start + 16,
+                    [0; 8],
+                )
             })
             .collect();
-        r.place(0x14000, &build::di_region(0, entries.len() as u32, &entries));
+        r.place(
+            0x14000,
+            &build::di_region(0, entries.len() as u32, &entries),
+        );
         for b in 0..blocks {
             r.place(0x54000 + b * 0x4000, &build::data_block(0x80 | b as u8));
         }

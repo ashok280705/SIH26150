@@ -10,9 +10,8 @@ pub struct JsonReportExporter;
 impl JsonReportExporter {
     /// Export report as formatted, deterministic JSON string.
     pub fn export_to_json(report: &ForensicReport) -> Result<String, ForensicError> {
-        serde_json::to_string_pretty(report).map_err(|e| {
-            ForensicError::io("export_to_json", std::io::Error::other(e.to_string()))
-        })
+        serde_json::to_string_pretty(report)
+            .map_err(|e| ForensicError::io("export_to_json", std::io::Error::other(e.to_string())))
     }
 }
 
@@ -37,6 +36,7 @@ mod tests {
                 sha256: Hash::sha256(vec![0; 32]),
                 acquisition_status: "Complete".into(),
                 source_safety_decision: "SafeReadOnly".into(),
+                examiner_timezone: None,
             },
             detection_summary: DetectionSummaryReport {
                 detection_status: "Detected".into(),

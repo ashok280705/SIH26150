@@ -34,6 +34,15 @@ export interface Evidence {
   acquisition_id?: string;
   path: string;
   registered_at: string;
+  examiner_timezone?: ExaminerTimezone | null;
+}
+
+export interface ExaminerTimezone {
+  timezone: string;
+  source: string;
+  established_by: string;
+  notes?: string | null;
+  established_at: string;
 }
 
 export interface Acquisition {
@@ -408,11 +417,22 @@ export type PipelineOutcome =
   | 'completed_partial_recovery'
   | 'requires_analyst';
 
+export interface UnaccountedRegion {
+  region: {
+    offset: number;
+    length: number;
+  };
+  reason: string;
+}
+
 export interface GapCoverage {
   total_bytes: number;
   accounted_bytes: number;
   unaccounted_bytes: number;
   coverage_ratio: number;
+  largest_unaccounted?: UnaccountedRegion | null;
+  unaccounted_regions: UnaccountedRegion[];
+  method?: string;
 }
 
 /** A per-channel temporal gap in the unified timeline (timeline::TimelineGap). */
@@ -444,6 +464,7 @@ export interface RecordingSegment {
   start_normalized: string | null;
   source_offset: number;
   source_length: number;
+  absolute_utc?: string | null;
 }
 
 /** A window inside a recording where footage is absent (timeline::SessionGap). */
@@ -513,18 +534,28 @@ export interface GapRecoveryRequest {
   oem_key?: string;
 }
 
-/** A gap selected in the timeline and handed to the Recovery Engine to recover. */
+export type RecoveryTargetType = 'temporal_gap' | 'physical_unaccounted';
+
+/** A recovery target (temporal gap or physical unaccounted region) handed to the Recovery Engine. */
 export interface GapRecoveryTarget {
+  id?: string;
+  targetType?: RecoveryTargetType;
   channel: number;
   scanStart: number;
   scanEnd: number;
-  gapSeconds: number;
+  length?: number;
+  gapSeconds?: number | null;
   nominalSeconds: number;
-  startNative: string | null;
-  startNormalized: string;
-  endNative: string | null;
-  endNormalized: string;
+  startNative?: string | null;
+  startNormalized?: string | null;
+  endNative?: string | null;
+  endNormalized?: string | null;
+  source?: string;
+  reason?: string;
+  sessionRef?: string | null;
 }
+
+export type TemporalBasis = 'absolute_utc' | 'device_local';
 
 /** A contiguous recording produced by one camera (timeline::RecordingSession). */
 export interface RecordingSession {
@@ -535,6 +566,7 @@ export interface RecordingSession {
   start_normalized: string;
   end_normalized: string;
   timezone: string;
+  temporal_basis?: TemporalBasis;
   segment_count: number;
   span_seconds: number;
   covered_seconds: number;
@@ -543,6 +575,9 @@ export interface RecordingSession {
   nominal_segment_seconds: number;
   gaps: SessionGap[];
   segments: RecordingSegment[];
+  filesystem_timezone?: string | null;
+  examiner_timezone?: ExaminerTimezone | null;
+  timezone_conflict?: string | null;
 }
 
 /** The full per-recording view for an evidence image (timeline::RecordingTimeline). */
@@ -553,6 +588,8 @@ export interface RecordingTimeline {
   total_recordings: number;
   total_missing_seconds: number;
   recordings_without_time: number;
+  recordings_with_unknown_timezone?: number;
+  examiner_timezone?: ExaminerTimezone | null;
   method: string;
 }
 

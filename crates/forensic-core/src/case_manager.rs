@@ -15,6 +15,7 @@ use crate::error::ForensicError;
 use crate::hash::Hash;
 use crate::identifiers::{AcquisitionId, CaseId, EvidenceId, ExaminerId};
 use crate::region::Region;
+use crate::time_evidence::ExaminerTimezone;
 use crate::validation::ValidationState;
 
 /// Input payload for registering a new piece of evidence into a case.
@@ -35,6 +36,9 @@ pub struct EvidenceRegistrationInput {
     pub bad_sector_ranges: Vec<Region>,
     pub unresolved_ranges: Vec<Region>,
     pub source_state: Option<SourceState>,
+    /// Optional examiner-established timezone (external evidence, not inferred from disk).
+    #[serde(default)]
+    pub examiner_timezone: Option<ExaminerTimezone>,
 }
 
 impl EvidenceRegistrationInput {
@@ -190,6 +194,7 @@ impl CaseManager {
         evidence.acquisition_tool_version = input.acquisition_tool_version;
         evidence.source_state = input.source_state.unwrap_or(SourceState::Unknown);
         evidence.acquisition_id = Some(acq_id);
+        evidence.examiner_timezone = input.examiner_timezone;
 
         self.evidence_store.insert(evidence_id, evidence.clone());
 
@@ -252,6 +257,7 @@ mod tests {
             bad_sector_ranges: vec![],
             unresolved_ranges: vec![],
             source_state: Some(SourceState::ReadOnly),
+            examiner_timezone: None,
         };
 
         let dummy_hash = Hash::sha256(vec![0xAA; 32]);
@@ -288,6 +294,7 @@ mod tests {
             bad_sector_ranges: vec![],
             unresolved_ranges: vec![],
             source_state: None,
+            examiner_timezone: None,
         };
 
         let dummy_hash = Hash::sha256(vec![0; 32]);
@@ -319,6 +326,7 @@ mod tests {
             bad_sector_ranges: vec![Region::new(100, 50).unwrap()], // Has bad sectors!
             unresolved_ranges: vec![],
             source_state: None,
+            examiner_timezone: None,
         };
 
         let dummy_hash = Hash::sha256(vec![0; 32]);

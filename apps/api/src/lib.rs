@@ -67,6 +67,12 @@ pub fn app_router(state: AppState) -> Router {
         .route("/api/evidence/:id", get(handlers::get_evidence))
         .route("/api/evidence/:id/safety", get(handlers::get_source_safety))
         .route(
+            "/api/evidence/:id/timezone",
+            post(handlers::set_evidence_timezone)
+                .delete(handlers::clear_evidence_timezone)
+                .get(handlers::get_evidence_timezone),
+        )
+        .route(
             "/api/evidence/:id/bytes",
             get(handlers::read_evidence_bytes),
         )

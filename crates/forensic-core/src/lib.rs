@@ -90,8 +90,8 @@ pub use write_guard::WriteGuard;
 pub use parser_run::ParserRun;
 pub use recording::{IntegrityFlag, Recording};
 pub use time_evidence::{
-    ClockCorrection, NormalizedTime, RawTimestamp, RecorderNativeTime, ReferenceTime, TimeEvidence,
-    TimeZoneState,
+    ClockCorrection, ExaminerTimezone, NormalizedTime, RawTimestamp, RecorderNativeTime,
+    ReferenceTime, TimeEvidence, TimeZoneState,
 };
 pub use timeline_event::TimelineEvent;
 

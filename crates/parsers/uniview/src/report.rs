@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::field::FieldEvidence;
 use crate::layout::{Confidence, Generation};
 use crate::recovery::UniviewRecoveryReport;
-use crate::ui::{TimeIndexSummary, UiDataArea};
 use crate::ui::TimeIndexEntry;
+use crate::ui::{TimeIndexSummary, UiDataArea};
 use crate::volume::{UniviewVolume, VendorFlow, PARTIAL_AUTHORITY_REASON};
 
 /// One row per enumerated unit.
@@ -143,7 +143,11 @@ pub fn build_report(
         super_recognition: volume.super_block.recognition.label(),
         super_fields: volume.super_block.fields(&volume.layout),
         ui_region: volume.ui.as_ref().map(|u| u.region_name().to_string()),
-        ui_fields: volume.ui.as_ref().map(|u| u.fields(&volume.layout)).unwrap_or_default(),
+        ui_fields: volume
+            .ui
+            .as_ref()
+            .map(|u| u.fields(&volume.layout))
+            .unwrap_or_default(),
         ui_entries: volume.ui.as_ref().map(|u| u.entries.clone()),
         ui_entries_confidence: volume.ui.as_ref().map(|u| u.entries_confidence),
         ui_data: volume.ui_data.clone(),

@@ -59,8 +59,8 @@ use parsing::orchestrator::{ParsingResult, UNIFIED_OEM_KEY};
 use parsing::ParsingOrchestrator;
 use timeline::gaps::{self, GapAnalysis};
 use timeline::{
-    build_recording_timeline, CorrelatedEventGroup, CrossCameraCorrelator, RecordingTimeline,
-    TimelineEngine, TimelineOrdering, UnifiedTimeline,
+    build_recording_timeline_with_examiner_tz, CorrelatedEventGroup, CrossCameraCorrelator,
+    RecordingTimeline, TimelineEngine, TimelineOrdering, UnifiedTimeline,
 };
 
 /// A node in the pipeline flow.
@@ -239,6 +239,9 @@ pub struct PipelineOptions {
     /// A per-channel silence at least this long begins a new recording session rather
     /// than being reported as an in-recording gap.
     pub session_split_seconds: i64,
+    /// Optional examiner-established timezone (external evidence, not inferred from disk).
+    #[serde(default)]
+    pub examiner_timezone: Option<forensic_core::ExaminerTimezone>,
 }
 
 impl Default for PipelineOptions {
@@ -251,6 +254,7 @@ impl Default for PipelineOptions {
             max_recovery_scan_bytes: None,
             min_recording_gap_seconds: 30,
             session_split_seconds: 3600,
+            examiner_timezone: None,
         }
     }
 }
@@ -661,20 +665,30 @@ pub fn run_pipeline(
     // Built from the parser's own recordings and sorted by date, this is the
     // investigator-facing "which recordings exist and what is missing inside them"
     // view that complements the event-level unified timeline.
-    let recordings_timeline = build_recording_timeline(
+    let recordings_timeline = build_recording_timeline_with_examiner_tz(
         &parsing_result.recordings,
         options.min_recording_gap_seconds,
         options.session_split_seconds,
+        options.examiner_timezone.as_ref(),
     );
+    let tz_info = if let Some(ex) = &options.examiner_timezone {
+        format!(
+            "; normalized to UTC using examiner-established timezone '{}' (basis: '{}')",
+            ex.timezone, ex.source
+        )
+    } else {
+        String::new()
+    };
     run.record_stage(
         PipelineStage::PreliminaryTimeline,
         StageStatus::Completed,
         format!(
-            "Grouped {} recording segment(s) into {} recording(s) across {} channel(s); {}s missing",
+            "Grouped {} recording segment(s) into {} recording(s) across {} channel(s); {}s missing{}",
             recordings_timeline.total_segments,
             recordings_timeline.total_recordings,
             recordings_timeline.channel_count,
             recordings_timeline.total_missing_seconds,
+            tz_info
         ),
     );
     run.recordings_timeline = Some(recordings_timeline);
@@ -924,7 +938,10 @@ pub fn run_pipeline(
         PipelineStage::FinalTimeline,
         // Built either way; whether an analyst is needed is recorded on the run itself.
         StageStatus::Completed,
-        format!("Final timeline built with {} event(s)", final_timeline.events.len()),
+        format!(
+            "Final timeline built with {} event(s)",
+            final_timeline.events.len()
+        ),
     );
 
     run.parsing = Some(parsing_result);

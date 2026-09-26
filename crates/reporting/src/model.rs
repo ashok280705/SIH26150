@@ -183,6 +183,12 @@ pub struct SessionReport {
     pub coverage_ratio: f64,
     pub segment_count: usize,
     pub gaps: Vec<SessionGapReport>,
+    #[serde(default)]
+    pub filesystem_timezone: Option<String>,
+    #[serde(default)]
+    pub examiner_timezone: Option<String>,
+    #[serde(default)]
+    pub timezone_conflict: Option<String>,
 }
 
 /// The preliminary timeline: which footage exists and where the gaps are.
@@ -264,6 +270,8 @@ pub struct EvidenceSummaryReport {
     pub sha256: Hash,
     pub acquisition_status: String,
     pub source_safety_decision: String,
+    #[serde(default)]
+    pub examiner_timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

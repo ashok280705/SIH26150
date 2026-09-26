@@ -128,13 +128,17 @@ impl UnitRecord {
     }
 
     pub fn indexed_bytes(&self) -> u64 {
-        self.data_regions.iter().fold(0u64, |a, r| a.saturating_add(r.length))
+        self.data_regions
+            .iter()
+            .fold(0u64, |a, r| a.saturating_add(r.length))
     }
 
     /// Whether the header or entries carry anything an examiner should look at.
     pub fn has_problems(&self) -> bool {
-        !matches!(self.header_state, DiHeaderState::Valid | DiHeaderState::Empty)
-            || self.invalid_timestamps > 0
+        !matches!(
+            self.header_state,
+            DiHeaderState::Valid | DiHeaderState::Empty
+        ) || self.invalid_timestamps > 0
             || self.sptoi_into_di > 0
             || self.sptoi_outside_image > 0
     }
@@ -203,14 +207,23 @@ fn summarise_unit(
 
     match &di.header_state {
         DiHeaderState::Valid | DiHeaderState::Empty | DiHeaderState::NotPresent => {}
-        other => rec.note(cap, format!("DI header at 0x{:X}: {}", di.di_offset, other.label())),
+        other => rec.note(
+            cap,
+            format!("DI header at 0x{:X}: {}", di.di_offset, other.label()),
+        ),
     }
 
     let mut prev_time: Option<i64> = None;
     for e in &di.entries {
         if e.is_blank() {
             rec.blank_entries += 1;
-            rec.note(cap, format!("DI entry {} at 0x{:X} is blank inside the declared count", e.index, e.offset));
+            rec.note(
+                cap,
+                format!(
+                    "DI entry {} at 0x{:X} is blank inside the declared count",
+                    e.index, e.offset
+                ),
+            );
             continue;
         }
         match e.timestamp.status {
@@ -218,7 +231,12 @@ fn summarise_unit(
                 rec.invalid_timestamps += 1;
                 rec.note(
                     cap,
-                    format!("DI entry {} at 0x{:X}: timestamp {}", e.index, e.offset, e.timestamp.label()),
+                    format!(
+                        "DI entry {} at 0x{:X}: timestamp {}",
+                        e.index,
+                        e.offset,
+                        e.timestamp.label()
+                    ),
                 );
             }
             TimestampStatus::Implausible => rec.implausible_timestamps += 1,
@@ -229,14 +247,20 @@ fn summarise_unit(
                 rec.sptoi_into_di += 1;
                 rec.note(
                     cap,
-                    format!("DI entry {} SPtoI {} selects a block inside the DI region", e.index, e.sptoi),
+                    format!(
+                        "DI entry {} SPtoI {} selects a block inside the DI region",
+                        e.index, e.sptoi
+                    ),
                 );
             }
             SptoiState::OutsideImage => {
                 rec.sptoi_outside_image += 1;
                 rec.note(
                     cap,
-                    format!("DI entry {} SPtoI {} selects a DATA block outside the image", e.index, e.sptoi),
+                    format!(
+                        "DI entry {} SPtoI {} selects a DATA block outside the image",
+                        e.index, e.sptoi
+                    ),
                 );
             }
             SptoiState::Data => {}
@@ -246,10 +270,20 @@ fn summarise_unit(
                 rec.timestamp_regressions += 1;
             }
             prev_time = Some(t);
-            if rec.earliest.as_ref().and_then(UnvTimestamp::unix_seconds_as_utc).is_none_or(|x| t < x) {
+            if rec
+                .earliest
+                .as_ref()
+                .and_then(UnvTimestamp::unix_seconds_as_utc)
+                .is_none_or(|x| t < x)
+            {
                 rec.earliest = Some(e.timestamp.clone());
             }
-            if rec.latest.as_ref().and_then(UnvTimestamp::unix_seconds_as_utc).is_none_or(|x| t > x) {
+            if rec
+                .latest
+                .as_ref()
+                .and_then(UnvTimestamp::unix_seconds_as_utc)
+                .is_none_or(|x| t > x)
+            {
                 rec.latest = Some(e.timestamp.clone());
             }
         }
@@ -260,7 +294,9 @@ fn summarise_unit(
 
     let mut regions = Vec::with_capacity(spans.len());
     for s in spans {
-        *rec.span_basis_counts.entry(s.basis.label().to_string()).or_default() += 1;
+        *rec.span_basis_counts
+            .entry(s.basis.label().to_string())
+            .or_default() += 1;
         if s.truncated_by_image {
             rec.spans_truncated_by_image += 1;
         }
@@ -282,7 +318,11 @@ pub enum VendorFlow {
     RefusedRewrited { rewrited_raw: u16 },
     /// disktool would stop at "read data index failed": a unit in `1..=unit_count` has no DI
     /// header in the image. The partial sum up to that unit is kept for reference.
-    ReadFailure { unit_count: i64, first_unreadable_unit: u64, partial_total_bytes: i64 },
+    ReadFailure {
+        unit_count: i64,
+        first_unreadable_unit: u64,
+        partial_total_bytes: i64,
+    },
     /// Sum of the sign-extended DI `+0x00` counters of units `1..=unit_count`.
     Computed { unit_count: i64, total_bytes: i64 },
 }
@@ -295,12 +335,19 @@ impl VendorFlow {
                 "refused, as disktool does (\"can't count flow in a rewrited disk\"): rewrited \
                  flag = {rewrited_raw}"
             ),
-            Self::ReadFailure { unit_count, first_unreadable_unit, partial_total_bytes } => format!(
+            Self::ReadFailure {
+                unit_count,
+                first_unreadable_unit,
+                partial_total_bytes,
+            } => format!(
                 "incomplete, as disktool would stop (\"read data index failed\"): {unit_count} \
                  unit(s) declared, unit {first_unreadable_unit} has no DI in the image; partial \
                  sum {partial_total_bytes} byte(s)"
             ),
-            Self::Computed { unit_count, total_bytes } => format!(
+            Self::Computed {
+                unit_count,
+                total_bytes,
+            } => format!(
                 "{total_bytes} byte(s) over {unit_count} unit(s) (vendor FLOW: sum of DI +0x00 \
                  over the UI-declared units)"
             ),
@@ -361,7 +408,10 @@ impl UniviewVolume {
     }
 
     pub fn find_unit(&self, recording_id: &str) -> Option<&UnitRecord> {
-        let n: u32 = recording_id.strip_prefix(RECORDING_ID_PREFIX)?.parse().ok()?;
+        let n: u32 = recording_id
+            .strip_prefix(RECORDING_ID_PREFIX)?
+            .parse()
+            .ok()?;
         self.units.iter().find(|u| u.unit == n)
     }
 
@@ -380,8 +430,11 @@ impl UniviewVolume {
     /// (OLD `raw - 1`, NEW `raw + 1`), each DI `+0x00` sign-extended from 32 bits, refused when
     /// the rewrited flag is non-zero.
     pub fn vendor_flow(&self) -> VendorFlow {
-        let Some(ui) = &self.ui else { return VendorFlow::NoUiHeader };
-        let (Some(rewrited_raw), Some(unit_count)) = (ui.rewrited_raw(), ui.unit_count(&self.layout))
+        let Some(ui) = &self.ui else {
+            return VendorFlow::NoUiHeader;
+        };
+        let (Some(rewrited_raw), Some(unit_count)) =
+            (ui.rewrited_raw(), ui.unit_count(&self.layout))
         else {
             return VendorFlow::NoUiHeader;
         };
@@ -408,7 +461,10 @@ impl UniviewVolume {
                 }
             }
         }
-        VendorFlow::Computed { unit_count, total_bytes: total }
+        VendorFlow::Computed {
+            unit_count,
+            total_bytes: total,
+        }
     }
 
     /// Entries the usable DI headers declare (`count - 1` per raw-disk unit).
@@ -494,7 +550,9 @@ pub fn read_volume(
                 .is_some_and(|b| b < image_len);
             break;
         }
-        let Some(base) = layout.unit_base(generation, unit) else { break };
+        let Some(base) = layout.unit_base(generation, unit) else {
+            break;
+        };
         if base >= image_len {
             break;
         }
@@ -503,7 +561,9 @@ pub fn read_volume(
         let mut rec = summarise_unit(&d, &spans, &layout, image_len);
         rec.time_index = ui::unit_time_entry(reader, &layout, generation, unit)?;
         units.push(rec);
-        let Some(next) = unit.checked_add(1) else { break };
+        let Some(next) = unit.checked_add(1) else {
+            break;
+        };
         unit = next;
     }
 
@@ -547,7 +607,9 @@ pub fn read_volume(
         || problem_units > 0
         || units_capped
         || units.is_empty()
-        || ui_data.as_ref().is_some_and(|d| d.evidence.state != ValidationStateKind::Pass)
+        || ui_data
+            .as_ref()
+            .is_some_and(|d| d.evidence.state != ValidationStateKind::Pass)
     {
         ValidationStateKind::Review
     } else {
@@ -602,11 +664,19 @@ pub fn unit_detail(
     volume: &UniviewVolume,
     unit: u32,
 ) -> Result<Option<UnitDetail>, ForensicError> {
-    let Some(generation) = volume.generation() else { return Ok(None) };
+    let Some(generation) = volume.generation() else {
+        return Ok(None);
+    };
     if !volume.units.iter().any(|u| u.unit == unit) {
         return Ok(None);
     }
-    let di = read_unit(reader, &volume.layout, generation, unit, volume.is_h3crd_export())?;
+    let di = read_unit(
+        reader,
+        &volume.layout,
+        generation,
+        unit,
+        volume.is_h3crd_export(),
+    )?;
     let spans = di.spans(&volume.layout, reader.len());
     Ok(Some(UnitDetail { di, spans }))
 }
@@ -650,13 +720,17 @@ pub fn volume_summary(volume: &UniviewVolume) -> BTreeMap<String, String> {
             m.insert(
                 format!("uniview.{name}.rewrited"),
                 if r {
-                    "set (circular overwrite strongly indicated; overwritten recordings unknown)".into()
+                    "set (circular overwrite strongly indicated; overwritten recordings unknown)"
+                        .into()
                 } else {
                     "clear".into()
                 },
             );
         }
-        m.insert(format!("uniview.{name}.populated_entries"), ui.entries.populated.to_string());
+        m.insert(
+            format!("uniview.{name}.populated_entries"),
+            ui.entries.populated.to_string(),
+        );
         m.insert(
             format!("uniview.{name}.entries_confidence"),
             ui.entries_confidence.label().into(),
@@ -666,23 +740,54 @@ pub fn volume_summary(volume: &UniviewVolume) -> BTreeMap<String, String> {
         m.insert("uniview.current_unit_consistency".into(), c);
     }
     if let Some(d) = &volume.ui_data {
-        m.insert("uniview.ui_data.units_examined".into(), d.examined.to_string());
-        m.insert("uniview.ui_data.populated_units".into(), d.populated_units.len().to_string());
-        m.insert("uniview.ui_data.populated_entries".into(), d.populated_entries().to_string());
+        m.insert(
+            "uniview.ui_data.units_examined".into(),
+            d.examined.to_string(),
+        );
+        m.insert(
+            "uniview.ui_data.populated_units".into(),
+            d.populated_units.len().to_string(),
+        );
+        m.insert(
+            "uniview.ui_data.populated_entries".into(),
+            d.populated_entries().to_string(),
+        );
         m.insert("uniview.ui_data.lock_semantics".into(), "UNKNOWN".into());
     }
-    m.insert("uniview.units.enumerated".into(), volume.units.len().to_string());
-    m.insert("uniview.units.indexed".into(), volume.indexed_units().count().to_string());
+    m.insert(
+        "uniview.units.enumerated".into(),
+        volume.units.len().to_string(),
+    );
+    m.insert(
+        "uniview.units.indexed".into(),
+        volume.indexed_units().count().to_string(),
+    );
     m.insert(
         "uniview.units.empty".into(),
-        volume.units.iter().filter(|u| u.header_state == DiHeaderState::Empty).count().to_string(),
+        volume
+            .units
+            .iter()
+            .filter(|u| u.header_state == DiHeaderState::Empty)
+            .count()
+            .to_string(),
     );
     m.insert(
         "uniview.units.with_anomalies".into(),
-        volume.units.iter().filter(|u| u.has_problems()).count().to_string(),
+        volume
+            .units
+            .iter()
+            .filter(|u| u.has_problems())
+            .count()
+            .to_string(),
     );
-    m.insert("uniview.di.declared_entries".into(), volume.declared_entries().to_string());
-    m.insert("uniview.di.usable_entries".into(), volume.usable_entries().to_string());
+    m.insert(
+        "uniview.di.declared_entries".into(),
+        volume.declared_entries().to_string(),
+    );
+    m.insert(
+        "uniview.di.usable_entries".into(),
+        volume.usable_entries().to_string(),
+    );
     m.insert("uniview.flow.vendor".into(), volume.vendor_flow().label());
     m.insert(
         "uniview.scan.total_write_bytes".into(),
@@ -705,13 +810,18 @@ pub fn volume_summary(volume: &UniviewVolume) -> BTreeMap<String, String> {
         "uniview.data.block_size".into(),
         volume.layout.data_block_size.to_string(),
     );
-    m.insert("uniview.data.codec".into(), "UNKNOWN (no format is claimed)".into());
+    m.insert(
+        "uniview.data.codec".into(),
+        "UNKNOWN (no format is claimed)".into(),
+    );
     m
 }
 
 /// The platform storage geometry. `Ok(None)` when the evidence is not Uniview.
 pub fn storage_geometry(volume: &UniviewVolume) -> Result<Option<StorageGeometry>, ForensicError> {
-    let Some(generation) = volume.generation() else { return Ok(None) };
+    let Some(generation) = volume.generation() else {
+        return Ok(None);
+    };
     let l = &volume.layout;
     let clip = |offset: u64, len: u64| -> Option<Region> {
         if offset >= volume.image_len {
@@ -736,7 +846,8 @@ pub fn storage_geometry(volume: &UniviewVolume) -> Result<Option<StorageGeometry
     );
     oem_fields.insert(
         "uniview.geometry.index_region_note".into(),
-        "UI (OLD) or UI-CTL + UI-DATA (NEW); per-unit DI regions lie inside the units region".into(),
+        "UI (OLD) or UI-CTL + UI-DATA (NEW); per-unit DI regions lie inside the units region"
+            .into(),
     );
 
     let state = if volume.is_usable() && !volume.units.is_empty() {
@@ -775,7 +886,9 @@ pub fn storage_geometry(volume: &UniviewVolume) -> Result<Option<StorageGeometry
 
 /// The platform recording index. `Ok(None)` when the evidence is not Uniview.
 pub fn recording_index(volume: &UniviewVolume) -> Result<Option<RecordingIndex>, ForensicError> {
-    let Some(generation) = volume.generation() else { return Ok(None) };
+    let Some(generation) = volume.generation() else {
+        return Ok(None);
+    };
     let mut recordings = Vec::new();
     for u in volume.indexed_units() {
         let mut md = BTreeMap::new();
@@ -785,36 +898,75 @@ pub fn recording_index(volume: &UniviewVolume) -> Result<Option<RecordingIndex>,
         md.insert("uniview.unit_base".into(), format!("0x{:X}", u.unit_base));
         md.insert("uniview.di_offset".into(), format!("0x{:X}", u.di_offset));
         if let Some(h) = &u.header {
-            md.insert("uniview.di.write_data_bytes".into(), h.write_bytes.to_string());
-            md.insert("uniview.di.record_count_raw".into(), h.declared_count.to_string());
-            md.insert("uniview.di.declared_entries".into(), h.entry_count.to_string());
-            md.insert("uniview.di.header_08_0f_hex".into(), hex::encode(h.unknown_08_0f));
+            md.insert(
+                "uniview.di.write_data_bytes".into(),
+                h.write_bytes.to_string(),
+            );
+            md.insert(
+                "uniview.di.record_count_raw".into(),
+                h.declared_count.to_string(),
+            );
+            md.insert(
+                "uniview.di.declared_entries".into(),
+                h.entry_count.to_string(),
+            );
+            md.insert(
+                "uniview.di.header_08_0f_hex".into(),
+                hex::encode(h.unknown_08_0f),
+            );
         }
         md.insert("uniview.di.header_state".into(), u.header_state.label());
-        md.insert("uniview.di.usable_entries".into(), u.usable_entries.to_string());
-        md.insert("uniview.di.invalid_timestamps".into(), u.invalid_timestamps.to_string());
-        md.insert("uniview.di.timestamp_regressions".into(), u.timestamp_regressions.to_string());
+        md.insert(
+            "uniview.di.usable_entries".into(),
+            u.usable_entries.to_string(),
+        );
+        md.insert(
+            "uniview.di.invalid_timestamps".into(),
+            u.invalid_timestamps.to_string(),
+        );
+        md.insert(
+            "uniview.di.timestamp_regressions".into(),
+            u.timestamp_regressions.to_string(),
+        );
         for (k, v) in &u.span_basis_counts {
             md.insert(format!("uniview.span_basis.{k}"), v.to_string());
         }
         if let Some(t) = &u.earliest {
-            md.insert("uniview.earliest_wall_clock".into(), t.wall_clock().unwrap_or_default());
+            md.insert(
+                "uniview.earliest_wall_clock".into(),
+                t.wall_clock().unwrap_or_default(),
+            );
         }
         if let Some(t) = &u.latest {
-            md.insert("uniview.latest_wall_clock".into(), t.wall_clock().unwrap_or_default());
+            md.insert(
+                "uniview.latest_wall_clock".into(),
+                t.wall_clock().unwrap_or_default(),
+            );
         }
         if let Some(t) = &u.time_index {
-            md.insert("uniview.unit_time_index.offset".into(), format!("0x{:X}", t.offset));
+            md.insert(
+                "uniview.unit_time_index.offset".into(),
+                format!("0x{:X}", t.offset),
+            );
             md.insert("uniview.unit_time_index.raw_hex".into(), hex::encode(t.raw));
-            md.insert("uniview.unit_time_index.timestamp".into(), t.timestamp.label());
+            md.insert(
+                "uniview.unit_time_index.timestamp".into(),
+                t.timestamp.label(),
+            );
             md.insert(
                 "uniview.unit_time_index.lock".into(),
                 format!("{} (semantics UNKNOWN; not a channel)", t.lock),
             );
         }
-        md.insert("uniview.timestamp_timezone".into(), "unknown; wall clock read as UTC".into());
+        md.insert(
+            "uniview.timestamp_timezone".into(),
+            "unknown; wall clock read as UTC".into(),
+        );
         md.insert("uniview.grouping".into(), GROUPING_NOTE.into());
-        md.insert("uniview.channel".into(), "not recorded in any established field".into());
+        md.insert(
+            "uniview.channel".into(),
+            "not recorded in any established field".into(),
+        );
         md.insert("uniview.codec".into(), "UNKNOWN".into());
 
         let problems = u.has_problems() || u.spans_truncated_by_image > 0;
@@ -823,8 +975,14 @@ pub fn recording_index(volume: &UniviewVolume) -> Result<Option<RecordingIndex>,
             partition: None,
             // Field A is not established as a channel; nothing else records one.
             channel: None,
-            start_time_unix: u.earliest.as_ref().and_then(UnvTimestamp::unix_seconds_as_utc),
-            end_time_unix: u.latest.as_ref().and_then(UnvTimestamp::unix_seconds_as_utc),
+            start_time_unix: u
+                .earliest
+                .as_ref()
+                .and_then(UnvTimestamp::unix_seconds_as_utc),
+            end_time_unix: u
+                .latest
+                .as_ref()
+                .and_then(UnvTimestamp::unix_seconds_as_utc),
             physical_regions: u.data_regions.clone(),
             // Framing inside DATA is unknown, so no payload sub-range can be separated.
             payload_regions: Vec::new(),
@@ -832,7 +990,11 @@ pub fn recording_index(volume: &UniviewVolume) -> Result<Option<RecordingIndex>,
             allocation: AllocationEvidence::Unknown,
             oem_metadata: md,
             evidence: vs(
-                if problems { ValidationStateKind::Review } else { ValidationStateKind::Pass },
+                if problems {
+                    ValidationStateKind::Review
+                } else {
+                    ValidationStateKind::Pass
+                },
                 format!(
                     "unit {}: {} usable DI entr(y/ies) -> {} merged DATA region(s), {} byte(s); \
                      spans inferred from adjacent SPtoI{}",

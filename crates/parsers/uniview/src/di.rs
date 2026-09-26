@@ -373,7 +373,9 @@ pub fn compute_spans(
         let cur = u64::from(e.sptoi);
         let (blocks, basis) = match entries.get(i + 1) {
             None => match data_end_block {
-                Some(end) if end > cur && end <= blocks_per_unit => (end - cur, SpanBasis::ExportDataEnd),
+                Some(end) if end > cur && end <= blocks_per_unit => {
+                    (end - cur, SpanBasis::ExportDataEnd)
+                }
                 _ => (1, SpanBasis::TerminalEntry),
             },
             Some(n) if !n.is_structurally_valid() => (1, SpanBasis::NextEntryUnusable),
@@ -394,7 +396,9 @@ pub fn compute_spans(
         };
         let want = blocks.saturating_mul(layout.data_block_size);
         let end = start.saturating_add(want).min(image_len);
-        let region = (end > start).then(|| Region::new(start, end - start).ok()).flatten();
+        let region = (end > start)
+            .then(|| Region::new(start, end - start).ok())
+            .flatten();
         out.push(DataSpan {
             entry_index: e.index,
             start_sptoi: e.sptoi,
@@ -477,7 +481,13 @@ pub fn read_unit_di(
     generation: Generation,
     unit: u32,
 ) -> Result<UnitDi, ForensicError> {
-    read_unit_di_with(reader, layout, generation, unit, CountSemantics::IncludesHeader)
+    read_unit_di_with(
+        reader,
+        layout,
+        generation,
+        unit,
+        CountSemantics::IncludesHeader,
+    )
 }
 
 /// Read one unit's DI header and its entries with explicit count semantics.
@@ -528,7 +538,9 @@ pub fn read_unit_di_with(
         })
     })();
     let Some(header) = header else {
-        out.header_state = DiHeaderState::Truncated { available_entries: 0 };
+        out.header_state = DiHeaderState::Truncated {
+            available_entries: 0,
+        };
         return Ok(out);
     };
     if head.iter().all(|&b| b == 0) {
@@ -542,8 +554,16 @@ pub fn read_unit_di_with(
     let abnormal = u64::from(header.declared_count) > layout.di_count_max;
     // Entries to read: the declared ones, or — for an abnormal count — every record the DI
     // region physically holds, as disktool keeps going. Never more than the region holds.
-    let wanted = if abnormal { physical } else { header.entry_count.min(physical) };
-    let buf = read_bytes(reader, entries_at, wanted.saturating_mul(layout.di_entry_size as u64))?;
+    let wanted = if abnormal {
+        physical
+    } else {
+        header.entry_count.min(physical)
+    };
+    let buf = read_bytes(
+        reader,
+        entries_at,
+        wanted.saturating_mul(layout.di_entry_size as u64),
+    )?;
     let readable = if layout.di_entry_size == 0 {
         0
     } else {
@@ -565,7 +585,9 @@ pub fn read_unit_di_with(
             vendor_max: layout.di_count_max,
         }
     } else if readable < wanted {
-        DiHeaderState::Truncated { available_entries: readable }
+        DiHeaderState::Truncated {
+            available_entries: readable,
+        }
     } else {
         DiHeaderState::Valid
     };
@@ -644,7 +666,12 @@ mod tests {
     const OLD_U1: u64 = 0x0001_4000;
 
     fn entry(sptoi: u16, sec: u8) -> [u8; 16] {
-        build::di_entry(encode(2024, 5, 1, 12, 0, sec), 0x155, sptoi, [0xA0, 1, 2, 3, 4, 5, 6, 0x7F])
+        build::di_entry(
+            encode(2024, 5, 1, 12, 0, sec),
+            0x155,
+            sptoi,
+            [0xA0, 1, 2, 3, 4, 5, 6, 0x7F],
+        )
     }
 
     fn unit_with(count: u32, entries: &[[u8; 16]], len: u64) -> (SparseReader, UnitDi) {
@@ -656,7 +683,13 @@ mod tests {
     #[test]
     fn sptoi_and_field_a_bit_extraction() {
         let l = layout();
-        for (a, s) in [(0u16, 0u16), (0x3FF, 0x3FFF), (0x155, 0x2AAA), (1, 16), (0x200, 0x2000)] {
+        for (a, s) in [
+            (0u16, 0u16),
+            (0x3FF, 0x3FFF),
+            (0x155, 0x2AAA),
+            (1, 16),
+            (0x200, 0x2000),
+        ] {
             let raw = build::di_entry(encode(2024, 1, 1, 0, 0, 0), a, s, [0; 8]);
             let e = DiEntry::decode(&raw, 0, 1, &l, Generation::Old, 1, u64::MAX).unwrap();
             assert_eq!((e.field_a, e.sptoi), (a, s));
@@ -674,7 +707,10 @@ mod tests {
     #[test]
     fn sptoi_resolves_to_the_physical_data_block() {
         let l = layout();
-        for (gen, base) in [(Generation::Old, 0x0001_4000u64), (Generation::New, 0x1001_4000u64)] {
+        for (gen, base) in [
+            (Generation::Old, 0x0001_4000u64),
+            (Generation::New, 0x1001_4000u64),
+        ] {
             let raw = build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 100, [0; 8]);
             let e = DiEntry::decode(&raw, 0, 1, &l, gen, 3, u64::MAX).unwrap();
             assert_eq!(e.data_offset, Some(base + 2 * 0x1000_0000 + 100 * 0x4000));
@@ -682,7 +718,11 @@ mod tests {
         }
         let raw = build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 15, [0; 8]);
         let e = DiEntry::decode(&raw, 0, 1, &l, Generation::Old, 1, u64::MAX).unwrap();
-        assert_eq!(e.sptoi_state, SptoiState::PointsIntoDi, "block 15 is inside the 256 KiB DI");
+        assert_eq!(
+            e.sptoi_state,
+            SptoiState::PointsIntoDi,
+            "block 15 is inside the 256 KiB DI"
+        );
         let raw = build::di_entry(encode(2024, 1, 1, 0, 0, 0), 0, 16, [0; 8]);
         let e = DiEntry::decode(&raw, 0, 1, &l, Generation::Old, 1, 0x40000).unwrap();
         assert_eq!(e.sptoi_state, SptoiState::OutsideImage);
@@ -701,26 +741,49 @@ mod tests {
         let (_, u) = unit_with(2, &[entry(16, 1), entry(20, 2)], OLD_U1 + 0x100_0000);
         assert_eq!(u.header.as_ref().unwrap().entry_count, 1);
         assert_eq!(u.entries.len(), 1);
-        assert_eq!((u.entries[0].index, u.entries[0].offset, u.entries[0].sptoi), (1, OLD_U1 + 0x10, 16));
+        assert_eq!(
+            (u.entries[0].index, u.entries[0].offset, u.entries[0].sptoi),
+            (1, OLD_U1 + 0x10, 16)
+        );
     }
 
     #[test]
     fn header_and_entries_are_parsed_at_their_offsets() {
-        let (_, u) = unit_with(4, &[entry(16, 1), entry(20, 2), entry(25, 3)], OLD_U1 + 0x1000_0000);
+        let (_, u) = unit_with(
+            4,
+            &[entry(16, 1), entry(20, 2), entry(25, 3)],
+            OLD_U1 + 0x1000_0000,
+        );
         assert_eq!(u.header_state, DiHeaderState::Valid);
         let h = u.header.as_ref().unwrap();
-        assert_eq!((h.write_bytes, h.declared_count, h.entry_count), (0x12345, 4, 3));
+        assert_eq!(
+            (h.write_bytes, h.declared_count, h.entry_count),
+            (0x12345, 4, 3)
+        );
         assert_eq!(u.entries.len(), 3);
         assert_eq!(u.entries[1].index, 2);
-        assert_eq!(u.entries[1].offset, OLD_U1 + 2 * 0x10, "record r at DI + r * 0x10");
+        assert_eq!(
+            u.entries[1].offset,
+            OLD_U1 + 2 * 0x10,
+            "record r at DI + r * 0x10"
+        );
         assert_eq!(u.entries[2].timestamp.second, 3);
         assert_eq!(u.entries[0].unknown_08_0e, [0xA0, 1, 2, 3, 4, 5, 6]);
         assert_eq!(u.entries[0].byte_0f, 0x7F);
 
         let f = u.entries[0].fields();
         let sp = f.iter().find(|f| f.name == "di.entry.sptoi").unwrap();
-        assert_eq!((sp.physical_offset, sp.size_bits, sp.confidence), (OLD_U1 + 0x16, 14, Confidence::Confirmed));
-        assert_eq!(f.iter().find(|f| f.name == "di.entry.field_a").unwrap().confidence, Confidence::Unknown);
+        assert_eq!(
+            (sp.physical_offset, sp.size_bits, sp.confidence),
+            (OLD_U1 + 0x16, 14, Confidence::Confirmed)
+        );
+        assert_eq!(
+            f.iter()
+                .find(|f| f.name == "di.entry.field_a")
+                .unwrap()
+                .confidence,
+            Confidence::Unknown
+        );
     }
 
     #[test]
@@ -730,24 +793,45 @@ mod tests {
         entries[0] = entry(16, 1);
         entries[0x3FFE] = entry(30, 2);
         let (_, u) = unit_with(0x4000, &entries, OLD_U1 + 0x1000_0000);
-        assert_eq!(u.header_state, DiHeaderState::Valid, "0x4000 is within the vendor bound");
+        assert_eq!(
+            u.header_state,
+            DiHeaderState::Valid,
+            "0x4000 is within the vendor bound"
+        );
         assert_eq!(u.header.as_ref().unwrap().entry_count, 0x3FFF);
         assert_eq!(u.entries.len(), 0x3FFF);
         let last = u.entries.last().unwrap();
         assert_eq!((last.index, last.offset), (0x3FFF, OLD_U1 + 0x3FFF * 0x10));
-        assert_eq!(last.offset + 16, OLD_U1 + l.di_size, "the last record ends exactly at DI end");
+        assert_eq!(
+            last.offset + 16,
+            OLD_U1 + l.di_size,
+            "the last record ends exactly at DI end"
+        );
     }
 
     #[test]
     fn a_count_above_0x4000_is_abnormal_but_parsing_continues() {
         let (r, u) = unit_with(0x4001, &[entry(16, 1), entry(24, 2)], OLD_U1 + 0x1000_0000);
-        assert_eq!(u.header_state, DiHeaderState::CountAbnormal { declared: 0x4001, vendor_max: 0x4000 });
+        assert_eq!(
+            u.header_state,
+            DiHeaderState::CountAbnormal {
+                declared: 0x4001,
+                vendor_max: 0x4000
+            }
+        );
         assert!(u.header_state.label().starts_with(DI_HEAD_ABNORMAL));
-        assert_eq!(u.entries.len(), 2, "every non-blank record is read; blank background is skipped");
+        assert_eq!(
+            u.entries.len(),
+            2,
+            "every non-blank record is read; blank background is skipped"
+        );
         assert_eq!(u.spans(&layout(), r.len())[0].blocks, 8);
         // The garbage-count case: 0xFFFFFFFF never drives a read past the DI region.
         let (_, u) = unit_with(0xFFFF_FFFF, &[entry(16, 1)], OLD_U1 + 0x40000);
-        assert!(matches!(u.header_state, DiHeaderState::CountAbnormal { .. }));
+        assert!(matches!(
+            u.header_state,
+            DiHeaderState::CountAbnormal { .. }
+        ));
         assert_eq!(u.entries.len(), 1);
     }
 
@@ -756,15 +840,18 @@ mod tests {
         let l = layout();
         let entries = [
             entry(16, 1),
-            entry(20, 2), // +4
-            entry(20, 3), // duplicate
-            entry(18, 4), // wrap
+            entry(20, 2),                              // +4
+            entry(20, 3),                              // duplicate
+            entry(18, 4),                              // wrap
             build::di_entry([0xFF; 5], 0, 30, [0; 8]), // unusable timestamp
             entry(40, 5),
         ];
         let (r, u) = unit_with(entries.len() as u32 + 1, &entries, OLD_U1 + 0x1000_0000);
         let spans = u.spans(&l, r.len());
-        let basis: Vec<_> = spans.iter().map(|s| (s.entry_index, s.blocks, s.basis)).collect();
+        let basis: Vec<_> = spans
+            .iter()
+            .map(|s| (s.entry_index, s.blocks, s.basis))
+            .collect();
         assert_eq!(
             basis,
             vec![
@@ -775,7 +862,10 @@ mod tests {
                 (6, 1, SpanBasis::TerminalEntry),
             ]
         );
-        assert_eq!(spans[0].region, Some(Region::new(OLD_U1 + 16 * 0x4000, 4 * 0x4000).unwrap()));
+        assert_eq!(
+            spans[0].region,
+            Some(Region::new(OLD_U1 + 16 * 0x4000, 4 * 0x4000).unwrap())
+        );
     }
 
     #[test]
@@ -783,11 +873,19 @@ mod tests {
         let l = layout();
         let e = [entry(16, 1), entry(20, 2)];
         let r = SparseReader::new(OLD_U1 + 0x1000_0000).with(OLD_U1, &build::di_region(0, 2, &e));
-        let mut u = read_unit_di_with(&r, &l, Generation::Old, 1, CountSemantics::EntriesOnly).unwrap();
-        assert_eq!(u.entries.len(), 2, "an export count is the number of copied entries");
+        let mut u =
+            read_unit_di_with(&r, &l, Generation::Old, 1, CountSemantics::EntriesOnly).unwrap();
+        assert_eq!(
+            u.entries.len(),
+            2,
+            "an export count is the number of copied entries"
+        );
         u.data_end_block = Some(27);
         let spans = u.spans(&l, r.len());
-        assert_eq!((spans[1].blocks, spans[1].basis), (7, SpanBasis::ExportDataEnd));
+        assert_eq!(
+            (spans[1].blocks, spans[1].basis),
+            (7, SpanBasis::ExportDataEnd)
+        );
         assert!(!spans[1].basis.is_lower_bound());
     }
 
@@ -796,7 +894,11 @@ mod tests {
         let len = OLD_U1 + 20 * 0x4000;
         let (r, u) = unit_with(3, &[entry(16, 1), entry(100, 2)], len);
         let spans = u.spans(&layout(), r.len());
-        assert_eq!(spans.len(), 1, "the second entry's block is outside the image");
+        assert_eq!(
+            spans.len(),
+            1,
+            "the second entry's block is outside the image"
+        );
         assert!(spans[0].truncated_by_image);
         assert_eq!(spans[0].region.unwrap().end(), Some(len));
     }
@@ -805,25 +907,49 @@ mod tests {
     fn corrupt_headers_are_classified_without_panicking() {
         let l = layout();
         let r = SparseReader::new(OLD_U1 + 0x40000);
-        assert_eq!(read_unit_di(&r, &l, Generation::Old, 1).unwrap().header_state, DiHeaderState::Empty);
+        assert_eq!(
+            read_unit_di(&r, &l, Generation::Old, 1)
+                .unwrap()
+                .header_state,
+            DiHeaderState::Empty
+        );
         // Truncated inside the entry array: count 11 declares 10 entries, 2 are readable.
-        let r = SparseReader::new(OLD_U1 + 0x10 + 0x20)
-            .with(OLD_U1, &build::di_region(0, 11, &[entry(16, 1), entry(17, 2)]));
+        let r = SparseReader::new(OLD_U1 + 0x10 + 0x20).with(
+            OLD_U1,
+            &build::di_region(0, 11, &[entry(16, 1), entry(17, 2)]),
+        );
         let u = read_unit_di(&r, &l, Generation::Old, 1).unwrap();
-        assert_eq!(u.header_state, DiHeaderState::Truncated { available_entries: 2 });
+        assert_eq!(
+            u.header_state,
+            DiHeaderState::Truncated {
+                available_entries: 2
+            }
+        );
         assert_eq!(u.entries.len(), 2);
         // Truncated inside the header.
         let r = SparseReader::new(OLD_U1 + 6).with(OLD_U1, &[1, 2, 3, 4, 5, 6]);
         assert_eq!(
-            read_unit_di(&r, &l, Generation::Old, 1).unwrap().header_state,
-            DiHeaderState::Truncated { available_entries: 0 }
+            read_unit_di(&r, &l, Generation::Old, 1)
+                .unwrap()
+                .header_state,
+            DiHeaderState::Truncated {
+                available_entries: 0
+            }
         );
         // Unit not in the image.
         let r = SparseReader::new(OLD_U1);
-        assert_eq!(read_unit_di(&r, &l, Generation::Old, 1).unwrap().header_state, DiHeaderState::NotPresent);
+        assert_eq!(
+            read_unit_di(&r, &l, Generation::Old, 1)
+                .unwrap()
+                .header_state,
+            DiHeaderState::NotPresent
+        );
         // Count 0 on a non-empty header: no entries, no underflow.
         let (_, u) = unit_with(0, &[entry(16, 1)], OLD_U1 + 0x40000);
-        assert_eq!((u.header.as_ref().unwrap().entry_count, u.entries.len()), (0, 0));
+        assert_eq!(
+            (u.header.as_ref().unwrap().entry_count, u.entries.len()),
+            (0, 0)
+        );
     }
 
     #[test]
@@ -837,7 +963,10 @@ mod tests {
         let (r, u) = unit_with(2, &entries, OLD_U1 + 0x1000_0000);
         let res = scan_residual_slots(&r, &layout(), &u).unwrap();
         assert_eq!(res.len(), 1);
-        assert_eq!((res[0].index, res[0].offset, res[0].sptoi), (2, OLD_U1 + 0x20, 20));
+        assert_eq!(
+            (res[0].index, res[0].offset, res[0].sptoi),
+            (2, OLD_U1 + 0x20, 20)
+        );
         assert_eq!(res[0].timestamp.status, TimestampStatus::Valid);
     }
 }
