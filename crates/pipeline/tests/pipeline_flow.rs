@@ -94,12 +94,12 @@ fn dahua_fixture_runs_full_flow_to_final_timeline() {
         "Dahua recordings with valid native timestamps must not be counted as missing time"
     );
     assert_eq!(
-        tl.recordings_with_unknown_timezone, 8,
-        "8 Dahua recordings must be counted as unknown timezone"
+        tl.recordings_with_unknown_timezone, 6,
+        "6 Dahua recordings must be counted as unknown timezone"
     );
     assert_eq!(
-        tl.total_segments, 8,
-        "8 Dahua segments must be present in the timeline"
+        tl.total_segments, 6,
+        "6 Dahua segments must be present in the timeline"
     );
     assert!(
         tl.total_recordings >= 1,

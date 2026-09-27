@@ -17,4 +17,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [build-dependencies]
-tauri-build = { version = "2", default-features = false }
+tauri-build = { version = "2", default-features = false , features = [] }
