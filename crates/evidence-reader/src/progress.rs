@@ -24,6 +24,16 @@ impl CancellationToken {
         }
     }
 
+    /// Construct a CancellationToken sharing an existing Arc<AtomicBool>.
+    pub fn from_arc(cancelled: Arc<AtomicBool>) -> Self {
+        Self { cancelled }
+    }
+
+    /// Return a clone of the inner Arc<AtomicBool> for inter-crate token sharing.
+    pub fn inner_arc(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
+
     /// Trigger cancellation.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);

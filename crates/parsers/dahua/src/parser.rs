@@ -636,6 +636,47 @@ impl Parser for DahuaParser {
             .map(|f| f.to_container_record())
             .collect())
     }
+
+    fn reconstruction_provider(&self) -> Option<&dyn parsers_core::ReconstructionProvider> {
+        Some(self)
+    }
+}
+
+impl parsers_core::ReconstructionProvider for DahuaParser {
+    fn reconstruct_recording(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+        recording_id: &str,
+    ) -> Result<Option<parsers_core::ReconstructedStream>, ForensicError> {
+        let volume = volume::read_volume(reader, profile)?;
+        let Some(classified) = find_chain(&volume, recording_id) else {
+            return Ok(None);
+        };
+        let reconstruction = reconstruct_recording(reader, profile, &classified.chain)?;
+        if reconstruction.payload_regions.is_empty() {
+            return Err(ForensicError::corrupt(
+                "dahua_reconstruct",
+                format!(
+                    "Dahua chain '{recording_id}' was located but no frame payload could be established in its blocks: {}",
+                    reconstruction.evidence.reason
+                ),
+            ));
+        }
+        let description = format!(
+            "{recording_id}: {} block(s), {} frame(s), {} payload range(s), ordered by {}; {}",
+            reconstruction.block_regions.len(),
+            reconstruction.frames.len(),
+            reconstruction.payload_regions.len(),
+            reconstruction.ordering.label(),
+            reconstruction.evidence.reason
+        );
+        Ok(Some(parsers_core::ReconstructedStream {
+            payload_regions: reconstruction.payload_regions,
+            channel: reconstruction.channel.normalized,
+            description,
+        }))
+    }
 }
 
 /// Reconstruct one Dahua recording chain into ordered frames and payload ranges.

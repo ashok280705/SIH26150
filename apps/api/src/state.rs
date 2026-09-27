@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::config::AppConfig;
+use crate::jobs::JobCoordinator;
 use evidence_reader::EvidenceReader;
 use forensic_core::profile::ProfileRegistry;
 use forensic_core::write_guard::WriteGuard;
@@ -27,21 +29,35 @@ pub struct AppState {
     /// a single pool of FFmpeg permits for the whole service, rather than one per request.
     pub media_pipeline: Arc<MediaPipeline>,
     pub write_guard: Arc<WriteGuard>,
+    pub config: Arc<AppConfig>,
+    pub jobs: Arc<JobCoordinator>,
 }
 
 impl AppState {
     pub fn new(db_pool: SqlitePool) -> Self {
-        // Load profiles from the `profiles` directory at startup
-        let registry = ProfileRegistry::load_from_dir(std::path::Path::new("profiles")).unwrap_or_else(|e| {
-            tracing::warn!("Failed to load profiles from 'profiles' dir: {e}. Falling back to empty registry.");
+        Self::new_with_config(db_pool, AppConfig::default())
+    }
+
+    pub fn new_with_config(db_pool: SqlitePool, config: AppConfig) -> Self {
+        let registry = ProfileRegistry::load_from_dir(&config.profiles_dir).unwrap_or_else(|e| {
+            tracing::warn!(
+                "Failed to load profiles from '{}': {e}. Falling back to empty registry.",
+                config.profiles_dir.display()
+            );
             ProfileRegistry::from_profiles(vec![])
         });
-        let ffmpeg_service = Arc::new(FfmpegService::default());
-        // No analysis engine is registered, so the media pipeline reports
-        // AI_ANALYSIS_NOT_CONFIGURED and produces no findings. That is the honest state until
-        // a real engine exists; nothing here fabricates detections in its absence.
+
+        let ffmpeg_service = Arc::new(match &config.ffmpeg_path {
+            Some(p) => FfmpegService::discover(Some(p)),
+            None => FfmpegService::default(),
+        });
+
         let media_pipeline = Arc::new(MediaPipeline::default());
-        let write_guard = Arc::new(WriteGuard::new("evidence_samples", "artifacts"));
+        let write_guard = Arc::new(WriteGuard::new(
+            config.evidence_samples_dir.to_string_lossy().as_ref(),
+            config.artifacts_dir.to_string_lossy().as_ref(),
+        ));
+        let jobs = Arc::new(JobCoordinator::new());
 
         Self {
             db_pool,
@@ -50,6 +66,8 @@ impl AppState {
             ffmpeg_service,
             media_pipeline,
             write_guard,
+            config: Arc::new(config),
+            jobs,
         }
     }
 }

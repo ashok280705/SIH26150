@@ -141,4 +141,9 @@ pub trait Parser: Send + Sync {
     ) -> Result<Vec<ContainerRecord>, ForensicError> {
         Ok(Vec::new())
     }
+
+    /// Access the reconstruction provider for this parser, if supported.
+    fn reconstruction_provider(&self) -> Option<&dyn crate::reconstruction::ReconstructionProvider> {
+        None
+    }
 }

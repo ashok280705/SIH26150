@@ -1,9 +1,64 @@
 import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording, ExaminerTimezone } from '../types';
+import { normalizeDetectionResponse } from './adapters/detection';
+import { RecoveryResponse, UnifiedTimelineResponse, OrderingMode, PipelineRun } from '../types';
+import { FfmpegInfo, ArtifactRecord, ArtifactVerificationResult, ReconstructResponse } from '../types';
+import { GapRecoveryRequest, GapRecoveryResponse } from '../types';
 
-const API_BASE = '/api';
+declare global {
+  interface Window {
+    __VIDFORGE_API_BASE__?: string;
+    __VIDFORGE_AUTH_TOKEN__?: string;
+  }
+}
+
+/**
+ * Resolves the base URL for the backend API according to priority:
+ * 1. Desktop runtime injection: `window.__VIDFORGE_API_BASE__`
+ * 2. Vite environment variable: `import.meta.env.VITE_API_BASE`
+ * 3. Default fallback for development/browser mode: `'/api'`
+ */
+export function getApiBase(): string {
+  if (typeof window !== 'undefined' && window.__VIDFORGE_API_BASE__) {
+    return window.__VIDFORGE_API_BASE__.replace(/\/+$/, '');
+  }
+  const envBase = (import.meta as any).env?.VITE_API_BASE;
+  if (envBase) {
+    return envBase.replace(/\/+$/, '');
+  }
+  return '/api';
+}
+
+function getHeaders(customHeaders?: HeadersInit): Headers {
+  const headers = new Headers(customHeaders || {});
+  if (typeof window !== 'undefined' && window.__VIDFORGE_AUTH_TOKEN__) {
+    headers.set('Authorization', `Bearer ${window.__VIDFORGE_AUTH_TOKEN__}`);
+  }
+  return headers;
+}
+
+/**
+ * Unified fetch wrapper ensuring all API requests:
+ * - Route to the configured runtime base (`getApiBase()`)
+ * - Inject Authorization headers if desktop/session authentication is configured
+ * - Strip duplicate `/api` path segments seamlessly
+ */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const base = getApiBase();
+  const cleanPath = path.startsWith('/api/')
+    ? path.slice(4)
+    : path === '/api'
+    ? ''
+    : path.startsWith('/')
+    ? path
+    : `/${path}`;
+
+  const url = `${base}${cleanPath}`;
+  const headers = getHeaders(init?.headers);
+  return fetch(url, { ...init, headers });
+}
 
 export async function createCase(data: { name: string; description: string; examiner: string }): Promise<Case> {
-  const res = await fetch(`${API_BASE}/cases`, {
+  const res = await apiFetch('/cases', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -16,7 +71,7 @@ export async function createCase(data: { name: string; description: string; exam
 }
 
 export async function listCases(): Promise<Case[]> {
-  const res = await fetch(`${API_BASE}/cases`);
+  const res = await apiFetch('/cases');
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to list cases');
@@ -26,7 +81,7 @@ export async function listCases(): Promise<Case[]> {
 
 export async function getCase(id: string): Promise<Case> {
   const cleanId = id.replace('case-', '');
-  const res = await fetch(`${API_BASE}/cases/${cleanId}`);
+  const res = await apiFetch(`/cases/${cleanId}`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get case');
@@ -36,7 +91,7 @@ export async function getCase(id: string): Promise<Case> {
 
 export async function registerEvidence(caseId: string, input: any): Promise<{ evidence: Evidence; acquisition?: Acquisition; ingest_hash: string }> {
   const cleanId = caseId.replace('case-', '');
-  const res = await fetch(`${API_BASE}/cases/${cleanId}/evidence`, {
+  const res = await apiFetch(`/cases/${cleanId}/evidence`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -50,7 +105,7 @@ export async function registerEvidence(caseId: string, input: any): Promise<{ ev
 
 export async function listCaseEvidence(caseId: string): Promise<Evidence[]> {
   const cleanId = caseId.replace('case-', '');
-  const res = await fetch(`${API_BASE}/cases/${cleanId}/evidence`);
+  const res = await apiFetch(`/cases/${cleanId}/evidence`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to list case evidence');
@@ -60,7 +115,7 @@ export async function listCaseEvidence(caseId: string): Promise<Evidence[]> {
 
 export async function getEvidence(id: string): Promise<Evidence> {
   const cleanId = id.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}`);
+  const res = await apiFetch(`/evidence/${cleanId}`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get evidence');
@@ -70,7 +125,7 @@ export async function getEvidence(id: string): Promise<Evidence> {
 
 export async function getSourceSafety(evidenceId: string): Promise<SourceSafetyReport> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/safety`);
+  const res = await apiFetch(`/evidence/${cleanId}/safety`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get source safety report');
@@ -80,7 +135,7 @@ export async function getSourceSafety(evidenceId: string): Promise<SourceSafetyR
 
 export async function getCustodyLog(caseId: string): Promise<CustodyEvent[]> {
   const cleanId = caseId.replace('case-', '');
-  const res = await fetch(`${API_BASE}/cases/${cleanId}/custody`);
+  const res = await apiFetch(`/cases/${cleanId}/custody`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get chain of custody log');
@@ -90,7 +145,7 @@ export async function getCustodyLog(caseId: string): Promise<CustodyEvent[]> {
 
 export async function readEvidenceBytes(evidenceId: string, offset: number, length: number): Promise<HexChunkResponse> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/bytes?offset=${offset}&length=${length}`);
+  const res = await apiFetch(`/evidence/${cleanId}/bytes?offset=${offset}&length=${length}`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to read bytes');
@@ -100,7 +155,7 @@ export async function readEvidenceBytes(evidenceId: string, offset: number, leng
 
 export async function searchEvidence(evidenceId: string, offset: string | number, term: string, searchType: 'hex' | 'ascii'): Promise<{ found_offset: number | null }> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/search?offset=${offset}&term=${encodeURIComponent(term)}&search_type=${searchType}`);
+  const res = await apiFetch(`/evidence/${cleanId}/search?offset=${offset}&term=${encodeURIComponent(term)}&search_type=${searchType}`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to search bytes');
@@ -109,7 +164,7 @@ export async function searchEvidence(evidenceId: string, offset: string | number
 }
 
 export async function getCapabilities(): Promise<Record<string, CapabilityStages>> {
-  const res = await fetch(`${API_BASE}/capabilities`);
+  const res = await apiFetch('/capabilities');
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get capabilities');
@@ -117,11 +172,9 @@ export async function getCapabilities(): Promise<Record<string, CapabilityStages
   return res.json();
 }
 
-import { normalizeDetectionResponse } from './adapters/detection';
-
 export async function runDetection(evidenceId: string): Promise<ClassifiedDetectionResult[]> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/detection`, { method: 'POST' });
+  const res = await apiFetch(`/evidence/${cleanId}/detection`, { method: 'POST' });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to run detection');
@@ -135,7 +188,7 @@ export async function runDetection(evidenceId: string): Promise<ClassifiedDetect
 
 export async function getTopology(evidenceId: string): Promise<StorageTopology> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/topology`);
+  const res = await apiFetch(`/evidence/${cleanId}/topology`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get topology');
@@ -145,7 +198,7 @@ export async function getTopology(evidenceId: string): Promise<StorageTopology> 
 
 export async function runParsing(evidenceId: string, oemKey: string): Promise<{ parser_runs: ParserRun[], recordings: Recording[], timeline_events: any[] }> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/parsing`, {
+  const res = await apiFetch(`/evidence/${cleanId}/parsing`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ oem_key: oemKey })
@@ -157,15 +210,12 @@ export async function runParsing(evidenceId: string, oemKey: string): Promise<{ 
   return res.json();
 }
 
-import { RecoveryResponse, UnifiedTimelineResponse, OrderingMode, PipelineRun } from '../types';
-
 /**
- * Runs the entire forensic pipeline in one pass and returns the audited run:
- * every stage, every gate decision, attribution, timelines, and recovery.
+ * Runs the entire forensic pipeline in one pass synchronously and returns the audited run.
  */
 export async function runFullPipeline(evidenceId: string): Promise<PipelineRun> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/pipeline/run`, {
+  const res = await apiFetch(`/evidence/${cleanId}/pipeline/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -176,13 +226,73 @@ export async function runFullPipeline(evidenceId: string): Promise<PipelineRun> 
   return res.json();
 }
 
+export interface PipelineJobProgress {
+  stage: string;
+  stage_name: string;
+  stage_index: number;
+  total_stages: number;
+  description: string;
+  fraction?: number;
+}
+
+export interface PipelineJobStatus {
+  job_id: string;
+  evidence_id: string;
+  state: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed';
+  stage?: string;
+  progress?: PipelineJobProgress;
+  error?: string;
+  result?: PipelineRun;
+}
+
+/**
+ * Starts an asynchronous pipeline run job for the evidence.
+ */
+export async function startPipelineJob(evidenceId: string): Promise<{ job_id: string; state: string }> {
+  const cleanId = evidenceId.replace('evidence-', '');
+  const res = await apiFetch(`/evidence/${cleanId}/pipeline/start`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to start pipeline job');
+  }
+  return res.json();
+}
+
+/**
+ * Queries the current progress, state, and outcome of an asynchronous pipeline job.
+ */
+export async function getPipelineJobStatus(jobId: string): Promise<PipelineJobStatus> {
+  const res = await apiFetch(`/jobs/${jobId}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to query pipeline job');
+  }
+  return res.json();
+}
+
+/**
+ * Requests cancellation of an asynchronous pipeline job.
+ */
+export async function cancelPipelineJob(jobId: string): Promise<{ job_id: string; state: string; message: string }> {
+  const res = await apiFetch(`/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to cancel pipeline job');
+  }
+  return res.json();
+}
+
 /** Fetch the generated report as text plus its self-verifying hash and id. */
 export async function fetchReport(
   evidenceId: string,
   format: 'json' | 'markdown' | 'csv' = 'json'
 ): Promise<{ body: string; reportId: string | null; sha256: string | null; contentType: string }> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/report?format=${format}`);
+  const res = await apiFetch(`/evidence/${cleanId}/report?format=${format}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to generate report');
@@ -201,7 +311,7 @@ export async function fetchReport(
  */
 export async function runRecovery(evidenceId: string, oemKey?: string): Promise<RecoveryResponse> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/recovery`, {
+  const res = await apiFetch(`/evidence/${cleanId}/recovery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(oemKey ? { oem_key: oemKey } : {})
@@ -225,7 +335,7 @@ export async function getTimeline(
   const cleanId = evidenceId.replace('evidence-', '');
   const params = new URLSearchParams({ ordering });
   if (oemKey) params.set('oem_key', oemKey);
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timeline?${params.toString()}`);
+  const res = await apiFetch(`/evidence/${cleanId}/timeline?${params.toString()}`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to load timeline');
@@ -233,10 +343,8 @@ export async function getTimeline(
   return res.json();
 }
 
-import { FfmpegInfo, ArtifactRecord, ArtifactVerificationResult, ReconstructResponse } from '../types';
-
 export async function getFfmpegStatus(): Promise<FfmpegInfo> {
-  const res = await fetch(`${API_BASE}/ffmpeg/status`);
+  const res = await apiFetch('/ffmpeg/status');
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to get FFmpeg status');
@@ -267,12 +375,9 @@ export async function reconstructRecording(
   payload?: ReconstructPayload
 ): Promise<ReconstructResponse> {
   const cleanEvId = evidenceId.replace('evidence-', '');
-  // The recording id is sent as given. It used to be replaced by a random UUID whenever it
-  // was not one already, which detached the exported artifact from the recording it came
-  // from. OEM ids contain ':' and similar, so it is URL-encoded instead.
   const recPath = encodeURIComponent(recordingId);
 
-  const res = await fetch(`${API_BASE}/evidence/${cleanEvId}/recordings/${recPath}/reconstruct`, {
+  const res = await apiFetch(`/evidence/${cleanEvId}/recordings/${recPath}/reconstruct`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload || {}),
@@ -285,7 +390,7 @@ export async function reconstructRecording(
 }
 
 export async function getArtifact(artifactId: string): Promise<ArtifactRecord> {
-  const res = await fetch(`${API_BASE}/artifacts/${artifactId}`);
+  const res = await apiFetch(`/artifacts/${artifactId}`);
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to fetch artifact');
@@ -293,28 +398,26 @@ export async function getArtifact(artifactId: string): Promise<ArtifactRecord> {
   return res.json();
 }
 
-import { GapRecoveryRequest, GapRecoveryResponse } from '../types';
-
 /**
  * Runs a staged L1->L2->L3 recovery over one detected gap's byte region and returns
  * which time sub-ranges were recovered at which level and which remain missing.
  */
 export async function recoverGap(evidenceId: string, req: GapRecoveryRequest): Promise<GapRecoveryResponse> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/recovery/gap`, {
+  const res = await apiFetch(`/evidence/${cleanId}/recovery/gap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to recover gap');
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to run gap recovery');
   }
   return res.json();
 }
 
 export async function verifyArtifact(artifactId: string): Promise<ArtifactVerificationResult> {
-  const res = await fetch(`${API_BASE}/artifacts/${artifactId}/verify`, { method: 'POST' });
+  const res = await apiFetch(`/artifacts/${artifactId}/verify`, { method: 'POST' });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to verify artifact');
@@ -324,21 +427,21 @@ export async function verifyArtifact(artifactId: string): Promise<ArtifactVerifi
 
 export async function listEvidenceArtifacts(evidenceId: string): Promise<ArtifactRecord[]> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/artifacts`);
+  const res = await apiFetch(`/evidence/${cleanId}/artifacts`);
   if (!res.ok) {
     const err = await res.json();
-    throw new Error(err.error || 'Failed to list artifacts');
+    throw new Error(err.error || 'Failed to fetch evidence artifacts');
   }
   return res.json();
 }
 
-/** Sets or updates the examiner-established timezone assertion for evidence. */
+/** Assigns an examiner-established timezone to an evidence image. */
 export async function setEvidenceTimezone(
   evidenceId: string,
-  payload: { timezone: string; source: string; established_by?: string; examiner?: string; notes?: string }
+  payload: { timezone: string; source: string; examiner?: string; established_by?: string; notes?: string }
 ): Promise<ExaminerTimezone> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`, {
+  const res = await apiFetch(`/evidence/${cleanId}/timezone`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -355,7 +458,7 @@ export async function clearEvidenceTimezone(
   evidenceId: string
 ): Promise<{ status: string; message: string }> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`, {
+  const res = await apiFetch(`/evidence/${cleanId}/timezone`, {
     method: 'DELETE',
   });
   if (!res.ok) {
@@ -370,7 +473,7 @@ export async function getEvidenceTimezone(
   evidenceId: string
 ): Promise<{ evidence_id: string; examiner_timezone: ExaminerTimezone | null }> {
   const cleanId = evidenceId.replace('evidence-', '');
-  const res = await fetch(`${API_BASE}/evidence/${cleanId}/timezone`);
+  const res = await apiFetch(`/evidence/${cleanId}/timezone`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to get evidence timezone');

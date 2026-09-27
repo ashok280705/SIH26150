@@ -265,6 +265,14 @@ impl CancelToken {
         }
     }
 
+    pub fn from_arc(is_cancelled: Arc<AtomicBool>) -> Self {
+        Self { is_cancelled }
+    }
+
+    pub fn inner_arc(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.is_cancelled)
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.is_cancelled.load(Ordering::SeqCst)
     }

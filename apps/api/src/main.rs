@@ -12,8 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // if it has been installed under vendor/ollama. This never blocks or fails startup.
     spawn_bundled_ollama();
 
-    let db_pool = forensic_api::db::connection::init_pool("sqlite:forensic_metadata.db").await?;
-    let state = AppState::new(db_pool);
+    let config = forensic_api::AppConfig::from_env_or_cwd();
+    let db_pool = forensic_api::db::connection::init_pool(&config.database_url).await?;
+    let state = AppState::new_with_config(db_pool, config);
     let app = app_router(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;

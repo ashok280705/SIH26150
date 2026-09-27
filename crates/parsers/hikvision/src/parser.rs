@@ -662,6 +662,44 @@ impl Parser for HikvisionParser {
             .map(|c| c.to_container_record())
             .collect())
     }
+
+    fn reconstruction_provider(&self) -> Option<&dyn parsers_core::ReconstructionProvider> {
+        Some(self)
+    }
+}
+
+impl parsers_core::ReconstructionProvider for HikvisionParser {
+    fn reconstruct_recording(
+        &self,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+        recording_id: &str,
+    ) -> Result<Option<parsers_core::ReconstructedStream>, ForensicError> {
+        let volume = volume::read_volume(reader, profile)?;
+        let Some(reconstruction) = reconstruct_recording(reader, profile, &volume, recording_id)? else {
+            return Ok(None);
+        };
+        if reconstruction.payload_regions.is_empty() {
+            return Err(ForensicError::corrupt(
+                "hikvision_reconstruct",
+                format!(
+                    "Hikvision recording '{recording_id}' was located but no MPEG-PS video payload could be established in its clip(s): {}",
+                    reconstruction.evidence.reason
+                ),
+            ));
+        }
+        let description = format!(
+            "{}; {}; {}",
+            reconstruction.description(),
+            reconstruction.normalization.summary(),
+            reconstruction.evidence.reason
+        );
+        Ok(Some(parsers_core::ReconstructedStream {
+            payload_regions: reconstruction.export_regions().to_vec(),
+            channel: reconstruction.channel.unwrap_or(0),
+            description,
+        }))
+    }
 }
 
 /// Reconstruct one Hikvision recording into ordered clips and payload ranges.

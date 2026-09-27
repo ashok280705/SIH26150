@@ -1,6 +1,5 @@
 use confidence::config::ConfidenceConfig;
 use confidence::engine::ConfidenceEngine;
-use confidence::result::AttributionStatus;
 use detection::orchestrator::DetectionOrchestrator;
 use detection::topology::{StorageTopologyProfiler, TopologyType};
 use evidence_reader::{EvidenceReader, RawReader};

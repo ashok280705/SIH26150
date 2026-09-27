@@ -2,10 +2,10 @@
 //!
 //! Provides safe, bounded, read-only memory mappings for evidence chunks (Req 8.4, 1.6).
 //!
-//! **Platform support: Unix-only.** The actual mapping path is gated behind
-//! `#[cfg(unix)]` and uses `mmap(2)` with `PROT_READ`/`MAP_PRIVATE`. There is currently
-//! no Windows implementation; on non-Unix targets [`ReadOnlyMmap::map_region`] returns an
-//! error rather than mapping. A Windows (`PAGE_READONLY`) backend is not implemented.
+//! **Platform support:**
+//! - **Unix**: uses `mmap(2)` with `PROT_READ` and `MAP_PRIVATE`.
+//! - **Windows**: uses `CreateFileMappingW` (`PAGE_READONLY`) and `MapViewOfFile` (`FILE_MAP_READ`)
+//!   aligned to system allocation granularity (`dwAllocationGranularity`).
 //!
 //! Key invariants:
 //! - Mappings are strictly read-only (`PROT_READ`).
@@ -91,11 +91,96 @@ impl ReadOnlyMmap {
             })
         }
 
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+            use windows_sys::Win32::System::Memory::{
+                CreateFileMappingW, MapViewOfFile, FILE_MAP_READ, PAGE_READONLY,
+            };
+            use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+
+            let handle = _file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+
+            let mut sys_info: SYSTEM_INFO = unsafe { std::mem::zeroed() };
+            unsafe { GetSystemInfo(&mut sys_info) };
+            let alloc_granularity = if sys_info.dwAllocationGranularity == 0 {
+                65536
+            } else {
+                sys_info.dwAllocationGranularity as u64
+            };
+
+            let aligned_offset = (region.offset / alloc_granularity) * alloc_granularity;
+            let offset_in_map = (region.offset - aligned_offset) as usize;
+            let mapped_len = offset_in_map + region.length as usize;
+
+            let mapping = unsafe {
+                CreateFileMappingW(
+                    handle,
+                    std::ptr::null(),
+                    PAGE_READONLY,
+                    0,
+                    0,
+                    std::ptr::null(),
+                )
+            };
+
+            if mapping == std::ptr::null_mut() {
+                let err = unsafe { GetLastError() };
+                return Err(ForensicError::io(
+                    format!(
+                        "CreateFileMappingW region [0x{:X}..0x{:X})",
+                        region.offset,
+                        region.offset + region.length
+                    ),
+                    std::io::Error::from_raw_os_error(err as i32),
+                ));
+            }
+
+            let offset_high = (aligned_offset >> 32) as u32;
+            let offset_low = (aligned_offset & 0xFFFFFFFF) as u32;
+
+            let ptr = unsafe {
+                MapViewOfFile(
+                    mapping,
+                    FILE_MAP_READ,
+                    offset_high,
+                    offset_low,
+                    mapped_len,
+                )
+            };
+
+            // Mapping handle can be closed immediately; the view keeps the mapping object alive
+            unsafe {
+                CloseHandle(mapping);
+            }
+
+            let raw_ptr = ptr.Value as *mut u8;
+            let non_null = NonNull::new(raw_ptr).ok_or_else(|| {
+                let err = unsafe { GetLastError() };
+                ForensicError::io(
+                    format!(
+                        "MapViewOfFile region [0x{:X}..0x{:X})",
+                        region.offset,
+                        region.offset + region.length
+                    ),
+                    std::io::Error::from_raw_os_error(err as i32),
+                )
+            })?;
+
+            Ok(Self {
+                ptr: non_null,
+                mapped_len,
+                region,
+                offset_in_map,
+            })
+        }
+
+        #[cfg(not(any(unix, windows)))]
         {
             Err(ForensicError::UnsupportedFormat {
                 format: "mmap".into(),
-                reason: "mmap is only supported on Unix targets in this build".into(),
+                reason: "mmap is only supported on Unix and Windows targets in this build".into(),
             })
         }
     }
@@ -133,6 +218,14 @@ impl Drop for ReadOnlyMmap {
         #[cfg(unix)]
         unsafe {
             libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.mapped_len);
+        }
+        #[cfg(windows)]
+        unsafe {
+            windows_sys::Win32::System::Memory::UnmapViewOfFile(
+                windows_sys::Win32::System::Memory::MEMORY_MAPPED_VIEW_ADDRESS {
+                    Value: self.ptr.as_ptr() as *mut _,
+                },
+            );
         }
     }
 }

@@ -284,12 +284,52 @@ pub async fn get_or_open_reader(
             details: None,
         })?;
 
-    let reader = RawReader::open(&evidence.path).map_err(|e| ApiError {
-        error: format!("failed to open evidence at '{}': {e}", evidence.path),
-        details: None,
-    })?;
+    let reader_arc: Arc<dyn evidence_reader::EvidenceReader> = {
+        let is_device = evidence.path.starts_with(r"\\.\") || evidence.path.starts_with("/dev/");
+        if is_device {
+            #[cfg(windows)]
+            {
+                Arc::new(
+                    evidence_reader::WindowsPhysicalReader::open(&evidence.path).map_err(|e| {
+                        ApiError {
+                            error: format!(
+                                "failed to open physical device at '{}': {e}",
+                                evidence.path
+                            ),
+                            details: None,
+                        }
+                    })?,
+                )
+            }
+            #[cfg(unix)]
+            {
+                Arc::new(
+                    RawReader::open_device(&evidence.path).map_err(|e| ApiError {
+                        error: format!(
+                            "failed to open physical device at '{}': {e}",
+                            evidence.path
+                        ),
+                        details: None,
+                    })?,
+                )
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                return Err(ApiError {
+                    error: "physical device access not supported on this platform".into(),
+                    details: None,
+                });
+            }
+        } else {
+            Arc::new(
+                RawReader::open(&evidence.path).map_err(|e| ApiError {
+                    error: format!("failed to open evidence at '{}': {e}", evidence.path),
+                    details: None,
+                })?,
+            )
+        }
+    };
 
-    let reader_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(reader);
     let mut readers_write = state.readers.write().await;
     readers_write.insert(*evidence_id, reader_arc.clone());
     Ok(reader_arc)
@@ -592,7 +632,6 @@ pub struct ReconstructPayload {
 ///
 /// This is the smallest interface that lets an **engine-discovered** recording be exported.
 /// Without it the export layer could only take one contiguous range, so a multi-block recording
-/// was not exportable at all without fabricating a recording row for it.
 #[allow(clippy::type_complexity)]
 fn reconstruct_oem_chain(
     state: &AppState,
@@ -608,79 +647,12 @@ fn reconstruct_oem_chain(
         None => return Ok(None),
     };
 
-    if oem_key.eq_ignore_ascii_case("dahua") {
-        let volume = parser_dahua::volume::read_volume(reader, profile).map_err(map_err)?;
-        let Some(classified) = parser_dahua::find_chain(&volume, chain_id) else {
-            return Ok(None);
-        };
-        let reconstruction =
-            parser_dahua::reconstruct_recording(reader, profile, &classified.chain)
-                .map_err(map_err)?;
-        if reconstruction.payload_regions.is_empty() {
-            return Err(ApiError {
-                error: format!(
-                    "Dahua chain '{chain_id}' was located but no frame payload could be established \
-                     in its blocks"
-                ),
-                details: Some(reconstruction.evidence.reason.clone()),
-            });
-        }
-        let description = format!(
-            "{chain_id}: {} block(s), {} frame(s), {} payload range(s), ordered by {}; {}",
-            reconstruction.block_regions.len(),
-            reconstruction.frames.len(),
-            reconstruction.payload_regions.len(),
-            reconstruction.ordering.label(),
-            reconstruction.evidence.reason
-        );
-        return Ok(Some((
-            reconstruction.payload_regions.clone(),
-            reconstruction.channel.normalized,
-            description,
-        )));
-    }
+    let orchestrator = ParsingOrchestrator::new();
+    let stream = orchestrator
+        .reconstruct_recording(oem_key, reader, profile, chain_id)
+        .map_err(map_err)?;
 
-    if oem_key.eq_ignore_ascii_case("hikvision") {
-        // `chain_id` here is the recording id the Hikvision index assigned — a clip id of the
-        // form `hikclip:b<block>:s<slot>:<offset>`. It is used as given and never regenerated,
-        // so the exported artifact traces back to the exact discovery the engine reported.
-        let volume = parser_hikvision::volume::read_volume(reader, profile).map_err(map_err)?;
-        let Some(reconstruction) =
-            parser_hikvision::reconstruct_recording(reader, profile, &volume, chain_id)
-                .map_err(map_err)?
-        else {
-            return Ok(None);
-        };
-        if reconstruction.payload_regions.is_empty() {
-            return Err(ApiError {
-                error: format!(
-                    "Hikvision recording '{chain_id}' was located but no MPEG-PS video payload \
-                     could be established in its clip(s)"
-                ),
-                details: Some(reconstruction.evidence.reason.clone()),
-            });
-        }
-        let description = format!(
-            "{}; {}; {}",
-            reconstruction.description(),
-            reconstruction.normalization.summary(),
-            reconstruction.evidence.reason
-        );
-        return Ok(Some((
-            // The normalized ranges: payload with any leading partial NAL dropped and late
-            // parameter sets placed first. Every range is still an evidence range.
-            reconstruction.export_regions().to_vec(),
-            // A recording whose clips disagree about the channel, or establish none, must not be
-            // exported as channel 0 silently — the description and the parser evidence carry the
-            // disagreement, and channel 0 is the platform's "unknown channel" value.
-            reconstruction.channel.unwrap_or(0),
-            description,
-        )));
-    }
-
-    // Every other OEM has no reconstruction path yet. Returning `None` lets the caller fall
-    // through to an explicit range list rather than silently exporting some other OEM's bytes.
-    Ok(None)
+    Ok(stream.map(|s| (s.payload_regions, s.channel, s.description)))
 }
 
 /// The recording id a candidate can post back as `recording_chain_id`, when
@@ -1995,26 +1967,28 @@ pub async fn recover_gap(
     // When the caller attributes the gap to Hikvision, carve it with the Hikvision structural
     // carver first. Hikvision video sits inside MPEG-PS framing, so a slot is judged by the
     // container candidates that actually overlap it — at their real extents — rather than by
-    // whether an arbitrary slice of it happens to contain a start code.
-    let hikvision_carve = if req
-        .oem_key
-        .as_deref()
-        .is_some_and(|k| k.eq_ignore_ascii_case("hikvision"))
-        && scan_end > scan_start
-    {
-        let profile = state
-            .profile_registry
-            .find_applicable("hikvision", None, None, None)
-            .ok_or_else(|| ApiError {
-                error: "no Hikvision profile is registered".to_string(),
-                details: Some("gap carving needs the Hikvision profile's structure layout".into()),
-            })?;
-        let region =
-            forensic_core::Region::new(scan_start, scan_end - scan_start).map_err(map_err)?;
-        Some(
-            parser_hikvision::carve::carve_region(reader.as_ref(), profile, region)
-                .map_err(map_err)?,
-        )
+    // When the caller specifies an OEM key, carve the gap with that OEM's structural
+    // carver first. Candidates that actually overlap the slot — at their real extents —
+    // are judged directly rather than by whether an arbitrary slice happens to contain a start code.
+    let oem_carve_candidates = if let Some(oem_key) = req.oem_key.as_deref() {
+        if scan_end > scan_start {
+            if let Some(profile) = state.profile_registry.find_applicable(oem_key, None, None, None) {
+                let orchestrator = ParsingOrchestrator::new();
+                if let Some(parser) = orchestrator.parser_for(oem_key) {
+                    if let Ok(region) = forensic_core::Region::new(scan_start, scan_end - scan_start) {
+                        parser.scan_region_for_candidates(reader.as_ref(), profile, region).ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -2027,23 +2001,22 @@ pub async fn recover_gap(
             slot_bytes
         };
 
-        if let Some(carve) = &hikvision_carve {
+        if let Some(candidates) = &oem_carve_candidates {
             let slot = forensic_core::Region {
                 offset: off,
                 length: this_len,
             };
-            let overlapping: Vec<&parser_hikvision::CarvedCandidate> = carve
-                .candidates
+            let overlapping: Vec<&parsing::ContainerRecord> = candidates
                 .iter()
-                .filter(|c| c.region.overlaps(&slot))
+                .filter(|c| c.physical_region.overlaps(&slot))
                 .collect();
             if !overlapping.is_empty() {
                 let best = overlapping
                     .iter()
-                    .find(|c| c.recoverable)
+                    .find(|c| c.evidence.state == forensic_core::ValidationStateKind::Pass)
                     .copied()
                     .unwrap_or(overlapping[0]);
-                let recoverable = best.recoverable;
+                let recoverable = best.evidence.state == forensic_core::ValidationStateKind::Pass;
                 let (data_state, status) = if recoverable {
                     // No index evidence here either: present and structurally valid, but not
                     // linked to an index entry. Never Active, never Deleted.
@@ -2058,6 +2031,11 @@ pub async fn recover_gap(
                     )
                 };
                 recovered_slots += 1;
+                let nal_count = best
+                    .oem_metadata
+                    .get("hikvision_carve_part_count")
+                    .and_then(|s: &String| s.parse::<usize>().ok())
+                    .unwrap_or(0);
                 slots.push(GapSlotDto {
                     index: k,
                     level: Some("L3".to_string()),
@@ -2066,21 +2044,16 @@ pub async fn recover_gap(
                     start_offset_sec: (k as i64) * nominal,
                     end_offset_sec: ((k as i64) + 1) * nominal,
                     offset: off,
-                    data_offset: best.region.offset.max(off),
+                    data_offset: best.physical_region.offset.max(off),
                     length: this_len,
-                    codec: best.codec.codec.label().to_string(),
-                    nal_unit_count: best.codec.h264_nals.values().sum::<usize>()
-                        + best.codec.h265_nals.values().sum::<usize>(),
+                    codec: best.codec_hint.clone().unwrap_or_else(|| "H.264".to_string()),
+                    nal_unit_count: nal_count,
                     validation_state: format!("{:?}", best.evidence.state),
                     reason: format!(
-                        "Hikvision MPEG-PS candidate {} overlaps this slot ({} of {} corroborating \
-                         conditions met, {} payload byte(s)); {}. Located by structural carving \
-                         with no index evidence, so it is not linked to a recording entry. This is \
-                         not evidence of deletion.",
-                        best.candidate_id(),
-                        best.satisfied_count,
-                        best.conditions.len(),
-                        best.payload_bytes(),
+                        "Structural carve candidate overlaps this slot ({} payload byte(s)); {}. \
+                         Located by structural carving with no index evidence, so it is not linked to a recording entry. \
+                         This is not evidence of deletion.",
+                        best.payload_region.map(|r| r.length).unwrap_or(0),
                         best.evidence.reason
                     ),
                 });
@@ -2336,6 +2309,162 @@ pub async fn run_full_pipeline(
     }
 
     Ok(Json(serde_json::to_value(run).unwrap()))
+}
+
+/// POST /api/evidence/:id/pipeline/start
+///
+/// Starts an asynchronous pipeline run job and returns the job ID immediately.
+pub async fn start_pipeline_job(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<crate::jobs::JobStartResponse>, ApiError> {
+    let evidence_id = EvidenceId(id);
+    let reader = get_or_open_reader(&state, &evidence_id).await?;
+
+    let evidence = repositories::evidence::get_evidence(&state.db_pool, &evidence_id)
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| ApiError {
+            error: format!("evidence '{evidence_id}' not found"),
+            details: None,
+        })?;
+
+    let (job_id, entry, cancel_token) = state.jobs.create_job(evidence_id).await;
+
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        {
+            let mut guard = entry.write().await;
+            guard.state = crate::jobs::JobState::Running;
+        }
+
+        let config = ConfidenceConfig::provisional_default();
+        let mut options = PipelineOptions::default();
+        options.examiner_timezone = evidence.examiner_timezone.clone();
+
+        let (progress_tx, mut progress_rx) =
+            tokio::sync::mpsc::unbounded_channel::<pipeline::PipelineProgress>();
+        let entry_for_progress = entry.clone();
+        tokio::spawn(async move {
+            while let Some(p) = progress_rx.recv().await {
+                let stage_name = p.stage_name.clone();
+                let p_info = crate::jobs::JobProgressInfo::from(p);
+                let mut guard = entry_for_progress.write().await;
+                guard.stage = Some(stage_name);
+                guard.progress = Some(p_info);
+            }
+        });
+
+        let progress_cb = move |p: pipeline::PipelineProgress| {
+            let _ = progress_tx.send(p);
+        };
+
+        let result = tokio::task::spawn_blocking(move || {
+            pipeline::run_pipeline_with_progress(
+                evidence_id,
+                reader.as_ref(),
+                &state_clone.profile_registry,
+                &config,
+                &options,
+                Some(&cancel_token),
+                Some(&progress_cb),
+            )
+        })
+        .await;
+
+        match result {
+            Ok(Ok(run)) => {
+                if let Some(parsing) = &run.parsing {
+                    for prun in &parsing.parser_runs {
+                        let run_id = uuid::Uuid::new_v4();
+                        let val_json =
+                            serde_json::to_value(&prun.validation_state).unwrap_or_default();
+                        let _ = sqlx::query(
+                            r#"
+                            INSERT INTO parser_runs (id, evidence_id, parser_id, parser_version, profile_id, profile_hash, operation_name, validation_state)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                            "#,
+                        )
+                        .bind(run_id)
+                        .bind(evidence_id.0)
+                        .bind(&prun.parser_id)
+                        .bind(&prun.parser_version)
+                        .bind(&prun.profile_id.0)
+                        .bind(prun.profile_hash.hex())
+                        .bind(&prun.operation_name)
+                        .bind(val_json.to_string())
+                        .execute(&state_clone.db_pool)
+                        .await;
+
+                        for rec in &parsing.recordings {
+                            let _ = crate::db::repositories::recordings::insert_recording(
+                                &state_clone.db_pool,
+                                &evidence_id,
+                                run_id,
+                                rec,
+                                None,
+                                None,
+                            )
+                            .await;
+                        }
+                    }
+                }
+
+                let mut guard = entry.write().await;
+                if !guard.cancel_token.is_cancelled() && guard.state != crate::jobs::JobState::Cancelled {
+                    guard.state = crate::jobs::JobState::Completed;
+                    guard.stage = Some("Completed".to_string());
+                    guard.result = Some(run);
+                }
+            }
+            Ok(Err(e)) => {
+                let mut guard = entry.write().await;
+                if guard.cancel_token.is_cancelled()
+                    || e.to_string().to_lowercase().contains("cancel")
+                {
+                    guard.state = crate::jobs::JobState::Cancelled;
+                    guard.error = Some("Pipeline execution cancelled".to_string());
+                } else {
+                    guard.state = crate::jobs::JobState::Failed;
+                    guard.error = Some(e.to_string());
+                }
+            }
+            Err(join_err) => {
+                let mut guard = entry.write().await;
+                guard.state = crate::jobs::JobState::Failed;
+                guard.error = Some(format!("Worker thread panicked: {join_err}"));
+            }
+        }
+    });
+
+    Ok(Json(crate::jobs::JobStartResponse {
+        job_id,
+        state: crate::jobs::JobState::Running,
+    }))
+}
+
+/// GET /api/jobs/:id
+pub async fn get_pipeline_job(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<crate::jobs::JobStatusResponse>, ApiError> {
+    let status = state.jobs.get_job_status(&id).await.ok_or_else(|| ApiError {
+        error: format!("job '{id}' not found"),
+        details: None,
+    })?;
+    Ok(Json(status))
+}
+
+/// POST /api/jobs/:id/cancel
+pub async fn cancel_pipeline_job(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> Result<Json<crate::jobs::JobCancelResponse>, ApiError> {
+    let response = state.jobs.cancel_job(&id).await.ok_or_else(|| ApiError {
+        error: format!("job '{id}' not found"),
+        details: None,
+    })?;
+    Ok(Json(response))
 }
 
 /// Computed result of probing one gap's byte region with the staged L1→L2→L3 cascade.

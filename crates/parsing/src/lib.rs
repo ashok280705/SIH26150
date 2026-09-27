@@ -5,3 +5,4 @@
 pub mod orchestrator;
 
 pub use orchestrator::{ParsingOrchestrator, ParsingResult};
+pub use parsers_core::{ContainerRecord, ReconstructedStream, ReconstructionProvider};

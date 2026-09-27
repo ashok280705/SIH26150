@@ -101,6 +101,14 @@ impl RawReader {
             source_kind: SourceKind::PhysicalDisk,
         })
     }
+
+    /// Open a physical disk device in read-only mode on Windows (`\\.\PhysicalDriveN`, `\\.\Volume{...}`).
+    #[cfg(windows)]
+    pub fn open_device(
+        path: impl AsRef<Path>,
+    ) -> Result<crate::windows::WindowsPhysicalReader, ForensicError> {
+        crate::windows::WindowsPhysicalReader::open(path)
+    }
 }
 
 impl EvidenceReader for RawReader {
@@ -186,5 +194,65 @@ mod tests {
     fn reader_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<RawReader>();
+    }
+
+    #[test]
+    fn test_platform_independent_read_boundaries() {
+        use std::io::Write;
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push(format!("raw_boundary_test_{}.raw", uuid::Uuid::new_v4()));
+
+        let file_len = 256;
+        let test_data: Vec<u8> = (0..file_len).map(|i| i as u8).collect();
+        {
+            let mut f = std::fs::File::create(&temp_path).unwrap();
+            f.write_all(&test_data).unwrap();
+        }
+
+        let reader = RawReader::open(&temp_path).unwrap();
+        assert_eq!(reader.len(), file_len as u64);
+
+        // 1. Zero-length reads at 0, midpoint, and EOF
+        let mut empty_buf = [0u8; 0];
+        assert_eq!(reader.read_at(0, &mut empty_buf).unwrap(), 0);
+        assert_eq!(reader.read_at(128, &mut empty_buf).unwrap(), 0);
+        assert_eq!(reader.read_at(256, &mut empty_buf).unwrap(), 0);
+
+        // 2. Exact full read
+        let mut full_buf = vec![0u8; file_len];
+        assert_eq!(reader.read_at(0, &mut full_buf).unwrap(), file_len);
+        assert_eq!(full_buf, test_data);
+
+        // 3. Boundary reads: read last 10 bytes exactly
+        let mut tail_buf = [0u8; 10];
+        assert_eq!(reader.read_at(246, &mut tail_buf).unwrap(), 10);
+        assert_eq!(&tail_buf[..], &test_data[246..256]);
+
+        // 4. Short reads: buffer larger than remaining bytes at offset
+        let mut oversized_buf = [0u8; 20];
+        let bytes_read = reader.read_at(250, &mut oversized_buf).unwrap();
+        assert_eq!(bytes_read, 6);
+        assert_eq!(&oversized_buf[..6], &test_data[250..256]);
+
+        // 5. Out-of-range reads: offset == len
+        let mut buf = [0u8; 4];
+        let err = reader.read_at(256, &mut buf).unwrap_err();
+        match err {
+            ForensicError::OutOfBounds { offset, source_len, .. } => {
+                assert_eq!(offset, 256);
+                assert_eq!(source_len, 256);
+            }
+            other => panic!("expected OutOfBounds, got {other:?}"),
+        }
+
+        // 6. Out-of-range reads: offset > len
+        let err = reader.read_at(300, &mut buf).unwrap_err();
+        assert!(matches!(err, ForensicError::OutOfBounds { .. }));
+
+        // 7. Large offsets
+        let err = reader.read_at(u64::MAX - 50, &mut buf).unwrap_err();
+        assert!(matches!(err, ForensicError::OutOfBounds { .. }));
+
+        let _ = std::fs::remove_file(&temp_path);
     }
 }

@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use forensic_core::Region;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TplinkDataType {

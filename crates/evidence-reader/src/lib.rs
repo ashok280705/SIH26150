@@ -30,6 +30,8 @@ pub mod raw;
 pub mod reader;
 pub mod scanner;
 pub mod source_safety;
+#[cfg(windows)]
+pub mod windows;
 
 pub use bounded::BoundedReader;
 pub use config::ReaderConfig;
@@ -39,3 +41,5 @@ pub use raw::RawReader;
 pub use reader::{EvidenceReader, SourceKind};
 pub use scanner::{RegionScanner, ScanOptions, ScanReport, TerminationReason};
 pub use source_safety::{inspect_source, SafetyDecision, SourceSafetyReport};
+#[cfg(windows)]
+pub use windows::WindowsPhysicalReader;

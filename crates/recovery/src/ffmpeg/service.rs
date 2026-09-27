@@ -425,7 +425,33 @@ fn resolve_binary(
         }
     }
 
-    // Check bundled runtime paths
+    // Check executable-relative and bundled application resource locations
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            let exe_candidates = [
+                parent.join(name),
+                parent.join(format!("{name}.exe")),
+                parent.join("ffmpeg").join(name),
+                parent.join("ffmpeg").join(format!("{name}.exe")),
+                parent.join("../Resources").join(name),
+                parent.join("../Resources").join(format!("{name}.exe")),
+                parent.join("../Resources/ffmpeg").join(name),
+                parent.join("../Resources/ffmpeg").join(format!("{name}.exe")),
+                parent.join("../Resources/runtime/ffmpeg").join(name),
+                parent.join("../Resources/runtime/ffmpeg").join(format!("{name}.exe")),
+            ];
+            for candidate in &exe_candidates {
+                if candidate.exists() {
+                    return (
+                        Some(candidate.clone()),
+                        FfmpegSource::Bundled(candidate.clone()),
+                    );
+                }
+            }
+        }
+    }
+
+    // Check development runtime paths (CWD relative)
     let bundled_candidates = [
         PathBuf::from(format!("runtime/ffmpeg/{}", name)),
         PathBuf::from(format!("runtime/ffmpeg/macos/{}", name)),

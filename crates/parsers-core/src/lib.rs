@@ -12,10 +12,12 @@
 
 pub mod contract;
 pub mod parser;
+pub mod reconstruction;
 pub mod storage;
 
 pub use contract::{run_parser_contract, CheckOutcome, ContractCheck, ContractReport};
 pub use parser::Parser;
+pub use reconstruction::{ReconstructedStream, ReconstructionProvider};
 pub use storage::{
     AllocationEvidence, CircularBufferEvidence, ContainerRecord, IndexAuthority, IndexedRecording,
     RecordingIndex, StorageGeometry,

@@ -71,6 +71,28 @@ impl ParsingOrchestrator {
         self.parsers.get(oem_key).map(|p| p.as_ref())
     }
 
+    /// Reconstruct an OEM recording by delegating to the OEM's registered ReconstructionProvider.
+    pub fn reconstruct_recording(
+        &self,
+        oem_key: &str,
+        reader: &dyn EvidenceReader,
+        profile: &OemProfile,
+        recording_id: &str,
+    ) -> Result<Option<parsers_core::ReconstructedStream>, ForensicError> {
+        let parser = self.parsers.get(oem_key).ok_or_else(|| {
+            ForensicError::corrupt(
+                "ParsingOrchestrator",
+                format!("No parser registered for OEM key: {}", oem_key),
+            )
+        })?;
+
+        if let Some(provider) = parser.reconstruction_provider() {
+            provider.reconstruct_recording(reader, profile, recording_id)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn run_parsing(
         &self,
         oem_key: &str,

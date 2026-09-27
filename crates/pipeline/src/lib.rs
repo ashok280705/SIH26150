@@ -82,6 +82,26 @@ pub enum PipelineStage {
     FinalTimeline,
 }
 
+impl std::fmt::Display for PipelineStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Intake => write!(f, "intake"),
+            Self::Detection => write!(f, "detection"),
+            Self::Confidence => write!(f, "confidence"),
+            Self::ThresholdGate => write!(f, "threshold_gate"),
+            Self::OemExtraction => write!(f, "oem_extraction"),
+            Self::UnifiedExtraction => write!(f, "unified_extraction"),
+            Self::AnalystReview => write!(f, "analyst_review"),
+            Self::ParsedGate => write!(f, "parsed_gate"),
+            Self::PreliminaryTimeline => write!(f, "preliminary_timeline"),
+            Self::GapGate => write!(f, "gap_gate"),
+            Self::Recovery => write!(f, "recovery"),
+            Self::RecoveryGate => write!(f, "recovery_gate"),
+            Self::FinalTimeline => write!(f, "final_timeline"),
+        }
+    }
+}
+
 /// Whether a stage ran, was skipped, or halted the flow pending an analyst.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -257,6 +277,17 @@ impl Default for PipelineOptions {
             examiner_timezone: None,
         }
     }
+}
+
+/// Progress notification reported during a pipeline run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineProgress {
+    pub stage: PipelineStage,
+    pub stage_name: String,
+    pub stage_index: usize,
+    pub total_stages: usize,
+    pub description: String,
+    pub fraction: Option<f64>,
 }
 
 /// The full, auditable result of a pipeline run.
@@ -457,6 +488,38 @@ pub fn run_pipeline(
     config: &ConfidenceConfig,
     options: &PipelineOptions,
 ) -> Result<PipelineRun, forensic_core::ForensicError> {
+    run_pipeline_with_progress(evidence_id, reader, registry, config, options, None, None)
+}
+
+/// Run the full pipeline over one piece of evidence with cancellation and progress reporting.
+pub fn run_pipeline_with_progress(
+    evidence_id: forensic_core::EvidenceId,
+    reader: &dyn EvidenceReader,
+    registry: &ProfileRegistry,
+    config: &ConfidenceConfig,
+    options: &PipelineOptions,
+    cancel: Option<&evidence_reader::CancellationToken>,
+    progress: Option<&dyn Fn(PipelineProgress)>,
+) -> Result<PipelineRun, forensic_core::ForensicError> {
+    let check_cancel = || -> Result<(), forensic_core::ForensicError> {
+        if let Some(token) = cancel {
+            token.check_cancelled("pipeline", 0)?;
+        }
+        Ok(())
+    };
+    let report_progress = |stage: PipelineStage, stage_name: &str, stage_index: usize, desc: &str, fraction: f64| {
+        if let Some(cb) = progress {
+            cb(PipelineProgress {
+                stage,
+                stage_name: stage_name.to_string(),
+                stage_index,
+                total_stages: 7,
+                description: desc.to_string(),
+                fraction: Some(fraction),
+            });
+        }
+    };
+
     let mut run = PipelineRun {
         stages: Vec::new(),
         gates: Vec::new(),
@@ -476,6 +539,8 @@ pub fn run_pipeline(
     };
 
     // ── Stage: Intake ───────────────────────────────────────────────────────
+    check_cancel()?;
+    report_progress(PipelineStage::Intake, "Intake", 1, "Opening evidence source read-only", 0.05);
     run.record_stage(
         PipelineStage::Intake,
         StageStatus::Completed,
@@ -483,6 +548,8 @@ pub fn run_pipeline(
     );
 
     // ── Stage: Detection + Confidence ───────────────────────────────────────
+    check_cancel()?;
+    report_progress(PipelineStage::Detection, "Detection", 2, "Evaluating detectors and confidence", 0.15);
     let detector_outputs = DetectionOrchestrator::new().run(reader, registry)?;
     run.record_stage(
         PipelineStage::Detection,
@@ -565,6 +632,8 @@ pub fn run_pipeline(
     );
 
     // ── Stage: Extraction (OEM, Unified, or halt for Analyst) ───────────────
+    check_cancel()?;
+    report_progress(PipelineStage::OemExtraction, "Extraction", 3, "Extracting structures and recording candidates", 0.35);
     let orchestrator = ParsingOrchestrator::new();
     let parsing_result: ParsingResult = match threshold_decision {
         ThresholdDecision::OemConfirmed => {
@@ -662,6 +731,8 @@ pub fn run_pipeline(
     run.record_stage(PipelineStage::ParsedGate, StageStatus::Completed, "Parsed");
 
     // ── Per-recording sessions (start/end, in-recording gaps, coverage) ─────
+    check_cancel()?;
+    report_progress(PipelineStage::PreliminaryTimeline, "Preliminary Timeline", 4, "Building preliminary timeline and analyzing continuity gaps", 0.55);
     // Built from the parser's own recordings and sorted by date, this is the
     // investigator-facing "which recordings exist and what is missing inside them"
     // view that complements the event-level unified timeline.
@@ -739,16 +810,22 @@ pub fn run_pipeline(
     );
 
     // ── Stage: Recovery (only when gaps are present) ────────────────────────
+    check_cancel()?;
     let mut final_events = preliminary.events.clone();
     if gaps_present {
+        report_progress(PipelineStage::Recovery, "Recovery", 5, "Evaluating gap regions with recovery cascade", 0.75);
         let scan_cap = options.max_recovery_scan_bytes.unwrap_or(reader.len());
+        let cancel_token = match cancel {
+            Some(token) => forensic_core::CancelToken::from_arc(token.inner_arc()),
+            None => forensic_core::CancelToken::new(),
+        };
         let bounds = forensic_core::RecoveryBounds {
             max_scan_bytes: scan_cap,
             max_scan_regions: u32::MAX,
             max_candidates: u32::MAX,
             max_hypotheses: 1024,
             max_search_depth: None,
-            cancel: forensic_core::CancelToken::new(),
+            cancel: cancel_token,
             time_limit: None,
         };
         // The recovery engine needs a parser + profile to vet candidates. Reuse the
@@ -933,6 +1010,14 @@ pub fn run_pipeline(
 
     // ── Stage: Final Timeline ───────────────────────────────────────────────
     // Rebuilt including any recovered events, re-ordered canonically.
+    check_cancel()?;
+    report_progress(
+        PipelineStage::FinalTimeline,
+        "Final Timeline",
+        6,
+        "Rebuilding canonical final timeline with recovered events",
+        0.90,
+    );
     let final_timeline = TimelineEngine::build_timeline(final_events, options.ordering);
     run.record_stage(
         PipelineStage::FinalTimeline,
@@ -948,6 +1033,14 @@ pub fn run_pipeline(
     run.preliminary_timeline = Some(preliminary);
     run.gap_analysis = Some(gap_analysis);
     run.final_timeline = Some(final_timeline);
+
+    report_progress(
+        PipelineStage::FinalTimeline,
+        "Completed",
+        6,
+        "Pipeline execution completed successfully",
+        1.0,
+    );
 
     Ok(run)
 }

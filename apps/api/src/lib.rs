@@ -1,8 +1,10 @@
 //! # forensic-api Library Interface
 
 pub mod capability_service;
+pub mod config;
 pub mod db;
 pub mod handlers;
+pub mod jobs;
 pub mod state;
 
 use axum::routing::{get, post};
@@ -11,6 +13,8 @@ use std::path::PathBuf;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
+pub use config::AppConfig;
+pub use jobs::JobCoordinator;
 pub use state::AppState;
 
 fn find_frontend_dir() -> Option<PathBuf> {
@@ -89,6 +93,12 @@ pub fn app_router(state: AppState) -> Router {
             "/api/evidence/:id/pipeline/run",
             post(handlers::run_full_pipeline),
         )
+        .route(
+            "/api/evidence/:id/pipeline/start",
+            post(handlers::start_pipeline_job),
+        )
+        .route("/api/jobs/:id", get(handlers::get_pipeline_job))
+        .route("/api/jobs/:id/cancel", post(handlers::cancel_pipeline_job))
         .route("/api/evidence/:id/report", get(handlers::get_report))
         .route("/api/evidence/:id/topology", get(handlers::get_topology))
         .route(

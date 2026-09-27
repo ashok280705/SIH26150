@@ -52,6 +52,7 @@ members = [
 
   # Applications
   "apps/api",
+  "apps/desktop",
 
   # Cross-crate tests and fixture generators
   "tests", "crates/parsers-core",

@@ -261,6 +261,36 @@ fn resolve(name: &str, configured: Option<&Path>, env_var: &str) -> ToolAvailabi
         }
     }
 
+    // Check executable-relative and bundled application resource locations
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            let exe_candidates = [
+                parent.join(name),
+                parent.join(format!("{name}.exe")),
+                parent.join("ffmpeg").join(name),
+                parent.join("ffmpeg").join(format!("{name}.exe")),
+                parent.join("../Resources").join(name),
+                parent.join("../Resources").join(format!("{name}.exe")),
+                parent.join("../Resources/ffmpeg").join(name),
+                parent.join("../Resources/ffmpeg").join(format!("{name}.exe")),
+                parent.join("../Resources/runtime/ffmpeg").join(name),
+                parent.join("../Resources/runtime/ffmpeg").join(format!("{name}.exe")),
+            ];
+            for candidate in &exe_candidates {
+                if candidate.exists() {
+                    searched.push(format!("executable_relative: {}", candidate.display()));
+                    if let Some(v) = probe_version(candidate) {
+                        return ToolAvailability::Available {
+                            path: candidate.clone(),
+                            source: ToolSource::Bundled,
+                            version: v,
+                        };
+                    }
+                }
+            }
+        }
+    }
+
     for candidate in [
         PathBuf::from(format!("runtime/ffmpeg/{name}")),
         PathBuf::from(format!("runtime/ffmpeg/linux/{name}")),
