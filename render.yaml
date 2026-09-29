@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: vidforge-forensics
+    runtime: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    region: oregon
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        value: sqlite:/data/forensic_metadata.db
+      - key: VIDFORGE_ARTIFACTS_DIR
+        value: /data/artifacts
+      - key: VIDFORGE_EVIDENCE_DIR
+        value: /data/evidence
+    healthCheckPath: /api/health

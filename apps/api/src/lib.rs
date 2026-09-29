@@ -51,6 +51,14 @@ fn find_frontend_dir() -> Option<PathBuf> {
     None
 }
 
+async fn health_check() -> impl axum::response::IntoResponse {
+    axum::Json(serde_json::json!({
+        "status": "ok",
+        "service": "forensic-api",
+        "version": env!("CARGO_PKG_VERSION")
+    }))
+}
+
 pub fn app_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -64,6 +72,8 @@ pub fn app_router(state: AppState) -> Router {
         ]);
 
     let mut router = Router::new()
+        .route("/health", get(health_check))
+        .route("/api/health", get(health_check))
         .route(
             "/api/cases",
             post(handlers::create_case).get(handlers::list_cases),
