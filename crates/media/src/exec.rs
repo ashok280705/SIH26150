@@ -60,6 +60,13 @@ impl CommandSpec {
         // Killing the handle on drop prevents an orphaned decoder surviving a cancelled
         // request and continuing to consume CPU against evidence storage.
         cmd.kill_on_drop(true);
+        // Prevent a visible console window from flashing on screen when the
+        // desktop GUI spawns ffmpeg/ffprobe (which are console programs).
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         cmd
     }
 }

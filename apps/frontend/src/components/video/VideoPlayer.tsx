@@ -6,7 +6,7 @@ import {
   SkipBack, SkipForward, ChevronLeft, ChevronRight,
   Rewind, FastForward, Type, Move, Eye, EyeOff
 } from 'lucide-react';
-import { verifyArtifact } from '../../services/api';
+import { verifyArtifact, getMediaUrl } from '../../services/api';
 import { ArtifactVerificationResult } from '../../types';
 
 export interface VideoPlayerProps {
@@ -292,7 +292,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
             <video
               ref={videoRef}
-              src={videoUrl}
+              src={getMediaUrl(videoUrl)}
               style={{ width: '100%', maxHeight: '420px', objectFit: 'contain' }}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}

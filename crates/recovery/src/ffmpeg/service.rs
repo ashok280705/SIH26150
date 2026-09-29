@@ -469,12 +469,21 @@ fn resolve_binary(
     }
 
     // Check system PATH
-    if let Ok(output) = std::process::Command::new(name).arg("-version").output() {
-        if output.status.success() {
-            return (
-                Some(PathBuf::from(name)),
-                FfmpegSource::Path(PathBuf::from(name)),
-            );
+    {
+        let mut cmd = std::process::Command::new(name);
+        cmd.arg("-version");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        if let Ok(output) = cmd.output() {
+            if output.status.success() {
+                return (
+                    Some(PathBuf::from(name)),
+                    FfmpegSource::Path(PathBuf::from(name)),
+                );
+            }
         }
     }
 
@@ -482,7 +491,14 @@ fn resolve_binary(
 }
 
 fn detect_version(path: &Path) -> Option<String> {
-    match std::process::Command::new(path).arg("-version").output() {
+    let mut cmd = std::process::Command::new(path);
+    cmd.arg("-version");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    match cmd.output() {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let first_line = stdout.lines().next().unwrap_or("");

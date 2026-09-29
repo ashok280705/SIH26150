@@ -55,7 +55,13 @@ pub fn app_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_headers(Any)
+        .expose_headers([
+            axum::http::header::CONTENT_RANGE,
+            axum::http::header::ACCEPT_RANGES,
+            axum::http::header::CONTENT_LENGTH,
+            axum::http::header::CONTENT_TYPE,
+        ]);
 
     let mut router = Router::new()
         .route(

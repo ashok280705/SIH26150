@@ -325,11 +325,15 @@ fn resolve(name: &str, configured: Option<&Path>, env_var: &str) -> ToolAvailabi
 /// Runs `-version` and returns the first line. A tool that cannot report a version is not
 /// treated as available: presence of a file proves nothing about whether it will run.
 fn probe_version(path: &Path) -> Option<String> {
-    let output = std::process::Command::new(path)
-        .arg("-version")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new(path);
+    cmd.arg("-version");
+    cmd.stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }

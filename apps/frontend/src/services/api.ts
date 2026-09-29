@@ -28,6 +28,33 @@ export function getApiBase(): string {
   return '/api';
 }
 
+/**
+ * Resolves an artifact or media path/URL into an absolute HTTP URL that the browser
+ * or WebView <video> element can play directly.
+ * In desktop mode, routes to `window.__VIDFORGE_API_BASE__` (http://127.0.0.1:{port}/api).
+ */
+export function getMediaUrl(pathOrUrl?: string | null): string {
+  if (!pathOrUrl) return '';
+  if (
+    pathOrUrl.startsWith('http://') ||
+    pathOrUrl.startsWith('https://') ||
+    pathOrUrl.startsWith('blob:') ||
+    pathOrUrl.startsWith('data:')
+  ) {
+    return pathOrUrl;
+  }
+  const base = getApiBase();
+  const cleanPath = pathOrUrl.startsWith('/api/')
+    ? pathOrUrl.slice(4)
+    : pathOrUrl === '/api'
+    ? ''
+    : pathOrUrl.startsWith('/')
+    ? pathOrUrl
+    : `/${pathOrUrl}`;
+
+  return `${base}${cleanPath}`;
+}
+
 function getHeaders(customHeaders?: HeadersInit): Headers {
   const headers = new Headers(customHeaders || {});
   if (typeof window !== 'undefined' && window.__VIDFORGE_AUTH_TOKEN__) {

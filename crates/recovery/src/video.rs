@@ -118,10 +118,14 @@ pub fn validate_and_order_frames(mut frames: Vec<VideoFrame>) -> FrameOrderingRe
 /// Checks whether FFmpeg is available. When absent, validation is UNKNOWN/REVIEW, never PASS.
 pub fn check_ffmpeg_availability() -> ValidationState {
     // Check if ffmpeg binary exists on PATH
-    match std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
+    let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.arg("-version");
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    match cmd.output() {
         Ok(output) if output.status.success() => ValidationState::new(
             ValidationStateKind::Pass,
             "FFmpeg available for remux",

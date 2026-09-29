@@ -15,7 +15,7 @@ async fn test_job_coordinator_lifecycle() {
     let (job_id, entry, _cancel_token) = coordinator.create_job(evidence_id).await;
     let initial_status = coordinator.get_job_status(&job_id).await.unwrap();
     assert_eq!(initial_status.job_id, job_id);
-    assert_eq!(initial_status.evidence_id, evidence_id.0);
+    assert_eq!(initial_status.evidence_id, Some(evidence_id.0));
     assert_eq!(initial_status.state, JobState::Queued);
     assert!(initial_status.progress.is_none());
 

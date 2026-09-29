@@ -3,7 +3,7 @@ import {
   Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, ChevronRight,
   RefreshCw, VideoOff, Circle,
 } from 'lucide-react';
-import { reconstructRecording } from '../../services/api';
+import { reconstructRecording, getMediaUrl } from '../../services/api';
 
 /** One entry in a channel's continuous playlist, in final-timeline order. */
 export interface PlaylistSegment {
@@ -172,7 +172,8 @@ export const CameraTile: React.FC<CameraTileProps> = ({
   const attachAndPlay = (url: string) => {
     const v = videoRef.current;
     if (!v) return;
-    if (v.src !== url) v.src = url;
+    const mediaUrl = getMediaUrl(url);
+    if (v.src !== mediaUrl) v.src = mediaUrl;
     v.muted = muted;
     v.playbackRate = rate;
     if (!isPaused) {
@@ -246,8 +247,20 @@ export const CameraTile: React.FC<CameraTileProps> = ({
         onEnded={() => { if (!isPaused) advance(); }}
         onError={() => {
           if (phase === 'playing') {
+            const v = videoRef.current;
+            const code = v?.error?.code;
+            const msg = v?.error?.message;
+            // MediaError codes: 1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED
+            const isHevc = segment?.codec?.toLowerCase().includes('hevc') ||
+                           segment?.codec?.toLowerCase().includes('h265') ||
+                           segment?.codec?.toLowerCase().includes('h.265');
+            const codeLabel = code === 1 ? 'ABORTED' : code === 2 ? 'NETWORK' : code === 3 ? 'DECODE' : code === 4 ? 'SRC_NOT_SUPPORTED' : `CODE_${code ?? '?'}`;
+            const detail = isHevc && (code === 3 || code === 4)
+              ? 'HEVC / H.265 playback unsupported on host OS'
+              : (msg ? `${codeLabel}: ${msg}` : `Decode error for this clip (${codeLabel})`);
+            console.warn(`[CameraTile] ${cameraLabel} CH${channel} clip ${index + 1}/${playlist.length}: video error ${codeLabel}`, { code, msg, src: v?.src, isHevc });
             setPhase('error');
-            setNote('Decode error for this clip');
+            setNote(detail);
             if (!isPaused) holdTimer.current = setTimeout(() => { if (!cancelled.current) advance(); }, ERROR_HOLD_MS);
           }
         }}

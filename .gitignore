@@ -82,3 +82,8 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Binaries and executables — large binaries (>100MB) exceeding GitHub limits.
+*.exe
+/runtime/**/*.exe
+

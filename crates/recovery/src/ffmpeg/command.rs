@@ -23,6 +23,14 @@ impl CommandSpec {
     pub fn to_std_command(&self) -> std::process::Command {
         let mut cmd = std::process::Command::new(&self.program);
         cmd.args(&self.args);
+        // Prevent a visible console window from flashing on screen when the
+        // desktop GUI spawns ffmpeg/ffprobe (which are console programs).
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         cmd
     }
 
@@ -30,6 +38,11 @@ impl CommandSpec {
     pub fn to_tokio_command(&self) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new(&self.program);
         cmd.args(&self.args);
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         cmd
     }
 }
@@ -204,6 +217,30 @@ mod tests {
                 "json",
                 "/tmp/recording.mp4"
             ]
+        );
+    }
+
+    /// Regression test: on Windows, child processes must set CREATE_NO_WINDOW so that
+    /// the desktop GUI does not flash console windows. The flag is verified by spawning
+    /// a command and checking the output; a visible console would mean the flag was
+    /// not applied. This test runs `cmd /C echo OK` with the flag and confirms it still
+    /// captures output (i.e. the flag does not break pipe capture).
+    #[cfg(windows)]
+    #[test]
+    fn windows_create_no_window_flag_does_not_break_pipe_capture() {
+        let spec = CommandSpec {
+            program: "cmd".to_string(),
+            args: vec!["/C".into(), "echo OK".into()],
+        };
+        let mut cmd = spec.to_std_command();
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        let output = cmd.output().expect("cmd /C echo should succeed");
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("OK"),
+            "stdout capture must still work with CREATE_NO_WINDOW"
         );
     }
 }

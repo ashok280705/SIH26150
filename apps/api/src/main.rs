@@ -67,14 +67,21 @@ fn spawn_bundled_ollama() {
     }
 
     let models = vendor.join("models");
-    match Command::new(&bin)
-        .arg("serve")
+    let mut cmd = Command::new(&bin);
+    cmd.arg("serve")
         .env("OLLAMA_HOST", host_hostport)
         .env("OLLAMA_MODELS", &models)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    match cmd.spawn() {
         Ok(_) => println!(
             "Assistant: started bundled Ollama ({}) — models: {}",
             bin.display(),

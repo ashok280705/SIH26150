@@ -878,10 +878,10 @@ pub async fn reconstruct_recording(
             }
         })
         .collect();
-    let base_artifact_dir = std::path::PathBuf::from(format!(
-        "artifacts/cases/{}/recordings/{}",
-        case_id.0, rec_dir_name
-    ));
+    let base_artifact_dir = state
+        .config
+        .artifacts_dir
+        .join(format!("cases/{}/recordings/{}", case_id.0, rec_dir_name));
     let es_dir = base_artifact_dir.join("elementary");
     let remux_dir = base_artifact_dir.join("remux");
 
@@ -1284,7 +1284,25 @@ pub async fn stream_artifact_video(
             details: None,
         })?;
 
-    let target_path = std::path::PathBuf::from(&record.output_path);
+    let mut target_path = std::path::PathBuf::from(&record.output_path);
+    if !target_path.exists() {
+        let alt = if let Ok(stripped) = target_path.strip_prefix("artifacts") {
+            state.config.artifacts_dir.join(stripped)
+        } else {
+            state.config.artifacts_dir.join(&target_path)
+        };
+        if alt.exists() {
+            target_path = alt;
+        } else {
+            let cwd_alt = std::path::PathBuf::from("artifacts").join(
+                target_path.strip_prefix("artifacts").unwrap_or(&target_path),
+            );
+            if cwd_alt.exists() {
+                target_path = cwd_alt;
+            }
+        }
+    }
+
     state
         .write_guard
         .validate_write_path(&target_path)
@@ -1321,45 +1339,71 @@ pub async fn stream_artifact_video(
 
     if let Some(range_val) = range_header {
         if let Some(range_spec) = range_val.strip_prefix("bytes=") {
-            let parts: Vec<&str> = range_spec.split('-').collect();
-            let start = parts[0].parse::<u64>().unwrap_or(0);
-            let end = if parts.len() > 1 && !parts[1].is_empty() {
-                parts[1]
+            let parts: Vec<&str> = range_spec.split('-').map(|s| s.trim()).collect();
+
+            let (start, end) = if parts[0].is_empty() && parts.len() > 1 && !parts[1].is_empty() {
+                // Suffix range: bytes=-N (e.g. bytes=-1024 -> last 1024 bytes)
+                let suffix_len = parts[1].parse::<u64>().unwrap_or(0);
+                (
+                    total_size.saturating_sub(suffix_len),
+                    total_size.saturating_sub(1),
+                )
+            } else if parts.len() > 1 && parts[1].is_empty() {
+                // Open range: bytes=N- (e.g. bytes=0- or bytes=1024-)
+                let start = parts[0].parse::<u64>().unwrap_or(0);
+                (start, total_size.saturating_sub(1))
+            } else if parts.len() > 1 {
+                // Closed range: bytes=N-M
+                let start = parts[0].parse::<u64>().unwrap_or(0);
+                let end = parts[1]
                     .parse::<u64>()
-                    .unwrap_or(total_size - 1)
-                    .min(total_size - 1)
+                    .unwrap_or(total_size.saturating_sub(1))
+                    .min(total_size.saturating_sub(1));
+                (start, end)
             } else {
-                total_size - 1
+                (0, total_size.saturating_sub(1))
             };
 
-            if start <= end && start < total_size {
-                use std::io::{Read, Seek, SeekFrom};
-                let chunk_len = (end - start + 1) as usize;
-                let mut buffer = vec![0u8; chunk_len];
-
-                file.seek(SeekFrom::Start(start)).map_err(|e| ApiError {
-                    error: format!("seek failed on video file: {e}"),
-                    details: None,
-                })?;
-
-                file.read_exact(&mut buffer).map_err(|e| ApiError {
-                    error: format!("read failed on video chunk: {e}"),
-                    details: None,
-                })?;
-
-                let content_range = format!("bytes {}-{}/{}", start, end, total_size);
-
+            if start > end || start >= total_size {
                 let response = Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
                     .header(axum::http::header::CONTENT_TYPE, "video/mp4")
                     .header(axum::http::header::ACCEPT_RANGES, "bytes")
-                    .header(axum::http::header::CONTENT_RANGE, content_range)
-                    .header(axum::http::header::CONTENT_LENGTH, chunk_len.to_string())
-                    .body(axum::body::Body::from(buffer))
+                    .header(
+                        axum::http::header::CONTENT_RANGE,
+                        format!("bytes */{}", total_size),
+                    )
+                    .body(axum::body::Body::empty())
                     .unwrap();
-
                 return Ok(response);
             }
+
+            use std::io::{Read, Seek, SeekFrom};
+            let chunk_len = (end - start + 1) as usize;
+            let mut buffer = vec![0u8; chunk_len];
+
+            file.seek(SeekFrom::Start(start)).map_err(|e| ApiError {
+                error: format!("seek failed on video file: {e}"),
+                details: None,
+            })?;
+
+            file.read_exact(&mut buffer).map_err(|e| ApiError {
+                error: format!("read failed on video chunk: {e}"),
+                details: None,
+            })?;
+
+            let content_range = format!("bytes {}-{}/{}", start, end, total_size);
+
+            let response = Response::builder()
+                .status(StatusCode::PARTIAL_CONTENT)
+                .header(axum::http::header::CONTENT_TYPE, "video/mp4")
+                .header(axum::http::header::ACCEPT_RANGES, "bytes")
+                .header(axum::http::header::CONTENT_RANGE, content_range)
+                .header(axum::http::header::CONTENT_LENGTH, chunk_len.to_string())
+                .body(axum::body::Body::from(buffer))
+                .unwrap();
+
+            return Ok(response);
         }
     }
 
