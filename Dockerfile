@@ -15,7 +15,7 @@ RUN npm run build
 # ==============================================================================
 # Stage 2: Build Backend (Rust / Axum)
 # ==============================================================================
-FROM rust:1.80-slim-bookworm AS backend-builder
+FROM rust:slim-bookworm AS backend-builder
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,9 +27,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy workspace configuration and all Rust source trees
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
-COPY apps/api/ apps/api/
-COPY apps/desktop/ apps/desktop/
+COPY apps/ apps/
+COPY tests/ tests/
 COPY profiles/ profiles/
+COPY config/ config/
 
 # Compile production release binary for the forensic-api service
 RUN cargo build --release -p forensic-api
