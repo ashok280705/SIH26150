@@ -6,6 +6,11 @@ use crate::types::{
     AcquisitionConfig, PhysicalSource, SafetyAssessment,
 };
 
+#[cfg(not(windows))]
+use std::path::Path;
+#[cfg(not(windows))]
+use crate::types::VolumeLockState;
+
 /// Perform safety assessment for the given source and configuration.
 pub fn assess_safety(source: &PhysicalSource, config: &AcquisitionConfig) -> SafetyAssessment {
     #[cfg(windows)]
