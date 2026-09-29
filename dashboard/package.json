@@ -1,0 +1,9 @@
+{
+  "name": "vidforge-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VidForge Navigation & Links Dashboard",
+  "scripts": {
+    "build": "node build.js"
+  }
+}

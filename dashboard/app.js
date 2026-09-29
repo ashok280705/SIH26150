@@ -194,6 +194,7 @@ const btnLocalVite = document.getElementById('btn-preset-local-vite');
 
 // Initialize
 function init() {
+  applyConfigOverrides();
   detectInitialBaseUrl();
   setupEventListeners();
   renderCards();
@@ -201,14 +202,35 @@ function init() {
   initCyberCanvas();
 }
 
+function applyConfigOverrides() {
+  if (typeof window !== 'undefined' && window.VIDFORGE_CONFIG) {
+    const cfg = window.VIDFORGE_CONFIG;
+    if (cfg.GITHUB_REPO_URL) {
+      const repoItem = PORTAL_LINKS.find(i => i.id === 'repo-root');
+      if (repoItem) repoItem.path = cfg.GITHUB_REPO_URL;
+    }
+    if (Array.isArray(cfg.CUSTOM_LINKS) && cfg.CUSTOM_LINKS.length > 0) {
+      cfg.CUSTOM_LINKS.forEach(custom => {
+        if (!PORTAL_LINKS.some(p => p.id === custom.id)) {
+          PORTAL_LINKS.push(custom);
+        }
+      });
+    }
+  }
+}
+
 // Detect default base URL
 function detectInitialBaseUrl() {
-  const origin = window.location.origin;
-  // If served via deployed domain other than localhost/file, use origin; otherwise default to Render deployed URL
-  if (origin && origin !== 'null' && !origin.startsWith('file://') && !origin.includes('localhost') && !origin.includes('127.0.0.1')) {
-    currentBaseUrl = origin;
+  const cfgUrl = typeof window !== 'undefined' && window.VIDFORGE_CONFIG?.DEPLOYED_WEB_URL;
+  if (cfgUrl) {
+    currentBaseUrl = cfgUrl.trim().replace(/\/+$/, '');
   } else {
-    currentBaseUrl = 'https://vidforge-forensics.onrender.com';
+    const origin = window.location.origin;
+    if (origin && origin !== 'null' && !origin.startsWith('file://') && !origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+      currentBaseUrl = origin;
+    } else {
+      currentBaseUrl = 'https://vidforge-forensics.onrender.com';
+    }
   }
   targetInput.value = currentBaseUrl;
 }
