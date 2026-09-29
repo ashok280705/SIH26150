@@ -204,11 +204,11 @@ function init() {
 // Detect default base URL
 function detectInitialBaseUrl() {
   const origin = window.location.origin;
-  // If served via http/https, default to current origin; if opened via file:///, use default local/render
-  if (origin && origin !== 'null' && !origin.startsWith('file://')) {
+  // If served via deployed domain other than localhost/file, use origin; otherwise default to Render deployed URL
+  if (origin && origin !== 'null' && !origin.startsWith('file://') && !origin.includes('localhost') && !origin.includes('127.0.0.1')) {
     currentBaseUrl = origin;
   } else {
-    currentBaseUrl = 'http://localhost:10000';
+    currentBaseUrl = 'https://vidforge-forensics.onrender.com';
   }
   targetInput.value = currentBaseUrl;
 }

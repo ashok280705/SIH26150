@@ -21,9 +21,13 @@ export function getApiBase(): string {
   if (typeof window !== 'undefined' && window.__VIDFORGE_API_BASE__) {
     return window.__VIDFORGE_API_BASE__.replace(/\/+$/, '');
   }
-  const envBase = (import.meta as any).env?.VITE_API_BASE;
+  const envBase = (import.meta as any).env?.VITE_API_BASE || (import.meta as any).env?.VITE_API_URL;
   if (envBase) {
-    return envBase.replace(/\/+$/, '');
+    let trimmed = envBase.replace(/\/+$/, '');
+    if (!trimmed.endsWith('/api') && !trimmed.startsWith('/')) {
+      trimmed = `${trimmed}/api`;
+    }
+    return trimmed;
   }
   return '/api';
 }
