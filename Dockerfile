@@ -24,23 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace manifests
+# Copy workspace configuration and all Rust source trees
 COPY Cargo.toml Cargo.lock ./
-COPY crates/core/Cargo.toml crates/core/
-COPY crates/acquisition/Cargo.toml crates/acquisition/
-COPY crates/detection/Cargo.toml crates/detection/
-COPY crates/parsers/Cargo.toml crates/parsers/
-COPY crates/recovery/Cargo.toml crates/recovery/
-COPY crates/media/Cargo.toml crates/media/
-COPY crates/timeline/Cargo.toml crates/timeline/
-COPY crates/pipeline/Cargo.toml crates/pipeline/
-COPY apps/api/Cargo.toml apps/api/
-COPY apps/desktop/Cargo.toml apps/desktop/
-
-# Copy all source trees
 COPY crates/ crates/
 COPY apps/api/ apps/api/
 COPY apps/desktop/ apps/desktop/
+COPY profiles/ profiles/
 
 # Compile production release binary for the forensic-api service
 RUN cargo build --release -p forensic-api
@@ -58,25 +47,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create persistent storage directories
-RUN mkdir -p /data/artifacts /data/evidence /data/profiles
+RUN mkdir -p /data/artifacts /data/evidence
 
 # Copy compiled binary from backend builder
 COPY --from=backend-builder /app/target/release/forensic-api /usr/local/bin/forensic-api
+
+# Copy OEM profiles
+COPY --from=backend-builder /app/profiles /app/profiles
 
 # Copy static frontend build into expected candidate search paths
 COPY --from=frontend-builder /app/frontend/dist /app/dist
 COPY --from=frontend-builder /app/frontend/dist /app/apps/frontend/dist
 
-# Default cloud configuration (listening on 0.0.0.0:3000)
+# Default cloud configuration (listening on 0.0.0.0:10000 or $PORT)
 ENV HOST=0.0.0.0
-ENV PORT=3000
+ENV PORT=10000
 ENV DATABASE_URL=sqlite:/data/forensic_metadata.db
 ENV VIDFORGE_ARTIFACTS_DIR=/data/artifacts
 ENV VIDFORGE_EVIDENCE_DIR=/data/evidence
-ENV VIDFORGE_PROFILES_DIR=/data/profiles
+ENV VIDFORGE_PROFILES_DIR=/app/profiles
 
 # Expose HTTP service port
-EXPOSE 3000
+EXPOSE 10000
 
 # Persistent volume for cases, databases, and recovered video artifacts
 VOLUME ["/data"]
