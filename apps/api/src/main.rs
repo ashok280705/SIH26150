@@ -17,8 +17,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new_with_config(db_pool, config);
     let app = app_router(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-    println!("DVR/NVR Forensic Analysis API listening on http://127.0.0.1:3000");
+    let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+    let bind_addr = format!("{host}:{port}");
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    println!("DVR/NVR Forensic Analysis API listening on http://{bind_addr}");
 
     axum::serve(listener, app).await?;
     Ok(())

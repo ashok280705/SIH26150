@@ -1,0 +1,21 @@
+services:
+  vidforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vidforge-forensic-workstation
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+      - DATABASE_URL=sqlite:/data/forensic_metadata.db
+      - VIDFORGE_ARTIFACTS_DIR=/data/artifacts
+      - VIDFORGE_EVIDENCE_DIR=/data/evidence
+    volumes:
+      - vidforge_data:/data
+
+volumes:
+  vidforge_data:
+    name: vidforge_forensic_data
