@@ -60,6 +60,9 @@ COPY --from=backend-builder /app/profiles /app/profiles
 COPY --from=frontend-builder /app/frontend/dist /app/dist
 COPY --from=frontend-builder /app/frontend/dist /app/apps/frontend/dist
 
+# Copy sample evidence for out-of-the-box demonstration
+COPY evidence_samples/ /app/evidence_samples/
+
 # Default cloud configuration (listening on 0.0.0.0:10000 or $PORT)
 ENV HOST=0.0.0.0
 ENV PORT=10000

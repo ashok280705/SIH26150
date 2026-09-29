@@ -15,6 +15,7 @@ cases/
 *.ex01
 *.dmg
 *.vmdk
+!evidence_samples/*.raw
 
 # Rust
 /target/

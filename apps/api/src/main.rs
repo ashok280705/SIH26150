@@ -14,6 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = forensic_api::AppConfig::from_env_or_cwd();
     let db_pool = forensic_api::db::connection::init_pool(&config.database_url).await?;
+    seed_demo_case_if_empty(&db_pool, &config).await;
     let state = AppState::new_with_config(db_pool, config);
     let app = app_router(state);
 
@@ -25,6 +26,86 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Automatically seeds a demonstration case and links available sample evidence when the database is fresh.
+async fn seed_demo_case_if_empty(pool: &sqlx::SqlitePool, config: &forensic_api::AppConfig) {
+    use chrono::Utc;
+    use forensic_api::db::repositories;
+    use forensic_core::{Evidence, EvidenceId, ExaminerId, ImageFormat, SourceState};
+    use std::path::PathBuf;
+
+    match repositories::cases::get_all_cases(pool).await {
+        Ok(cases) if cases.is_empty() => {
+            println!("Database is empty: seeding demonstration case and evidence...");
+            let examiner = ExaminerId("Shubham Sarwar".to_string());
+            match repositories::cases::create_case(
+                pool,
+                "Dahua DVR/NVR",
+                "Forensic demonstration case with DHFS 4.1 evidence image",
+                &examiner,
+            )
+            .await
+            {
+                Ok(case) => {
+                    println!("Created demo case: '{}' ({})", case.name, case.id.0);
+
+                    let candidate_paths = [
+                        PathBuf::from("evidence_samples/dahua_dhfs_sample.raw"),
+                        PathBuf::from("/app/evidence_samples/dahua_dhfs_sample.raw"),
+                        config.evidence_samples_dir.join("dahua_dhfs_sample.raw"),
+                        PathBuf::from("dahua_dhfs_sample.raw"),
+                    ];
+
+                    let mut found_path = None;
+                    for p in &candidate_paths {
+                        if p.exists() {
+                            found_path = Some(p.clone());
+                            break;
+                        }
+                    }
+
+                    if let Some(path) = found_path {
+                        let capacity =
+                            std::fs::metadata(&path).map(|m| m.len()).unwrap_or(19204691);
+                        let evidence = Evidence {
+                            id: EvidenceId::new(),
+                            case_id: case.id,
+                            source_device: "Dahua Surveillance System".to_string(),
+                            acquisition_time: Utc::now(),
+                            capacity,
+                            image_format: ImageFormat::Raw,
+                            responsible_examiner: examiner,
+                            acquisition_tool: Some("dd".to_string()),
+                            acquisition_tool_version: Some("8.32".to_string()),
+                            source_state: SourceState::ReadOnly,
+                            acquisition_id: None,
+                            path: path.to_string_lossy().to_string(),
+                            registered_at: Utc::now(),
+                            examiner_timezone: None,
+                        };
+
+                        match repositories::evidence::create_evidence(pool, &evidence).await {
+                            Ok(_) => {
+                                println!(
+                                    "Registered sample evidence: '{}' ({}) -> {}",
+                                    evidence.source_device,
+                                    evidence.id.0,
+                                    path.display()
+                                );
+                            }
+                            Err(e) => eprintln!("Failed to register sample evidence: {e}"),
+                        }
+                    } else {
+                        println!("Note: dahua_dhfs_sample.raw not found; created empty demo case.");
+                    }
+                }
+                Err(e) => eprintln!("Failed to create demo case: {e}"),
+            }
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("Failed to check existing cases for seeding: {e}"),
+    }
 }
 
 /// Start the project-local Ollama daemon that powers the offline assistant, if the

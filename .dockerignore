@@ -16,6 +16,8 @@ reports/
 *.img
 *.E01
 *.e01
+!evidence_samples/
+!evidence_samples/**
 *.exe
 .git
 .github
