@@ -63,6 +63,12 @@ pub fn app_router(state: AppState) -> Router {
             post(handlers::create_case).get(handlers::list_cases),
         )
         .route("/api/cases/:id", get(handlers::get_case))
+        .route("/api/acquisition/devices", get(handlers::list_acquisition_devices))
+        .route("/api/acquisition/assess", post(handlers::assess_acquisition_safety))
+        .route("/api/acquisition/jobs", post(handlers::start_acquisition_job))
+        .route("/api/acquisition/jobs/:id", get(handlers::get_acquisition_job))
+        .route("/api/acquisition/jobs/:id/cancel", post(handlers::cancel_acquisition_job))
+        .route("/api/acquisition/jobs/:id/register", post(handlers::register_acquisition_evidence))
         .route(
             "/api/cases/:id/evidence",
             post(handlers::register_evidence).get(handlers::list_case_evidence),

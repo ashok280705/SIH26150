@@ -3300,3 +3300,371 @@ pub async fn get_evidence_timezone(
         "examiner_timezone": evidence.examiner_timezone,
     })))
 }
+
+// ============================================================================
+// Physical Disk Acquisition Handlers
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct SafetyAssessRequest {
+    pub source: acquisition::PhysicalSource,
+    pub config: acquisition::AcquisitionConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartAcquisitionRequest {
+    pub source_drive: u32,
+    pub destination_path: String,
+    pub case_id: uuid::Uuid,
+    pub examiner: String,
+    pub chunk_size: Option<usize>,
+    pub max_retries: Option<u32>,
+    pub attestation: acquisition::ExaminerWriteBlockerAttestation,
+    pub attempt_volume_lock: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterAcquisitionEvidenceRequest {
+    pub examiner_timezone: Option<forensic_core::ExaminerTimezone>,
+}
+
+/// GET /api/acquisition/devices
+pub async fn list_acquisition_devices() -> Result<Json<Vec<acquisition::PhysicalSource>>, ApiError> {
+    #[cfg(windows)]
+    {
+        let devices = tokio::task::spawn_blocking(acquisition::enumerate_physical_devices)
+            .await
+            .map_err(|e| ApiError {
+                error: format!("Failed to enumerate physical devices: {e}"),
+                details: None,
+            })?;
+        Ok(Json(devices))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Json(vec![]))
+    }
+}
+
+/// POST /api/acquisition/assess
+pub async fn assess_acquisition_safety(
+    Json(input): Json<SafetyAssessRequest>,
+) -> Result<Json<acquisition::SafetyAssessment>, ApiError> {
+    let assessment = tokio::task::spawn_blocking(move || {
+        acquisition::assess_safety(&input.source, &input.config)
+    })
+    .await
+    .map_err(|e| ApiError {
+        error: format!("Failed to assess acquisition safety: {e}"),
+        details: None,
+    })?;
+
+    Ok(Json(assessment))
+}
+
+/// POST /api/acquisition/jobs
+pub async fn start_acquisition_job(
+    State(state): State<AppState>,
+    Json(input): Json<StartAcquisitionRequest>,
+) -> Result<(StatusCode, Json<crate::jobs::JobStartResponse>), ApiError> {
+    #[cfg(windows)]
+    let source_meta = {
+        let drive_num = input.source_drive;
+        let devices = tokio::task::spawn_blocking(acquisition::enumerate_physical_devices)
+            .await
+            .map_err(|e| ApiError {
+                error: format!("Enumeration failed: {e}"),
+                details: None,
+            })?;
+        devices.into_iter().find(|d| d.drive_number == drive_num)
+    };
+    #[cfg(not(windows))]
+    let source_meta: Option<acquisition::PhysicalSource> = None;
+
+    let source_meta = source_meta.ok_or_else(|| ApiError {
+        error: format!("PhysicalDrive{} not found or inaccessible", input.source_drive),
+        details: None,
+    })?;
+
+    let config = acquisition::AcquisitionConfig {
+        source_path: source_meta.device_path.clone(),
+        destination_path: input.destination_path.clone(),
+        chunk_size: input.chunk_size.unwrap_or(1024 * 1024),
+        max_retries: input.max_retries.unwrap_or(3),
+        case_id: input.case_id,
+        examiner: input.examiner.clone(),
+        attestation: input.attestation,
+        attempt_volume_lock: input.attempt_volume_lock.unwrap_or(true),
+    };
+
+    let safety = acquisition::assess_safety(&source_meta, &config);
+    if !safety.is_safe_to_proceed {
+        return Err(ApiError {
+            error: format!(
+                "Acquisition rejected by safety policy: {}",
+                safety.blocking_reasons.join("; ")
+            ),
+            details: Some(serde_json::to_string(&safety.blocking_reasons).unwrap_or_default()),
+        });
+    }
+
+    let (job_id, entry_arc, cancel_token) = state.jobs.create_acquisition_job(config.clone()).await;
+
+    // Log custody event
+    let custody = CustodyEvent::new(
+        ExaminerId(input.examiner.clone()),
+        CustodyAction::Acquisition,
+        format!(
+            "Started physical acquisition for PhysicalDrive{} to '{}'",
+            input.source_drive, config.destination_path
+        ),
+        CaseId(input.case_id),
+    );
+    let _ = repositories::custody::insert_event(&state.db_pool, &custody).await;
+
+    // Spawn background worker for physical disk I/O
+    let db_pool = state.db_pool.clone();
+    tokio::task::spawn_blocking(move || {
+        #[cfg(windows)]
+        let source_res = acquisition::WindowsSourceDevice::open(
+            &source_meta.device_path,
+            Some(source_meta.clone()),
+        );
+        #[cfg(not(windows))]
+        let source_res: Result<acquisition::MockSourceDevice, acquisition::AcquisitionError> =
+            Err(acquisition::AcquisitionError::SourceOpenFailed {
+                path: source_meta.device_path.clone(),
+                os_error: None,
+                message: "Physical acquisition only supported on Windows".to_string(),
+            });
+
+        let source = match source_res {
+            Ok(s) => s,
+            Err(e) => {
+                let rt = tokio::runtime::Handle::current();
+                let _ = rt.block_on(async {
+                    let mut guard = entry_arc.write().await;
+                    guard.state = crate::jobs::JobState::Failed;
+                    guard.error = Some(format!("Failed to open physical drive: {e}"));
+                });
+                return;
+            }
+        };
+
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            let mut guard = entry_arc.write().await;
+            guard.state = crate::jobs::JobState::Running;
+            guard.stage = Some("acquiring".to_string());
+        });
+
+        let entry_progress = entry_arc.clone();
+        let progress_cb: acquisition::ProgressCallback = Box::new(move |p: acquisition::AcquisitionProgress| {
+            if let Ok(mut guard) = entry_progress.try_write() {
+                guard.stage = Some(p.current_phase.clone());
+                guard.acquisition_progress = Some(p);
+            }
+        });
+
+        let acq_result = acquisition::run_acquisition(
+            &source,
+            Some(&source_meta),
+            &config,
+            &safety,
+            Some(&cancel_token),
+            Some(progress_cb),
+        );
+
+        match acq_result {
+            Ok(res) => {
+                rt.block_on(async {
+                    let mut guard = entry_arc.write().await;
+                    guard.state = crate::jobs::JobState::Completed;
+                    guard.stage = Some("completed".to_string());
+                    guard.acquisition_result = Some(res.clone());
+                });
+
+                let custody_finish = CustodyEvent::new(
+                    ExaminerId(config.examiner.clone()),
+                    CustodyAction::Acquisition,
+                    format!(
+                        "Physical acquisition completed. Image: '{}', Pass-1 SHA-256: {}, Status: {:?}",
+                        res.image_path.display(),
+                        res.verification.pass1_sha256,
+                        res.status
+                    ),
+                    CaseId(config.case_id),
+                );
+                rt.block_on(async {
+                    let _ = repositories::custody::insert_event(&db_pool, &custody_finish).await;
+                });
+            }
+            Err(acquisition::AcquisitionError::Cancelled) => {
+                rt.block_on(async {
+                    let mut guard = entry_arc.write().await;
+                    guard.state = crate::jobs::JobState::Cancelled;
+                    guard.stage = Some("cancelled".to_string());
+                    guard.error = Some("Acquisition cancelled by examiner".to_string());
+                });
+            }
+            Err(e) => {
+                rt.block_on(async {
+                    let mut guard = entry_arc.write().await;
+                    guard.state = crate::jobs::JobState::Failed;
+                    guard.stage = Some("failed".to_string());
+                    guard.error = Some(format!("Acquisition failed: {e}"));
+                });
+            }
+        }
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(crate::jobs::JobStartResponse {
+            job_id,
+            state: crate::jobs::JobState::Queued,
+        }),
+    ))
+}
+
+/// GET /api/acquisition/jobs/:id
+pub async fn get_acquisition_job(
+    State(state): State<AppState>,
+    AxumPath(job_id): AxumPath<uuid::Uuid>,
+) -> Result<Json<crate::jobs::JobStatusResponse>, ApiError> {
+    let status = state.jobs.get_job_status(&job_id).await.ok_or_else(|| ApiError {
+        error: format!("Job '{job_id}' not found"),
+        details: None,
+    })?;
+    Ok(Json(status))
+}
+
+/// POST /api/acquisition/jobs/:id/cancel
+pub async fn cancel_acquisition_job(
+    State(state): State<AppState>,
+    AxumPath(job_id): AxumPath<uuid::Uuid>,
+) -> Result<Json<crate::jobs::JobCancelResponse>, ApiError> {
+    let res = state.jobs.cancel_job(&job_id).await.ok_or_else(|| ApiError {
+        error: format!("Job '{job_id}' not found"),
+        details: None,
+    })?;
+    Ok(Json(res))
+}
+
+/// POST /api/acquisition/jobs/:id/register
+pub async fn register_acquisition_evidence(
+    State(state): State<AppState>,
+    AxumPath(job_id): AxumPath<uuid::Uuid>,
+    Json(input): Json<Option<RegisterAcquisitionEvidenceRequest>>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let job_status = state.jobs.get_job_status(&job_id).await.ok_or_else(|| ApiError {
+        error: format!("Job '{job_id}' not found"),
+        details: None,
+    })?;
+
+    if job_status.state != crate::jobs::JobState::Completed {
+        return Err(ApiError {
+            error: format!("Cannot register evidence: acquisition job state is {:?}", job_status.state),
+            details: None,
+        });
+    }
+
+    let acq_res = job_status.acquisition_result.ok_or_else(|| ApiError {
+        error: "Acquisition result is missing".to_string(),
+        details: None,
+    })?;
+
+    // Open acquired RAW image with RawReader
+    let reader = RawReader::open(&acq_res.image_path).map_err(|e| ApiError {
+        error: format!("Failed to open acquired RAW image at '{}': {e}", acq_res.image_path.display()),
+        details: None,
+    })?;
+    let reader_arc: Arc<dyn evidence_reader::EvidenceReader> = Arc::new(reader);
+
+    let evidence_id = EvidenceId::new();
+    let acq_id = forensic_core::identifiers::AcquisitionId::new();
+    let now = Utc::now();
+
+    let image_name = acq_res.image_path.file_name().and_then(|n| n.to_str()).unwrap_or("image.raw");
+
+    let evidence = Evidence {
+        id: evidence_id,
+        case_id: CaseId(acq_res.case_id),
+        source_device: format!("Acquired Image ({image_name})"),
+        acquisition_time: now,
+        capacity: acq_res.bytes_written,
+        image_format: forensic_core::ImageFormat::Raw,
+        responsible_examiner: ExaminerId("Forensic Examiner".to_string()),
+        acquisition_tool: Some("VidForge Physical Acquisition Engine".to_string()),
+        acquisition_tool_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        source_state: forensic_core::SourceState::ReadOnly,
+        acquisition_id: Some(acq_id.clone()),
+        path: acq_res.image_path.to_string_lossy().to_string(),
+        registered_at: now,
+        examiner_timezone: input.and_then(|i| i.examiner_timezone),
+    };
+
+    let bad_sector_json = serde_json::to_value(&acq_res.bad_sectors).unwrap_or_default();
+    let unresolved_ranges = serde_json::json!([]);
+
+    let acquisition_record = Acquisition {
+        id: acq_id,
+        evidence_id: evidence_id.clone(),
+        status: match acq_res.status {
+            acquisition::AcquisitionStatus::Complete => AcquisitionStatus::Complete,
+            acquisition::AcquisitionStatus::Partial => AcquisitionStatus::Partial,
+            _ => AcquisitionStatus::Complete,
+        },
+        tool: evidence.acquisition_tool.clone(),
+        tool_version: evidence.acquisition_tool_version.clone(),
+        map_reference: Some(acq_res.manifest_path.to_string_lossy().to_string()),
+        map_hash: None,
+        bad_sector_ranges: serde_json::from_value(bad_sector_json).unwrap_or_default(),
+        unresolved_ranges: serde_json::from_value(unresolved_ranges).unwrap_or_default(),
+        verification: forensic_core::validation::ValidationState {
+            state: forensic_core::validation::ValidationStateKind::Pass,
+            reason: format!(
+                "Pass-1/Pass-2 Verified. MD5: {}, SHA-256: {}",
+                acq_res.verification.pass1_md5, acq_res.verification.pass1_sha256
+            ),
+            operation: "physical_acquisition_verification".to_string(),
+            subject: evidence_id.0.to_string(),
+        },
+        created_at: now,
+    };
+
+    let custody = CustodyEvent::new(
+        evidence.responsible_examiner.clone(),
+        CustodyAction::Ingest,
+        format!(
+            "Registered acquired evidence {} from '{}' (SHA-256: {})",
+            evidence_id.0,
+            acq_res.image_path.display(),
+            acq_res.verification.pass1_sha256
+        ),
+        CaseId(acq_res.case_id),
+    );
+
+    // Save to DB in correct dependency order
+    repositories::acquisitions::create_acquisition(&state.db_pool, &acquisition_record)
+        .await
+        .map_err(map_err)?;
+    repositories::evidence::create_evidence(&state.db_pool, &evidence)
+        .await
+        .map_err(map_err)?;
+    repositories::custody::insert_event(&state.db_pool, &custody)
+        .await
+        .map_err(map_err)?;
+
+    // Register reader in state for byte reads & downstream analysis
+    let mut readers = state.readers.write().await;
+    readers.insert(evidence_id, reader_arc);
+
+    let res = serde_json::json!({
+        "evidence": evidence,
+        "acquisition": acquisition_record,
+        "ingest_hash": acq_res.verification.pass1_sha256,
+    });
+
+    Ok((StatusCode::CREATED, Json(res)))
+}

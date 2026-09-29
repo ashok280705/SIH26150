@@ -1,4 +1,4 @@
-import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording, ExaminerTimezone } from '../types';
+import { Case, Evidence, Acquisition, SourceSafetyReport, CustodyEvent, HexChunkResponse, CapabilityStages, ClassifiedDetectionResult, StorageTopology, ParserRun, Recording, ExaminerTimezone, PhysicalSource, SafetyAssessment, AcquisitionJobStatus } from '../types';
 import { normalizeDetectionResponse } from './adapters/detection';
 import { RecoveryResponse, UnifiedTimelineResponse, OrderingMode, PipelineRun } from '../types';
 import { FfmpegInfo, ArtifactRecord, ArtifactVerificationResult, ReconstructResponse } from '../types';
@@ -477,6 +477,99 @@ export async function getEvidenceTimezone(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to get evidence timezone');
+  }
+  return res.json();
+}
+
+/** Lists enumerated physical drives available on the Windows host. */
+export async function listAcquisitionDevices(): Promise<PhysicalSource[]> {
+  const res = await apiFetch('/acquisition/devices');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to enumerate physical devices');
+  }
+  return res.json();
+}
+
+/** Evaluates safety invariants for a physical source and destination path. */
+export async function assessAcquisitionSafety(
+  source: PhysicalSource,
+  config: any
+): Promise<SafetyAssessment> {
+  const res = await apiFetch('/acquisition/assess', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source, config }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Safety assessment rejected');
+  }
+  return res.json();
+}
+
+/** Initiates an asynchronous physical disk acquisition job. */
+export async function startAcquisitionJob(input: {
+  source_drive: number;
+  destination_path: string;
+  case_id: string;
+  examiner: string;
+  chunk_size?: number;
+  max_retries?: number;
+  attestation: any;
+  attempt_volume_lock?: boolean;
+}): Promise<{ job_id: string; state: string }> {
+  const cleanCaseId = input.case_id.replace('case-', '');
+  const res = await apiFetch('/acquisition/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...input,
+      case_id: cleanCaseId,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to start acquisition job');
+  }
+  return res.json();
+}
+
+/** Polls the real-time status of an acquisition job. */
+export async function getAcquisitionJob(jobId: string): Promise<AcquisitionJobStatus> {
+  const res = await apiFetch(`/acquisition/jobs/${jobId}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to query acquisition job');
+  }
+  return res.json();
+}
+
+/** Cancels an active or queued acquisition job. */
+export async function cancelAcquisitionJob(jobId: string): Promise<{ job_id: string; state: string; message: string }> {
+  const res = await apiFetch(`/acquisition/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to cancel acquisition job');
+  }
+  return res.json();
+}
+
+/** Registers a finalized, verified physical acquisition as active VidForge evidence. */
+export async function registerAcquisitionEvidence(
+  jobId: string,
+  options?: { examiner_timezone?: string }
+): Promise<{ evidence: Evidence; acquisition: Acquisition; ingest_hash: string }> {
+  const res = await apiFetch(`/acquisition/jobs/${jobId}/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options || {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to register acquisition evidence');
   }
   return res.json();
 }

@@ -52,13 +52,18 @@ impl From<PipelineProgress> for JobProgressInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobStatusResponse {
     pub job_id: Uuid,
-    pub evidence_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_id: Option<Uuid>,
     pub state: JobState,
     pub stage: Option<String>,
     pub progress: Option<JobProgressInfo>,
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<PipelineRun>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acquisition_progress: Option<acquisition::AcquisitionProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acquisition_result: Option<acquisition::AcquisitionResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,13 +81,16 @@ pub struct JobCancelResponse {
 
 pub struct JobEntry {
     pub id: Uuid,
-    pub evidence_id: EvidenceId,
+    pub evidence_id: Option<EvidenceId>,
     pub state: JobState,
     pub stage: Option<String>,
     pub progress: Option<JobProgressInfo>,
     pub error: Option<String>,
     pub result: Option<PipelineRun>,
     pub cancel_token: CancellationToken,
+    pub acquisition_config: Option<acquisition::AcquisitionConfig>,
+    pub acquisition_progress: Option<acquisition::AcquisitionProgress>,
+    pub acquisition_result: Option<acquisition::AcquisitionResult>,
 }
 
 #[derive(Clone, Default)]
@@ -97,7 +105,7 @@ impl JobCoordinator {
         }
     }
 
-    /// Creates and registers a new job entry, returning its ID, an Arc to the entry,
+    /// Creates and registers a new pipeline job entry, returning its ID, an Arc to the entry,
     /// and its cancellation token.
     pub async fn create_job(
         &self,
@@ -107,13 +115,41 @@ impl JobCoordinator {
         let cancel_token = CancellationToken::new();
         let entry = Arc::new(RwLock::new(JobEntry {
             id: job_id,
-            evidence_id,
+            evidence_id: Some(evidence_id),
             state: JobState::Queued,
             stage: None,
             progress: None,
             error: None,
             result: None,
             cancel_token: cancel_token.clone(),
+            acquisition_config: None,
+            acquisition_progress: None,
+            acquisition_result: None,
+        }));
+
+        self.jobs.write().await.insert(job_id, entry.clone());
+        (job_id, entry, cancel_token)
+    }
+
+    /// Creates and registers a new physical acquisition job entry.
+    pub async fn create_acquisition_job(
+        &self,
+        config: acquisition::AcquisitionConfig,
+    ) -> (Uuid, Arc<RwLock<JobEntry>>, CancellationToken) {
+        let job_id = Uuid::new_v4();
+        let cancel_token = CancellationToken::new();
+        let entry = Arc::new(RwLock::new(JobEntry {
+            id: job_id,
+            evidence_id: None,
+            state: JobState::Queued,
+            stage: Some("safety_assessment".to_string()),
+            progress: None,
+            error: None,
+            result: None,
+            cancel_token: cancel_token.clone(),
+            acquisition_config: Some(config),
+            acquisition_progress: None,
+            acquisition_result: None,
         }));
 
         self.jobs.write().await.insert(job_id, entry.clone());
@@ -129,12 +165,14 @@ impl JobCoordinator {
         let guard = entry_arc.read().await;
         Some(JobStatusResponse {
             job_id: guard.id,
-            evidence_id: guard.evidence_id.0,
+            evidence_id: guard.evidence_id.map(|e| e.0),
             state: guard.state,
             stage: guard.stage.clone(),
             progress: guard.progress.clone(),
             error: guard.error.clone(),
             result: guard.result.clone(),
+            acquisition_progress: guard.acquisition_progress.clone(),
+            acquisition_result: guard.acquisition_result.clone(),
         })
     }
 

@@ -12,12 +12,15 @@ use serde::{Deserialize, Serialize};
 pub enum HashAlgorithm {
     /// SHA-256 (required by the platform).
     Sha256,
+    /// MD5 (forensic image and legacy verification).
+    Md5,
 }
 
 impl std::fmt::Display for HashAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Sha256 => write!(f, "SHA-256"),
+            Self::Md5 => write!(f, "MD5"),
         }
     }
 }
@@ -29,7 +32,7 @@ impl std::fmt::Display for HashAlgorithm {
 pub struct Hash {
     /// Which algorithm produced this hash.
     pub algorithm: HashAlgorithm,
-    /// Raw hash bytes (e.g. 32 bytes for SHA-256).
+    /// Raw hash bytes (e.g. 32 bytes for SHA-256, 16 bytes for MD5).
     #[serde(with = "hex_serde")]
     pub value: Vec<u8>,
 }
@@ -45,6 +48,18 @@ impl Hash {
         debug_assert_eq!(bytes.len(), 32, "SHA-256 hash must be 32 bytes");
         Self {
             algorithm: HashAlgorithm::Sha256,
+            value: bytes,
+        }
+    }
+
+    /// Create an MD5 hash from raw bytes.
+    ///
+    /// # Panics
+    /// Panics in debug mode if `bytes.len() != 16`.
+    pub fn md5(bytes: Vec<u8>) -> Self {
+        debug_assert_eq!(bytes.len(), 16, "MD5 hash must be 16 bytes");
+        Self {
+            algorithm: HashAlgorithm::Md5,
             value: bytes,
         }
     }
@@ -120,5 +135,14 @@ mod tests {
             !json.contains('['),
             "value should be hex string, not array: {json}"
         );
+    }
+
+    #[test]
+    fn md5_serde_roundtrip() {
+        let hash = Hash::md5(vec![0x12; 16]);
+        let json = serde_json::to_string(&hash).unwrap();
+        let back: Hash = serde_json::from_str(&json).unwrap();
+        assert_eq!(hash, back);
+        assert_eq!(hash.to_string(), format!("MD5:{}", "12".repeat(16)));
     }
 }

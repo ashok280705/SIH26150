@@ -726,3 +726,103 @@ export interface MediaPipelineStatus {
   frames?: Array<Record<string, unknown>>;
   decode?: Record<string, unknown> | null;
 }
+
+export interface VolumeInfo {
+  volume_path: string;
+  drive_letter?: string | null;
+  label?: string | null;
+  filesystem?: string | null;
+  capacity: number;
+}
+
+export interface PhysicalSource {
+  drive_number: number;
+  device_path: string;
+  vendor?: string | null;
+  model?: string | null;
+  serial?: string | null;
+  bus_type: string;
+  capacity: number;
+  logical_sector_size: number;
+  physical_sector_size: number;
+  removable: boolean;
+  os_write_protected: boolean;
+  volumes: VolumeInfo[];
+}
+
+export interface ExaminerWriteBlockerAttestation {
+  hardware_write_blocker_used: boolean;
+  blocker_make_model?: string | null;
+  examiner_notes?: string | null;
+}
+
+export interface SafetyAssessment {
+  source_accessible: boolean;
+  source_read_only_confirmed: boolean;
+  destination_exists_or_creatable: boolean;
+  destination_is_not_source: boolean;
+  destination_not_on_source_device: boolean;
+  destination_device_number?: number | null;
+  source_capacity_bytes: number;
+  destination_free_space_bytes: number;
+  has_sufficient_space: boolean;
+  collision_detected: boolean;
+  recognized_volumes: VolumeInfo[];
+  volume_lock_state: string;
+  is_safe_to_proceed: boolean;
+  blocking_reasons: string[];
+  warnings: string[];
+}
+
+export interface AcquisitionProgress {
+  bytes_processed: number;
+  total_bytes: number;
+  percentage: number;
+  throughput_bytes_per_sec: number;
+  elapsed_seconds: number;
+  eta_seconds?: number | null;
+  bad_sector_count: number;
+  unreadable_bytes: number;
+  current_phase: string;
+}
+
+export interface VerificationRecord {
+  pass1_md5: string;
+  pass1_sha256: string;
+  pass2_md5?: string | null;
+  pass2_sha256?: string | null;
+  status: 'pending' | 'verified' | 'failed_mismatch' | 'skipped';
+  details?: string | null;
+  verified_at?: string | null;
+}
+
+export interface AcquisitionResult {
+  acquisition_id: string;
+  case_id: string;
+  status: string;
+  image_path: string;
+  manifest_path: string;
+  bytes_written: number;
+  bad_sectors: {
+    offset: number;
+    length: number;
+    start_lba: number;
+    sector_count: number;
+    status: string;
+    win32_error?: number | null;
+    retry_count: number;
+  }[];
+  verification: VerificationRecord;
+  elapsed_seconds: number;
+}
+
+export interface AcquisitionJobStatus {
+  job_id: string;
+  evidence_id?: string | null;
+  state: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed';
+  stage?: string | null;
+  progress?: any;
+  error?: string | null;
+  acquisition_progress?: AcquisitionProgress | null;
+  acquisition_result?: AcquisitionResult | null;
+}

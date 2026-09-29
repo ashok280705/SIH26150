@@ -33,6 +33,8 @@ pub enum CustodyAction {
     WriteDenied,
     /// Hash was computed for an artifact.
     HashComputed,
+    /// Physical source disk acquisition event.
+    Acquisition,
 }
 
 impl std::fmt::Display for CustodyAction {
@@ -47,6 +49,7 @@ impl std::fmt::Display for CustodyAction {
             Self::Report => write!(f, "report"),
             Self::WriteDenied => write!(f, "write_denied"),
             Self::HashComputed => write!(f, "hash_computed"),
+            Self::Acquisition => write!(f, "acquisition"),
         }
     }
 }
@@ -245,6 +248,7 @@ mod tests {
             CustodyAction::Report,
             CustodyAction::WriteDenied,
             CustodyAction::HashComputed,
+            CustodyAction::Acquisition,
         ];
         for action in &actions {
             let json = serde_json::to_string(action).unwrap();

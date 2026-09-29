@@ -305,7 +305,12 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'acquisition' && (
-          <AcquisitionView acquisition={acquisition} />
+          <AcquisitionView
+            acquisition={acquisition}
+            activeCase={activeCase}
+            onEvidenceRegistered={handleEvidenceRegistered}
+            onNavigateTab={setActiveTab}
+          />
         )}
 
         {activeTab === 'hex_viewer' && (

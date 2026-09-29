@@ -3,6 +3,27 @@
 version = 3
 
 [[package]]
+name = "acquisition"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "confidence",
+ "evidence-reader",
+ "forensic-core",
+ "hashing",
+ "hex",
+ "md-5",
+ "pipeline",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1060,6 +1081,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 name = "forensic-api"
 version = "0.1.0"
 dependencies = [
+ "acquisition",
  "axum",
  "chrono",
  "confidence",
