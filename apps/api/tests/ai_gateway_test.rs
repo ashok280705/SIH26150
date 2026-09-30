@@ -140,3 +140,41 @@ async fn test_ai_gateway_chat_with_groq() {
     assert!(!response.message.is_empty());
     println!("Groq Chat Response: {}", response.message);
 }
+
+#[tokio::test]
+async fn test_ai_gateway_vision_frame_analysis() {
+    setup_env();
+    let gateway = AiGateway::from_env();
+
+    // Valid 1x1 test JPEG
+    let sample_jpeg_base64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=";
+
+    let req = forensic_api::ai::AiVisionAnalysisRequest {
+        image_base64: sample_jpeg_base64.to_string(),
+        evidence_id: Some("EV-CCTV-TEST-001".to_string()),
+        recording_id: Some("REC-DHFS-CH1".to_string()),
+        channel: Some(1),
+        timestamp: Some("2026-09-24 10:43:21 UTC".to_string()),
+        frame_index: Some(1842),
+        provider: Some("gemini".to_string()),
+        api_key: None,
+        model: Some("gemini-3.8-flash".to_string()),
+    };
+
+    let res = gateway.analyze_frame(req).await;
+    assert!(res.is_ok(), "Vision frame analysis failed: {:?}", res.err());
+
+    let response = res.unwrap();
+    assert_eq!(response.provider, "gemini");
+    assert_eq!(response.timestamp, "2026-09-24 10:43:21 UTC");
+    assert_eq!(response.frame_index, Some(1842));
+    assert_eq!(response.channel, Some(1));
+    assert_eq!(response.frame_sha256.len(), 64);
+    assert!(response.is_ai_assisted);
+    println!("Vision Analysis Persons: {} ({})", response.persons.count, response.persons.details);
+    println!("Vision Analysis Faces: {} ({})", response.faces.count, response.faces.details);
+    println!("Vision Analysis Vehicles: {} ({})", response.vehicles.count, response.vehicles.details);
+    println!("Vision Analysis Scene: {}", response.scene_description);
+    println!("Vision Analysis SHA-256: {}", response.frame_sha256);
+}
+

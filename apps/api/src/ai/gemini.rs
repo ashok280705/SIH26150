@@ -133,4 +133,99 @@ impl AiProvider for GeminiProvider {
             Err(last_error)
         })
     }
+
+    fn analyze_image<'a>(
+        &'a self,
+        image_bytes: &'a [u8],
+        mime_type: &'a str,
+        prompt: &'a str,
+        model: Option<&'a str>,
+        api_key: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let key = api_key
+                .or(self.default_key.as_deref())
+                .ok_or_else(|| "Gemini API key is required. Provide GEMINI_API_KEY environment variable or enter it in settings.".to_string())?;
+
+            let requested_model = model.unwrap_or(self.default_model());
+            let candidate_models = [
+                requested_model,
+                "gemini-3.7-flash",
+                "gemini-3.5-flash",
+                "gemini-3.1-flash-lite",
+            ];
+
+            use base64::Engine;
+            let base64_data = base64::engine::general_purpose::STANDARD.encode(image_bytes);
+
+            let body = json!({
+                "contents": [{
+                    "parts": [
+                        { "text": prompt },
+                        {
+                            "inlineData": {
+                                "mimeType": mime_type,
+                                "data": base64_data
+                            }
+                        }
+                    ]
+                }],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "responseMimeType": "application/json"
+                }
+            });
+
+            let mut last_error = String::new();
+
+            for model_name in candidate_models {
+                let url = format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                    model_name, key
+                );
+
+                for attempt in 0..2 {
+                    let resp = match self.client
+                        .post(&url)
+                        .json(&body)
+                        .send()
+                        .await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                last_error = format!("Gemini vision network request failed: {e}");
+                                break;
+                            }
+                        };
+
+                    if !resp.status().is_success() {
+                        let status = resp.status();
+                        let err_text = resp.text().await.unwrap_or_else(|_| "unknown error".into());
+                        last_error = format!("Gemini Vision API error on {model_name} ({status}): {err_text}");
+                        if status.as_u16() == 503 || status.as_u16() == 429 {
+                            if attempt == 0 {
+                                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+
+                    let res_json: serde_json::Value = resp
+                        .json()
+                        .await
+                        .map_err(|e| format!("Failed to parse Gemini vision response: {e}"))?;
+
+                    if let Some(text) = res_json["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+                        return Ok(text.to_string());
+                    } else {
+                        last_error = format!("Gemini returned empty candidate content on {model_name}");
+                        break;
+                    }
+                }
+            }
+
+            Err(last_error)
+        })
+    }
 }
+

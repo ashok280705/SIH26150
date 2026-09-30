@@ -3747,3 +3747,20 @@ pub async fn ai_report_summary_handler(
         })?;
     Ok(Json(res))
 }
+
+/// POST /api/ai/vision/analyze
+pub async fn ai_vision_analyze_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<crate::ai::AiVisionAnalysisRequest>,
+) -> Result<Json<crate::ai::AiVisionAnalysisResponse>, ApiError> {
+    let res = state
+        .ai_gateway
+        .analyze_frame(payload)
+        .await
+        .map_err(|e| ApiError {
+            error: format!("AI Vision analysis failed: {e}"),
+            details: None,
+        })?;
+    Ok(Json(res))
+}
+

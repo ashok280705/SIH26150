@@ -684,3 +684,54 @@ export async function generateAiReportSummary(req: AiReportSummaryRequest): Prom
   }
   return res.json();
 }
+
+export interface DetectionCategory {
+  count: number;
+  details: string;
+}
+
+export interface AiVisionAnalysisRequest {
+  image_base64: string;
+  evidence_id?: string;
+  recording_id?: string;
+  channel?: number;
+  timestamp?: string;
+  frame_index?: number;
+  provider?: string;
+  api_key?: string;
+  model?: string;
+}
+
+export interface AiVisionAnalysisResponse {
+  evidence_id?: string;
+  recording_id?: string;
+  channel?: number;
+  timestamp: string;
+  frame_index?: number;
+  frame_sha256: string;
+  provider: string;
+  model: string;
+  persons: DetectionCategory;
+  faces: DetectionCategory;
+  vehicles: DetectionCategory;
+  objects: string[];
+  scene_description: string;
+  visual_clarity: string;
+  limitations: string[];
+  is_ai_assisted: boolean;
+  disclaimer: string;
+}
+
+export async function analyzeFrameAi(req: AiVisionAnalysisRequest): Promise<AiVisionAnalysisResponse> {
+  const res = await apiFetch('/ai/vision/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to analyze frame with AI Vision');
+  }
+  return res.json();
+}
+

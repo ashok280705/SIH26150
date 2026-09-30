@@ -4,9 +4,10 @@ import {
   ShieldCheck, AlertTriangle, CheckCircle2, XCircle,
   Clock, Hash as HashIcon, RefreshCw, X,
   SkipBack, SkipForward, ChevronLeft, ChevronRight,
-  Rewind, FastForward, Type, Move, Eye, EyeOff
+  Rewind, FastForward, Type, Move, Eye, EyeOff,
+  Sparkles, User, UserCheck, Car, Box, Copy, Check, Info
 } from 'lucide-react';
-import { verifyArtifact, getMediaUrl } from '../../services/api';
+import { verifyArtifact, getMediaUrl, analyzeFrameAi, AiVisionAnalysisResponse } from '../../services/api';
 import { ArtifactVerificationResult } from '../../types';
 
 export interface VideoPlayerProps {
@@ -99,6 +100,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [overlayCorner, setOverlayCorner] = useState<Corner>('tl');
   const [overlayColor, setOverlayColor] = useState<string>(OVERLAY_COLORS[0]);
+
+  // AI Visual Analytics state
+  const [activeTab, setActiveTab] = useState<'meta' | 'ai'>('meta');
+  const [analyzingFrame, setAnalyzingFrame] = useState(false);
+  const [visionResult, setVisionResult] = useState<AiVisionAnalysisResponse | null>(null);
+  const [visionError, setVisionError] = useState<string | null>(null);
+  const [capturedSnapshot, setCapturedSnapshot] = useState<string | null>(null);
+  const [copiedFindings, setCopiedFindings] = useState(false);
 
   const isHevc = codec.toLowerCase().includes('h.265') || codec.toLowerCase().includes('hevc') || codec.toLowerCase().includes('h265');
 
@@ -225,6 +234,87 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  const handleAnalyzeCurrentFrame = async () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+
+    // Pause video to stabilize current frame
+    if (isPlaying) {
+      video.pause();
+      setIsPlaying(false);
+    }
+
+    setAnalyzingFrame(true);
+    setVisionError(null);
+    setActiveTab('ai');
+
+    try {
+      // 1. Off-screen canvas to extract current frame pixels directly from video buffer
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 360;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Canvas 2D context unavailable for frame capture');
+      }
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64Data = canvas.toDataURL('image/jpeg', 0.85);
+      setCapturedSnapshot(base64Data);
+
+      // 2. Compute exact forensic wall clock timestamp
+      const currentStamp = advanceStamp(nativeTime || normalizedUtc, currentTime);
+
+      // 3. Dispatch to AI Vision Gateway
+      const result = await analyzeFrameAi({
+        image_base64: base64Data,
+        evidence_id: videoId,
+        recording_id: recordingId,
+        channel,
+        timestamp: currentStamp,
+        frame_index: currentFrame,
+      });
+
+      setVisionResult(result);
+    } catch (err: any) {
+      console.error('AI Vision analysis error:', err);
+      setVisionError(err.message || 'Frame visual analysis failed');
+    } finally {
+      setAnalyzingFrame(false);
+    }
+  };
+
+  const handleCopyFindings = () => {
+    if (!visionResult) return;
+    const text = `VIDFORGE AI VISUAL ANALYSIS REPORT
+Evidence ID: ${visionResult.evidence_id || 'N/A'}
+Recording ID: ${visionResult.recording_id || 'N/A'}
+Camera Channel: CH${String(channel).padStart(2, '0')}
+Forensic Timestamp: ${visionResult.timestamp}
+Frame Index: ${visionResult.frame_index || 'N/A'}
+Frame SHA-256: ${visionResult.frame_sha256}
+Vision Model: ${visionResult.provider} (${visionResult.model})
+
+DETECTIONS:
+- Faces Visible: ${visionResult.faces.count} (${visionResult.faces.details})
+- Persons Detected: ${visionResult.persons.count} (${visionResult.persons.details})
+- Vehicles Detected: ${visionResult.vehicles.count} (${visionResult.vehicles.details})
+- Notable Objects: ${visionResult.objects.join(', ') || 'None'}
+
+SCENE INTERPRETATION:
+${visionResult.scene_description}
+
+VISUAL CLARITY: ${visionResult.visual_clarity}
+
+LIMITATIONS & DISCLAIMER:
+${visionResult.disclaimer}
+${visionResult.limitations.map(l => `- ${l}`).join('\n')}`;
+
+    navigator.clipboard.writeText(text);
+    setCopiedFindings(true);
+    setTimeout(() => setCopiedFindings(false), 2000);
+  };
+
   // Derived presentation timestamps that advance with playback.
   const origStamp = advanceStamp(nativeTime, currentTime);
   const adjStamp = normalizedUtc ? advanceStamp(normalizedUtc, currentTime) : null;
@@ -292,6 +382,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
             <video
               ref={videoRef}
+              crossOrigin="anonymous"
               src={getMediaUrl(videoUrl)}
               style={{ width: '100%', maxHeight: '420px', objectFit: 'contain' }}
               onPlay={() => setIsPlaying(true)}
@@ -457,184 +548,554 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   <button className="dvr-tbtn" style={{ width: 28, height: 28 }} onClick={toggleFullscreen} title="Fullscreen">
                     <Maximize size={13} />
                   </button>
+
+                  <button
+                    className="btn btn-sm"
+                    onClick={handleAnalyzeCurrentFrame}
+                    disabled={analyzingFrame}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(99, 102, 241, 0.25))',
+                      border: '1px solid rgba(168, 85, 247, 0.6)',
+                      color: '#d8b4fe',
+                      fontWeight: 600,
+                      fontSize: '11px',
+                      padding: '4px 10px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                    title="Extract exact decoded frame and analyze for persons, faces, vehicles, and objects"
+                  >
+                    {analyzingFrame ? (
+                      <>
+                        <RefreshCw size={12} className="spin" />
+                        <span>Analyzing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={12} style={{ color: '#c084fc' }} />
+                        <span>AI Analyze Frame</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Detailed Forensic Context & Hash Lineage */}
+        {/* Right Column: Detailed Forensic Context & Hash Lineage OR AI Visual Analytics */}
         <div style={{
           padding: '16px',
           borderLeft: '1px solid var(--border-subtle)',
           display: 'flex',
           flexDirection: 'column',
-          gap: '14px',
+          gap: '12px',
           overflowY: 'auto',
           maxHeight: '600px'
         }}>
-          <div>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>
-              Forensic Source Target
-            </div>
-            <div style={{ marginTop: '4px', fontSize: '13px', fontWeight: 600 }}>
-              {recordingId} <span className="badge badge-info" style={{ fontSize: '10px' }}>CH {channel}</span>
-            </div>
-            <div className="text-muted" style={{ fontSize: '11px', marginTop: '2px' }}>
-              OEM: <strong>{oemName}</strong> | Codec: <strong>{codec}</strong>
-            </div>
-          </div>
-
-          {/* Overlay Customization (DVR Examiner: Overlay on/off, Four Corners, Text Color) */}
-          <div style={{ backgroundColor: 'var(--surface-muted)', padding: '10px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
-            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-              Timestamp Overlay
-            </div>
-            <div className="dvr-overlay-controls">
-              <button
-                className={`dvr-chip ${overlayEnabled ? 'active' : ''}`}
-                onClick={() => setOverlayEnabled((v) => !v)}
-                title="Toggle the on-screen timestamp overlay"
-              >
-                {overlayEnabled ? <Eye size={13} /> : <EyeOff size={13} />}
-                <span>{overlayEnabled ? 'On' : 'Off'}</span>
-              </button>
-              <button
-                className="dvr-chip"
-                onClick={() => setOverlayCorner((c) => CORNERS[(CORNERS.indexOf(c) + 1) % CORNERS.length])}
-                disabled={!overlayEnabled}
-                title="Cycle overlay corner"
-              >
-                <Move size={13} />
-                <span>{overlayCorner.toUpperCase()}</span>
-              </button>
-              <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
-                <Type size={13} style={{ color: 'var(--text-muted)' }} />
-                {OVERLAY_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    className={`dvr-color-swatch ${overlayColor === c ? 'active' : ''}`}
-                    style={{ backgroundColor: c }}
-                    onClick={() => setOverlayColor(c)}
-                    disabled={!overlayEnabled}
-                    title={`Overlay color ${c}`}
-                    aria-label={`Overlay color ${c}`}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Time Evidence Breakdown */}
-          <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '10px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              <Clock size={13} style={{ color: 'var(--accent)' }} />
-              <span>Time Evidence (3-Tier)</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', fontSize: '11px' }}>
-              <div>
-                <span style={{ color: 'var(--text-muted)' }}>Recorder Native:</span>{' '}
-                <span className="mono">{nativeTime || 'Preserved from Index'}</span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-muted)' }}>Normalized UTC:</span>{' '}
-                <span className="mono">{normalizedUtc || 'Unknown (unshifted)'}</span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-muted)' }}>Presentation:</span>{' '}
-                <span className="mono" style={{ color: 'var(--accent)' }}>{overlayHeadTime} (+{formatSeconds(currentTime)})</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Source Region in Evidence */}
-          <div style={{ fontSize: '11px' }}>
-            <div style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Source Evidence Region</div>
-            <div className="mono" style={{ marginTop: '2px', fontSize: '11.5px' }}>
-              Offset: 0x{sourceOffset.toString(16).toUpperCase()} ({sourceLength} bytes)
-            </div>
-          </div>
-
-          {/* Independent SHA-256 Hashes */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              <HashIcon size={13} style={{ color: 'var(--success)' }} />
-              <span>Independent Artifact Hashes</span>
-            </div>
-
-            {elementarySha256 && (
-              <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '6px 8px', borderRadius: '4px' }}>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Elementary Stream SHA-256:</div>
-                <div className="mono" style={{ fontSize: '10px', wordBreak: 'break-all', color: 'var(--text-primary)' }}>
-                  {elementarySha256}
-                </div>
-              </div>
-            )}
-
-            {remuxSha256 && (
-              <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '6px 8px', borderRadius: '4px' }}>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Remux MP4 SHA-256:</div>
-                <div className="mono" style={{ fontSize: '10px', wordBreak: 'break-all', color: 'var(--accent)' }}>
-                  {remuxSha256}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Processing Provenance */}
-          <div style={{ fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Processing Provenance</div>
-            <div>
-              Tool: <strong>FFmpeg ({ffmpegVersion || 'Stream-Copy'})</strong>
-            </div>
-            {ffmpegArgs && ffmpegArgs.length > 0 && (
-              <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '4px 6px', borderRadius: '3px', marginTop: '2px' }}>
-                <div style={{ fontSize: '9.5px', color: 'var(--text-muted)' }}>Remux Parameters:</div>
-                <div className="mono" style={{ fontSize: '9px', wordBreak: 'break-all', color: 'var(--text-secondary)' }}>
-                  ffmpeg {ffmpegArgs.join(' ')}
-                </div>
-              </div>
-            )}
-            {validationState && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                <span className={validationState.state === 'PASS' ? 'badge badge-pass' : 'badge badge-review'}>
-                  {validationState.state}
+          {/* Tab Navigation */}
+          <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+            <button
+              onClick={() => setActiveTab('meta')}
+              style={{
+                flex: 1,
+                padding: '6px 8px',
+                fontSize: '11px',
+                fontWeight: 600,
+                borderRadius: '4px',
+                border: 'none',
+                cursor: 'pointer',
+                backgroundColor: activeTab === 'meta' ? 'var(--surface-muted)' : 'transparent',
+                color: activeTab === 'meta' ? 'var(--text-primary)' : 'var(--text-muted)',
+                borderBottom: activeTab === 'meta' ? '2px solid var(--accent)' : 'none',
+              }}
+            >
+              Metadata & Hashes
+            </button>
+            <button
+              onClick={() => setActiveTab('ai')}
+              style={{
+                flex: 1,
+                padding: '6px 8px',
+                fontSize: '11px',
+                fontWeight: 600,
+                borderRadius: '4px',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px',
+                backgroundColor: activeTab === 'ai' ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+                color: activeTab === 'ai' ? '#d8b4fe' : 'var(--text-muted)',
+                borderBottom: activeTab === 'ai' ? '2px solid #a855f7' : 'none',
+              }}
+            >
+              <Sparkles size={12} style={{ color: '#c084fc' }} />
+              <span>AI Vision</span>
+              {visionResult && (
+                <span style={{ fontSize: '9px', backgroundColor: '#9333ea', color: '#fff', padding: '1px 5px', borderRadius: '10px' }}>
+                  {visionResult.faces.count + visionResult.persons.count}
                 </span>
-                <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>{validationState.reason}</span>
-              </div>
-            )}
+              )}
+            </button>
           </div>
 
-          {/* On-Demand Re-Verification Action */}
-          {videoId && (
-            <div style={{ marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid var(--border-subtle)' }}>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={handleReverify}
-                disabled={verifying}
-                style={{ width: '100%', justifyContent: 'center' }}
-              >
-                {verifying ? <RefreshCw size={13} className="spin" /> : <ShieldCheck size={13} />}
-                <span>{verifying ? 'Re-hashing On Disk...' : 'Verify Artifact Hash'}</span>
-              </button>
+          {activeTab === 'meta' ? (
+            <>
+              <div>
+                <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>
+                  Forensic Source Target
+                </div>
+                <div style={{ marginTop: '4px', fontSize: '13px', fontWeight: 600 }}>
+                  {recordingId} <span className="badge badge-info" style={{ fontSize: '10px' }}>CH {channel}</span>
+                </div>
+                <div className="text-muted" style={{ fontSize: '11px', marginTop: '2px' }}>
+                  OEM: <strong>{oemName}</strong> | Codec: <strong>{codec}</strong>
+                </div>
+              </div>
 
-              {verifyResult && (
-                <div style={{
-                  marginTop: '8px',
-                  padding: '6px 8px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  backgroundColor: verifyResult.status === 'MATCH' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  border: `1px solid ${verifyResult.status === 'MATCH' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600, color: verifyResult.status === 'MATCH' ? 'var(--success)' : 'var(--danger)' }}>
-                    {verifyResult.status === 'MATCH' ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-                    <span>Status: {verifyResult.status}</span>
-                  </div>
-                  <div className="mono" style={{ fontSize: '9.5px', marginTop: '2px', color: 'var(--text-muted)' }}>
-                    Bytes: {verifyResult.size_bytes} | {verifyResult.verified_at.slice(11, 19)} UTC
+              {/* Overlay Customization (DVR Examiner: Overlay on/off, Four Corners, Text Color) */}
+              <div style={{ backgroundColor: 'var(--surface-muted)', padding: '10px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  Timestamp Overlay
+                </div>
+                <div className="dvr-overlay-controls">
+                  <button
+                    className={`dvr-chip ${overlayEnabled ? 'active' : ''}`}
+                    onClick={() => setOverlayEnabled((v) => !v)}
+                    title="Toggle the on-screen timestamp overlay"
+                  >
+                    {overlayEnabled ? <Eye size={13} /> : <EyeOff size={13} />}
+                    <span>{overlayEnabled ? 'On' : 'Off'}</span>
+                  </button>
+                  <button
+                    className="dvr-chip"
+                    onClick={() => setOverlayCorner((c) => CORNERS[(CORNERS.indexOf(c) + 1) % CORNERS.length])}
+                    disabled={!overlayEnabled}
+                    title="Cycle overlay corner"
+                  >
+                    <Move size={13} />
+                    <span>{overlayCorner.toUpperCase()}</span>
+                  </button>
+                  <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                    <Type size={13} style={{ color: 'var(--text-muted)' }} />
+                    {OVERLAY_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        className={`dvr-color-swatch ${overlayColor === c ? 'active' : ''}`}
+                        style={{ backgroundColor: c }}
+                        onClick={() => setOverlayColor(c)}
+                        disabled={!overlayEnabled}
+                        title={`Overlay color ${c}`}
+                        aria-label={`Overlay color ${c}`}
+                      />
+                    ))}
                   </div>
                 </div>
+              </div>
+
+              {/* Time Evidence Breakdown */}
+              <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '10px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  <Clock size={13} style={{ color: 'var(--accent)' }} />
+                  <span>Time Evidence (3-Tier)</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', fontSize: '11px' }}>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Recorder Native:</span>{' '}
+                    <span className="mono">{nativeTime || 'Preserved from Index'}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Normalized UTC:</span>{' '}
+                    <span className="mono">{normalizedUtc || 'Unknown (unshifted)'}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Presentation:</span>{' '}
+                    <span className="mono" style={{ color: 'var(--accent)' }}>{overlayHeadTime} (+{formatSeconds(currentTime)})</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Source Region in Evidence */}
+              <div style={{ fontSize: '11px' }}>
+                <div style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Source Evidence Region</div>
+                <div className="mono" style={{ marginTop: '2px', fontSize: '11.5px' }}>
+                  Offset: 0x{sourceOffset.toString(16).toUpperCase()} ({sourceLength} bytes)
+                </div>
+              </div>
+
+              {/* Independent SHA-256 Hashes */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  <HashIcon size={13} style={{ color: 'var(--success)' }} />
+                  <span>Independent Artifact Hashes</span>
+                </div>
+
+                {elementarySha256 && (
+                  <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '6px 8px', borderRadius: '4px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Elementary Stream SHA-256:</div>
+                    <div className="mono" style={{ fontSize: '10px', wordBreak: 'break-all', color: 'var(--text-primary)' }}>
+                      {elementarySha256}
+                    </div>
+                  </div>
+                )}
+
+                {remuxSha256 && (
+                  <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '6px 8px', borderRadius: '4px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Remux MP4 SHA-256:</div>
+                    <div className="mono" style={{ fontSize: '10px', wordBreak: 'break-all', color: 'var(--accent)' }}>
+                      {remuxSha256}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Processing Provenance */}
+              <div style={{ fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Processing Provenance</div>
+                <div>
+                  Tool: <strong>FFmpeg ({ffmpegVersion || 'Stream-Copy'})</strong>
+                </div>
+                {ffmpegArgs && ffmpegArgs.length > 0 && (
+                  <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '4px 6px', borderRadius: '3px', marginTop: '2px' }}>
+                    <div style={{ fontSize: '9.5px', color: 'var(--text-muted)' }}>Remux Parameters:</div>
+                    <div className="mono" style={{ fontSize: '9px', wordBreak: 'break-all', color: 'var(--text-secondary)' }}>
+                      ffmpeg {ffmpegArgs.join(' ')}
+                    </div>
+                  </div>
+                )}
+                {validationState && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                    <span className={validationState.state === 'PASS' ? 'badge badge-pass' : 'badge badge-review'}>
+                      {validationState.state}
+                    </span>
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>{validationState.reason}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* On-Demand Re-Verification Action */}
+              {videoId && (
+                <div style={{ marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid var(--border-subtle)' }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleReverify}
+                    disabled={verifying}
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    {verifying ? <RefreshCw size={13} className="spin" /> : <ShieldCheck size={13} />}
+                    <span>{verifying ? 'Re-hashing On Disk...' : 'Verify Artifact Hash'}</span>
+                  </button>
+
+                  {verifyResult && (
+                    <div style={{
+                      marginTop: '8px',
+                      padding: '6px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      backgroundColor: verifyResult.status === 'MATCH' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                      border: `1px solid ${verifyResult.status === 'MATCH' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600, color: verifyResult.status === 'MATCH' ? 'var(--success)' : 'var(--danger)' }}>
+                        {verifyResult.status === 'MATCH' ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                        <span>Status: {verifyResult.status}</span>
+                      </div>
+                      <div className="mono" style={{ fontSize: '9.5px', marginTop: '2px', color: 'var(--text-muted)' }}>
+                        Bytes: {verifyResult.size_bytes} | {verifyResult.verified_at.slice(11, 19)} UTC
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            /* AI Visual Analytics View */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#c084fc', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Sparkles size={13} />
+                    <span>AI Visual Analytics</span>
+                  </div>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Face & Object Detection on decoded frame
+                  </div>
+                </div>
+                <button
+                  className="btn btn-sm"
+                  onClick={handleAnalyzeCurrentFrame}
+                  disabled={analyzingFrame}
+                  style={{
+                    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                    border: '1px solid rgba(168, 85, 247, 0.5)',
+                    color: '#d8b4fe',
+                    fontSize: '10.5px',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {analyzingFrame ? 'Scanning...' : 'Analyze Now'}
+                </button>
+              </div>
+
+              {visionError && (
+                <div style={{
+                  padding: '8px 10px',
+                  borderRadius: '4px',
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: 'var(--danger)',
+                  fontSize: '11px'
+                }}>
+                  <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <AlertTriangle size={13} />
+                    <span>Analysis Error</span>
+                  </div>
+                  <div style={{ marginTop: '2px', fontSize: '10px' }}>{visionError}</div>
+                </div>
+              )}
+
+              {analyzingFrame && (
+                <div style={{
+                  padding: '24px 14px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                  border: '1px dashed rgba(168, 85, 247, 0.4)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '10px',
+                  textAlign: 'center'
+                }}>
+                  <RefreshCw size={24} className="spin" style={{ color: '#c084fc' }} />
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Extracting & Analyzing Frame
+                    </div>
+                    <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Capturing exact pixels at {overlayHeadTime} & dispatching to Gemini Vision...
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!analyzingFrame && !visionResult && (
+                <div style={{
+                  padding: '18px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: 'var(--surface-sunken)',
+                  border: '1px solid var(--border-subtle)',
+                  textAlign: 'center',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '10px'
+                }}>
+                  <Sparkles size={28} style={{ color: '#c084fc', opacity: 0.8 }} />
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: 600 }}>No Frame Analyzed Yet</div>
+                    <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginTop: '4px', maxWidth: '240px' }}>
+                      Step through the video to any CCTV moment, then click below to detect faces, persons, vehicles, and scene attributes.
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleAnalyzeCurrentFrame}
+                    style={{
+                      background: 'linear-gradient(135deg, #7c3aed, #4f46e5)',
+                      fontSize: '11px',
+                      padding: '6px 14px',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Analyze Frame at {overlayHeadTime}
+                  </button>
+                </div>
+              )}
+
+              {!analyzingFrame && visionResult && (
+                <>
+                  {/* Snapshot & Frame Provenance */}
+                  <div style={{
+                    position: 'relative',
+                    borderRadius: '6px',
+                    overflow: 'hidden',
+                    border: '1px solid var(--border-subtle)',
+                    backgroundColor: '#000'
+                  }}>
+                    {capturedSnapshot && (
+                      <img
+                        src={capturedSnapshot}
+                        alt="Analyzed frame snapshot"
+                        style={{ width: '100%', maxHeight: '140px', objectFit: 'cover', display: 'block' }}
+                      />
+                    )}
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'rgba(0,0,0,0.75)',
+                      padding: '4px 8px',
+                      fontSize: '9.5px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      color: '#cbd5e1'
+                    }}>
+                      <span>{visionResult.timestamp}</span>
+                      <span className="mono">F#{visionResult.frame_index || currentFrame}</span>
+                    </div>
+                  </div>
+
+                  {/* Cryptographic Frame Binding */}
+                  <div style={{
+                    backgroundColor: 'var(--surface-sunken)',
+                    padding: '6px 8px',
+                    borderRadius: '4px',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '10px'
+                  }}>
+                    <div style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Frame Cryptographic Binding:</div>
+                    <div className="mono" style={{ color: 'var(--accent)', wordBreak: 'break-all', marginTop: '2px', fontSize: '9px' }}>
+                      SHA-256: {visionResult.frame_sha256}
+                    </div>
+                  </div>
+
+                  {/* Primary Detection Counters */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                    {/* Faces */}
+                    <div style={{
+                      backgroundColor: 'rgba(56, 189, 248, 0.08)',
+                      border: '1px solid rgba(56, 189, 248, 0.25)',
+                      borderRadius: '6px',
+                      padding: '8px 6px',
+                      textAlign: 'center'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#38bdf8', fontSize: '10px', fontWeight: 600 }}>
+                        <UserCheck size={12} />
+                        <span>Faces</span>
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: 700, color: '#38bdf8', margin: '2px 0' }}>
+                        {visionResult.faces.count}
+                      </div>
+                      <div style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: '1.2' }}>
+                        {visionResult.faces.details.length > 28 ? visionResult.faces.details.slice(0, 26) + '...' : visionResult.faces.details}
+                      </div>
+                    </div>
+
+                    {/* Persons */}
+                    <div style={{
+                      backgroundColor: 'rgba(168, 85, 247, 0.08)',
+                      border: '1px solid rgba(168, 85, 247, 0.25)',
+                      borderRadius: '6px',
+                      padding: '8px 6px',
+                      textAlign: 'center'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#c084fc', fontSize: '10px', fontWeight: 600 }}>
+                        <User size={12} />
+                        <span>Persons</span>
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: 700, color: '#c084fc', margin: '2px 0' }}>
+                        {visionResult.persons.count}
+                      </div>
+                      <div style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: '1.2' }}>
+                        {visionResult.persons.details.length > 28 ? visionResult.persons.details.slice(0, 26) + '...' : visionResult.persons.details}
+                      </div>
+                    </div>
+
+                    {/* Vehicles */}
+                    <div style={{
+                      backgroundColor: 'rgba(52, 211, 153, 0.08)',
+                      border: '1px solid rgba(52, 211, 153, 0.25)',
+                      borderRadius: '6px',
+                      padding: '8px 6px',
+                      textAlign: 'center'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#34d399', fontSize: '10px', fontWeight: 600 }}>
+                        <Car size={12} />
+                        <span>Vehicles</span>
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: 700, color: '#34d399', margin: '2px 0' }}>
+                        {visionResult.vehicles.count}
+                      </div>
+                      <div style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: '1.2' }}>
+                        {visionResult.vehicles.details.length > 28 ? visionResult.vehicles.details.slice(0, 26) + '...' : visionResult.vehicles.details}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Objects */}
+                  {visionResult.objects && visionResult.objects.length > 0 && (
+                    <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                      <div style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Box size={12} />
+                        <span>Identified Objects</span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {visionResult.objects.map((obj, i) => (
+                          <span key={i} style={{ fontSize: '9.5px', backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-subtle)', padding: '2px 6px', borderRadius: '3px' }}>
+                            {obj}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Scene Interpretation */}
+                  <div style={{ backgroundColor: 'var(--surface-sunken)', padding: '8px 10px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--text-secondary)' }}>Scene Interpretation</span>
+                      <span className="badge badge-info" style={{ fontSize: '9px' }}>Clarity: {visionResult.visual_clarity}</span>
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-primary)', lineHeight: '1.4' }}>
+                      {visionResult.scene_description}
+                    </div>
+                  </div>
+
+                  {/* Evidentiary Notice */}
+                  <div style={{
+                    padding: '8px',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                    border: '1px solid rgba(59, 130, 246, 0.25)',
+                    fontSize: '9.5px',
+                    color: 'var(--text-muted)',
+                    lineHeight: '1.3'
+                  }}>
+                    <div style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Info size={11} />
+                      <span>Forensic Evidentiary Boundary</span>
+                    </div>
+                    {visionResult.disclaimer}
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={handleCopyFindings}
+                      style={{ flex: 1, fontSize: '10.5px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                    >
+                      {copiedFindings ? <Check size={12} style={{ color: 'var(--success)' }} /> : <Copy size={12} />}
+                      <span>{copiedFindings ? 'Copied to Clipboard' : 'Copy Findings'}</span>
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={handleAnalyzeCurrentFrame}
+                      disabled={analyzingFrame}
+                      style={{ fontSize: '10.5px' }}
+                      title="Re-analyze this frame or step to a new frame"
+                    >
+                      Re-scan
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -643,3 +1104,4 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     </div>
   );
 };
+
