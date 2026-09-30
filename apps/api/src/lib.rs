@@ -1,5 +1,6 @@
 //! # forensic-api Library Interface
 
+pub mod ai;
 pub mod capability_service;
 pub mod config;
 pub mod db;
@@ -141,7 +142,10 @@ pub fn app_router(state: AppState) -> Router {
             get(handlers::stream_artifact_video),
         )
         .route("/api/ffmpeg/status", get(handlers::get_ffmpeg_status))
-        .route("/api/capabilities", get(handlers::get_capabilities));
+        .route("/api/capabilities", get(handlers::get_capabilities))
+        .route("/api/ai/status", get(handlers::get_ai_status))
+        .route("/api/ai/chat", post(handlers::ai_chat_handler))
+        .route("/api/ai/report-summary", post(handlers::ai_report_summary_handler));
 
     if let Some(frontend_dir) = find_frontend_dir() {
         let index_file = frontend_dir.join("index.html");

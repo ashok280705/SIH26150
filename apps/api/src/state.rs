@@ -31,6 +31,7 @@ pub struct AppState {
     pub write_guard: Arc<WriteGuard>,
     pub config: Arc<AppConfig>,
     pub jobs: Arc<JobCoordinator>,
+    pub ai_gateway: Arc<crate::ai::AiGateway>,
 }
 
 impl AppState {
@@ -58,6 +59,7 @@ impl AppState {
             config.artifacts_dir.to_string_lossy().as_ref(),
         ));
         let jobs = Arc::new(JobCoordinator::new());
+        let ai_gateway = Arc::new(crate::ai::AiGateway::from_env());
 
         Self {
             db_pool,
@@ -68,6 +70,7 @@ impl AppState {
             write_guard,
             config: Arc::new(config),
             jobs,
+            ai_gateway,
         }
     }
 }

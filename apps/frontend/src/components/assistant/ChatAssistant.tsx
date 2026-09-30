@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
-  Bot, Send, X, Settings, RefreshCw, AlertTriangle, Eye, Trash2, Cpu,
+  Bot, Send, X, Settings, RefreshCw, AlertTriangle, Eye, Trash2, Sparkles, ShieldAlert,
 } from 'lucide-react';
 import {
-  streamChat, checkOllama, getModel, setModel as persistModel,
-  getBase, setBase as persistBase, ChatMessage, OllamaStatus, DEFAULT_MODEL,
+  streamChat, getBase, DEFAULT_MODEL,
 } from '../../services/assistant';
+import { sendAiChat } from '../../services/api';
 
 interface Props {
   /** The active view/tab, injected into the assistant's context. */
@@ -17,6 +17,8 @@ interface Props {
 interface UiMessage {
   role: 'user' | 'assistant';
   content: string;
+  provider?: string;
+  model?: string;
 }
 
 /** Read the visible content of the main app area (the current screen), so the assistant
@@ -75,8 +77,6 @@ function extractHexFacts(): string | null {
   let sc4 = 0;
   const nalNames: string[] = [];
   for (let i = 0; i + 2 < bytes.length; i++) {
-    // A NAL header has its forbidden bit clear; 00 00 01 BA/BB/E0... are MPEG system start
-    // codes (container framing) and are reported separately below.
     if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1 && ((bytes[i + 3] ?? 0) & 0x80) === 0) {
       const fourByte = i > 0 && bytes[i - 1] === 0;
       if (fourByte) sc4++; else sc3++;
@@ -98,7 +98,6 @@ function extractHexFacts(): string | null {
   if (/HIKBTREE/.test(joined)) sigs.push('a Hikvision HIKBTREE index page header');
   if (/OFNI/.test(joined)) sigs.push('a Hikvision OFNI information part inside an MPEG-PS clip');
   {
-    // 00 00 01 BA is an MPEG-PS pack header, not a NAL start code: Hikvision clips are framed this way.
     let packs = 0;
     for (let i = 0; i + 3 < bytes.length; i++) {
       if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1 && bytes[i + 3] === 0xba) packs++;
@@ -110,7 +109,7 @@ function extractHexFacts(): string | null {
   const lines: string[] = [];
   lines.push(`The Byte Inspector is showing ${bytes.length} bytes, offsets ${firstOffset} to ${lastOffset}. Each row is one 16-byte line; the left column is that line's byte ADDRESS (offset), not a separate "chunk".`);
   if (sc4 + sc3 > 0) {
-    lines.push(`Annex-B NAL start codes found: ${sc4}× four-byte (00 00 00 01) and ${sc3}× three-byte (00 00 01). Start codes mark the boundaries of NAL units in a raw H.264/H.265 stream — they do NOT alternate audio/video.`);
+    lines.push(`Annex-B NAL start codes found: ${sc4}× four-byte (00 00 00 01) and ${sc3}× three-byte (00 00 01). Start codes mark the boundaries of NAL units in a raw H.264/H.265 stream.`);
   }
   if (nalNames.length) {
     lines.push(`NAL unit types after the start codes, in order: ${nalNames.slice(0, 10).join(', ')}.`);
@@ -131,17 +130,19 @@ function buildSystemPrompt(
   evidence?: string | null,
 ): string {
   const parts: string[] = [
-    'You are the offline forensic assistant built into the Multi-Vendor DVR/NVR Forensic Analysis tool. You run locally via Ollama; nothing leaves this machine.',
-    'Explain what is on the current screen and how to use the tool: the hex/byte inspector, the preliminary and final timelines, coverage bars, gaps, the staged recovery levels (L1 indexed/active, L2 orphan carve, L3 raw carve, "recording lost"), detection & confidence, and provenance/hashes.',
+    'You are VidForge\'s AI Forensic Analysis Assistant, integrated into a multi-vendor DVR/NVR forensic analysis platform.',
+    'You operate strictly as an ADVISORY INTERPRETATION LAYER. You are not an independent source of forensic truth.',
+    'Explain what is on the current screen and how to interpret it: the hex/byte inspector, the preliminary and final timelines, coverage bars, gaps, the staged recovery levels (L1 indexed/active, L2 orphan carve, L3 raw carve), detection & confidence, and provenance/hashes.',
     '',
-    'STRICT RULES:',
-    '- Base every statement on the DECODED FACTS and SCREEN CONTENT below. Do NOT invent structure, offsets, hashes, timestamps, codecs, or "audio/audio-video chunks".',
-    '- In the hex view, each row is a 16-byte line and the left value (e.g. 0x00146240) is that line\'s byte OFFSET/address — it is NOT a separate chunk and rows do NOT alternate between audio and video.',
-    '- 00 00 00 01 and 00 00 01 are H.264/H.265 Annex-B NAL start codes.',
-    '- If the facts do not tell you something, say "that is not visible on screen" instead of guessing. Be concise (a few sentences).',
+    'STRICT FORENSIC DIRECTIVES:',
+    '- Base every statement strictly on the DECODED FACTS and SCREEN CONTENT provided below. NEVER invent structure, offsets, hashes, timestamps, codecs, or camera events.',
+    '- In the hex view, each row is a 16-byte line and the left value (e.g. 0x00146240) is that line\'s byte OFFSET/address — it is NOT a separate chunk.',
+    '- If the facts do not tell you something, explicitly state: "The available forensic data does not establish this."',
+    '- Distinguish verified deterministic facts from AI interpretations.',
+    '- Never recommend modifying original evidence.',
     '',
-    `Current tab: ${tab}`,
-    `Active evidence: ${evidence || 'none'}`,
+    `Current Active Tab: ${tab}`,
+    `Active Evidence: ${evidence || 'none selected'}`,
   ];
   if (hexFacts) {
     parts.push(
@@ -153,7 +154,7 @@ function buildSystemPrompt(
   }
   parts.push(
     '',
-    '=== CURRENT SCREEN TEXT (verbatim, may be truncated) ===',
+    '=== CURRENT SCREEN TEXT (verbatim, from VidForge interface) ===',
     screen || '(the screen appears to be empty)',
     '=== END SCREEN TEXT ===',
   );
@@ -161,116 +162,118 @@ function buildSystemPrompt(
 }
 
 const QUICK_PROMPTS = [
+  'Summarize the forensic findings in this investigation.',
+  'Explain the current recovery results.',
+  'Explain the timeline gaps and anomalies.',
+  'Explain the detected filesystem on this disk.',
   'Explain the bytes shown in the Byte Inspector.',
-  'Are there any H.264 start codes on screen, and what do they mean?',
-  'What does the readable text in these bytes tell us?',
-  'What should I do next?',
 ];
+
+const PROVIDER_KEY = 'vidforge_ai_provider';
+const API_KEY_KEY = 'vidforge_ai_key';
+const MODEL_KEY = 'vidforge_ai_model';
 
 export const ChatAssistant: React.FC<Props> = ({ activeTab, evidenceName }) => {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [status, setStatus] = useState<OllamaStatus | null>(null);
-  const [checking, setChecking] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [model, setModelState] = useState(getModel());
-  const [base, setBaseState] = useState(getBase());
+  
+  const [provider, setProvider] = useState<string>(() => localStorage.getItem(PROVIDER_KEY) || 'gemini');
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem(API_KEY_KEY) || '');
+  const [model, setModel] = useState<string>(() => localStorage.getItem(MODEL_KEY) || '');
   const [error, setError] = useState<string | null>(null);
 
-  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-
-  const runCheck = useCallback(async () => {
-    setChecking(true);
-    const s = await checkOllama();
-    setStatus(s);
-    // If the configured model isn't installed but others are, switch to one that is.
-    if (s.ok && s.models.length > 0 && !s.models.includes(getModel())) {
-      persistModel(s.models[0]);
-      setModelState(s.models[0]);
-    }
-    setChecking(false);
-  }, []);
-
-  useEffect(() => {
-    if (open && status === null) runCheck();
-  }, [open, status, runCheck]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, streaming]);
+  }, [messages, loading]);
 
-  const stop = () => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setStreaming(false);
+  const saveSettings = () => {
+    localStorage.setItem(PROVIDER_KEY, provider);
+    localStorage.setItem(API_KEY_KEY, apiKey);
+    localStorage.setItem(MODEL_KEY, model);
+    setShowSettings(false);
+    setError(null);
   };
 
   const send = async (text: string) => {
     const q = text.trim();
-    if (!q || streaming) return;
+    if (!q || loading) return;
     setError(null);
 
-    const history: ChatMessage[] = messages.slice(-8).map((m) => ({ role: m.role, content: m.content }));
     const screen = readScreen();
     const hexFacts = extractHexFacts();
-    const system = buildSystemPrompt(screen, hexFacts, activeTab, evidenceName);
-    const payload: ChatMessage[] = [
-      { role: 'system', content: system },
-      ...history,
-      { role: 'user', content: q },
+    const systemPrompt = buildSystemPrompt(screen, hexFacts, activeTab, evidenceName);
+
+    const historyPayload = messages.slice(-6).map((m) => ({ role: m.role, content: m.content }));
+    const payload = [
+      { role: 'system' as const, content: systemPrompt },
+      ...historyPayload,
+      { role: 'user' as const, content: q },
     ];
 
-    setMessages((prev) => [...prev, { role: 'user', content: q }, { role: 'assistant', content: '' }]);
+    setMessages((prev) => [...prev, { role: 'user', content: q }]);
     setInput('');
-    setStreaming(true);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
+    setLoading(true);
 
     try {
-      await streamChat(
-        payload,
-        (delta) => {
-          setMessages((prev) => {
-            const copy = [...prev];
-            const last = copy[copy.length - 1];
-            if (last && last.role === 'assistant') copy[copy.length - 1] = { ...last, content: last.content + delta };
-            return copy;
-          });
-        },
-        { signal: controller.signal, model, base },
-      );
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        setError(e?.message || 'Assistant request failed');
-        // Drop the empty assistant bubble on hard failure.
-        setMessages((prev) => {
-          const copy = [...prev];
-          const last = copy[copy.length - 1];
-          if (last && last.role === 'assistant' && last.content === '') copy.pop();
-          return copy;
+      if (provider === 'ollama') {
+        // Fallback to local Ollama if selected
+        let streamedResponse = '';
+        setMessages((prev) => [...prev, { role: 'assistant', content: '', provider: 'ollama' }]);
+        await streamChat(
+          payload,
+          (delta) => {
+            streamedResponse += delta;
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last && last.role === 'assistant') {
+                copy[copy.length - 1] = { ...last, content: streamedResponse };
+              }
+              return copy;
+            });
+          },
+          { model: model || DEFAULT_MODEL, base: getBase() },
+        );
+      } else {
+        // Route through Axum AI Gateway
+        const res = await sendAiChat({
+          messages: payload,
+          provider,
+          api_key: apiKey || undefined,
+          model: model || undefined,
         });
-        // Re-check connectivity so the setup panel can appear.
-        runCheck();
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: res.message,
+            provider: res.provider,
+            model: res.model,
+          },
+        ]);
       }
+    } catch (e: any) {
+      setError(e?.message || 'AI Copilot request failed');
     } finally {
-      setStreaming(false);
-      abortRef.current = null;
+      setLoading(false);
     }
   };
 
-  const saveSettings = async () => {
-    persistModel(model);
-    persistBase(base);
-    setShowSettings(false);
-    setStatus(null);
-    await runCheck();
+  const getProviderBadge = () => {
+    switch (provider) {
+      case 'gemini': return 'Gemini 3.8 Flash';
+      case 'groq': return 'Groq Qwen 3.8';
+      case 'openai': return 'OpenAI GPT-4o-mini';
+      case 'ollama': return 'Local Ollama';
+      default: return provider;
+    }
   };
-
-  const offline = status !== null && !status.ok;
 
   return (
     <>
@@ -278,15 +281,17 @@ export const ChatAssistant: React.FC<Props> = ({ activeTab, evidenceName }) => {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          title="Open the offline assistant"
+          title="Open AI Forensic Copilot"
           style={{
             position: 'fixed', right: '22px', bottom: '22px', zIndex: 1000,
-            width: '52px', height: '52px', borderRadius: '50%',
-            background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer',
-            boxShadow: '0 6px 20px rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: '54px', height: '54px', borderRadius: '50%',
+            background: 'linear-gradient(135deg, #134074 0%, #0B2545 100%)',
+            color: '#fff', border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer',
+            boxShadow: '0 8px 24px rgba(11, 37, 69, 0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'transform 0.2s ease',
           }}
         >
-          <Bot size={24} />
+          <Bot size={26} />
         </button>
       )}
 
@@ -294,26 +299,25 @@ export const ChatAssistant: React.FC<Props> = ({ activeTab, evidenceName }) => {
         <div
           style={{
             position: 'fixed', right: '22px', bottom: '22px', zIndex: 1000,
-            width: '380px', maxWidth: 'calc(100vw - 44px)', height: '560px', maxHeight: 'calc(100vh - 44px)',
-            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px',
-            boxShadow: '0 12px 40px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            width: '420px', maxWidth: 'calc(100vw - 44px)', height: '620px', maxHeight: 'calc(100vh - 44px)',
+            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px',
+            boxShadow: '0 16px 48px rgba(0,0,0,0.45)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
           }}
         >
           {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted)' }}>
-            <Bot size={18} style={{ color: 'var(--accent)' }} />
-            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
-              <strong style={{ fontSize: '13px' }}>Forensic Assistant</strong>
-              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Offline · Ollama · reads the current screen</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 14px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted)' }}>
+            <Sparkles size={18} style={{ color: 'var(--accent)' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <strong style={{ fontSize: '13.5px' }}>AI Forensic Copilot</strong>
+                <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '10px', background: 'rgba(46, 125, 50, 0.15)', color: 'var(--success)', border: '1px solid rgba(46, 125, 50, 0.3)', fontWeight: 600 }}>
+                  {getProviderBadge()}
+                </span>
+              </div>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Advisory interpretation · strictly grounded in deterministic facts</span>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span
-                title={status?.ok ? `Connected · model ${model}` : 'Ollama not reachable'}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: status?.ok ? 'var(--success)' : 'var(--text-muted)' }}
-              >
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: status?.ok ? 'var(--success)' : 'var(--text-muted)' }} />
-              </span>
-              <button className="btn btn-icon btn-sm" title="Settings" onClick={() => setShowSettings((s) => !s)} style={{ color: 'var(--text-secondary)' }}>
+              <button className="btn btn-icon btn-sm" title="Settings" onClick={() => setShowSettings((s) => !s)} style={{ color: showSettings ? 'var(--accent)' : 'var(--text-secondary)' }}>
                 <Settings size={15} />
               </button>
               <button className="btn btn-icon btn-sm" title="Clear chat" onClick={() => setMessages([])} style={{ color: 'var(--text-secondary)' }}>
@@ -325,65 +329,86 @@ export const ChatAssistant: React.FC<Props> = ({ activeTab, evidenceName }) => {
             </div>
           </div>
 
-          {/* Settings */}
+          {/* Settings Drawer */}
           {showSettings && (
-            <div style={{ padding: '12px', borderBottom: '1px solid var(--border)', background: 'var(--surface-sunken)', fontSize: '12px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Model</span>
-                  {status?.ok && status.models.length > 0 ? (
-                    <select className="form-select" style={{ fontSize: '12px', padding: '5px 8px' }} value={model} onChange={(e) => setModelState(e.target.value)}>
-                      {status.models.map((m) => (<option key={m} value={m}>{m}</option>))}
-                    </select>
-                  ) : (
-                    <input className="form-input" style={{ fontSize: '12px', padding: '5px 8px' }} value={model} onChange={(e) => setModelState(e.target.value)} placeholder={DEFAULT_MODEL} />
-                  )}
+            <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', background: 'var(--surface-sunken)', fontSize: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Settings size={13} /> AI Provider Configuration
+                </div>
+                
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>AI Engine Provider</span>
+                  <select
+                    className="form-select"
+                    style={{ fontSize: '12px', padding: '6px 8px' }}
+                    value={provider}
+                    onChange={(e) => setProvider(e.target.value)}
+                  >
+                    <option value="gemini">Google Gemini (Recommended - Fast & Large Context)</option>
+                    <option value="groq">Groq Cloud (Ultra-Fast Qwen / LLaMA)</option>
+                    <option value="openai">OpenAI (GPT-4o-mini)</option>
+                    <option value="ollama">Local Offline Ollama</option>
+                  </select>
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Ollama base URL</span>
-                  <input className="form-input" style={{ fontSize: '12px', padding: '5px 8px' }} value={base} onChange={(e) => setBaseState(e.target.value)} placeholder="/ollama" />
-                  <span style={{ color: 'var(--text-muted)', fontSize: '10.5px' }}>Default <code>/ollama</code> is proxied to http://127.0.0.1:11434 in dev.</span>
+
+                {provider !== 'ollama' && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>API Key (Optional override)</span>
+                    <input
+                      type="password"
+                      className="form-input"
+                      style={{ fontSize: '12px', padding: '6px 8px' }}
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder="Leave blank to use server environment key"
+                    />
+                    <span style={{ color: 'var(--text-muted)', fontSize: '10.5px' }}>
+                      Keys are stored locally in your browser session only.
+                    </span>
+                  </label>
+                )}
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Model Identifier (Optional)</span>
+                  <input
+                    className="form-input"
+                    style={{ fontSize: '12px', padding: '6px 8px' }}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder={
+                      provider === 'gemini' ? 'gemini-3.8-flash' :
+                      provider === 'groq' ? 'qwen/qwen3.8-27b' :
+                      provider === 'openai' ? 'gpt-4o-mini' : DEFAULT_MODEL
+                    }
+                  />
                 </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="btn btn-primary btn-sm" onClick={saveSettings}>Save &amp; reconnect</button>
-                  <button className="btn btn-secondary btn-sm" onClick={runCheck} disabled={checking}>
-                    {checking ? <RefreshCw size={12} className="spin" /> : <Cpu size={12} />}<span>Test</span>
-                  </button>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                  <button className="btn btn-primary btn-sm" onClick={saveSettings}>Save Settings</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setShowSettings(false)}>Cancel</button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Body */}
-          <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {offline ? (
-              <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--warning)', fontWeight: 600, marginBottom: '6px' }}>
-                  <AlertTriangle size={15} /> Ollama isn’t reachable
-                </div>
-                <p style={{ margin: '0 0 8px' }}>The assistant runs fully offline through a local Ollama server. To enable it:</p>
-                <ol style={{ margin: '0 0 8px', paddingLeft: '18px' }}>
-                  <li>Install Ollama (ollama.com), then start it: <code>ollama serve</code></li>
-                  <li>Pull a small quantized model: <code>ollama pull {DEFAULT_MODEL}</code></li>
-                  <li>Click <strong>Retry</strong> below.</li>
-                </ol>
-                {status?.error && <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Details: {status.error}</div>}
-                <button className="btn btn-primary btn-sm" style={{ marginTop: '8px' }} onClick={runCheck} disabled={checking}>
-                  {checking ? <RefreshCw size={12} className="spin" /> : <RefreshCw size={12} />}<span>Retry</span>
-                </button>
-              </div>
-            ) : messages.length === 0 ? (
+          {/* Messages Body */}
+          <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {messages.length === 0 ? (
               <div style={{ color: 'var(--text-muted)', fontSize: '12.5px', lineHeight: 1.55 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', marginBottom: '8px' }}>
-                  <Eye size={14} style={{ color: 'var(--accent)', marginTop: '2px', flexShrink: 0 }} />
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '10px', background: 'var(--surface-sunken)', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                  <Eye size={15} style={{ color: 'var(--accent)', marginTop: '2px', flexShrink: 0 }} />
                   <span>
-                    I read the current screen automatically (<strong>{activeTab.replace(/_/g, ' ')}</strong>) — no screenshot needed.
-                    On the Byte Inspector I also decode the actual bytes (start codes, NAL types, text) so answers stay accurate.
+                    I read the current view automatically (<strong>{activeTab.replace(/_/g, ' ')}</strong>).
+                    In the Byte Inspector, I extract real structural indicators, NAL types, and OEM magic bytes so answers stay grounded.
                   </span>
+                </div>
+                <div style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                  Suggested Investigative Queries:
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {QUICK_PROMPTS.map((p) => (
-                    <button key={p} className="btn btn-secondary btn-sm" style={{ justifyContent: 'flex-start', textAlign: 'left' }} onClick={() => send(p)}>
+                    <button key={p} className="btn btn-secondary btn-sm" style={{ justifyContent: 'flex-start', textAlign: 'left', fontSize: '12px' }} onClick={() => send(p)}>
                       {p}
                     </button>
                   ))}
@@ -395,51 +420,67 @@ export const ChatAssistant: React.FC<Props> = ({ activeTab, evidenceName }) => {
                   key={i}
                   style={{
                     alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                    maxWidth: '88%',
-                    background: m.role === 'user' ? 'var(--accent)' : 'var(--surface-muted)',
+                    maxWidth: '92%',
+                    background: m.role === 'user' ? 'linear-gradient(135deg, #134074 0%, #0B2545 100%)' : 'var(--surface-muted)',
                     color: m.role === 'user' ? '#fff' : 'var(--text-primary)',
-                    border: m.role === 'user' ? 'none' : '1px solid var(--border-subtle)',
-                    borderRadius: '10px', padding: '8px 10px',
-                    fontSize: '12.5px', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    border: m.role === 'user' ? 'none' : '1px solid var(--border)',
+                    borderRadius: '10px', padding: '9px 12px',
+                    fontSize: '12.5px', lineHeight: 1.52, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                   }}
                 >
-                  {m.content || (streaming && i === messages.length - 1 ? <span style={{ color: 'var(--text-muted)' }}>▍</span> : '')}
+                  {m.role === 'assistant' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', fontSize: '10.5px', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '4px' }}>
+                      <Sparkles size={11} style={{ color: 'var(--accent)' }} />
+                      <span>VidForge AI Advisory</span>
+                      {m.provider && <span style={{ marginLeft: 'auto', opacity: 0.8 }}>[{m.provider}]</span>}
+                    </div>
+                  )}
+                  {m.content}
                 </div>
               ))
             )}
-            {error && !offline && (
-              <div style={{ fontSize: '11.5px', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <AlertTriangle size={13} /> {error}
+
+            {loading && (
+              <div style={{ alignSelf: 'flex-start', background: 'var(--surface-muted)', padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border)', fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <RefreshCw size={13} className="spin" style={{ color: 'var(--accent)' }} />
+                <span>Analyzing deterministic forensic facts...</span>
+              </div>
+            )}
+
+            {error && (
+              <div style={{ fontSize: '12px', color: 'var(--danger)', background: 'rgba(179, 38, 30, 0.1)', border: '1px solid var(--danger)', padding: '8px 10px', borderRadius: '8px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span>{error}</span>
               </div>
             )}
           </div>
 
+          {/* Legal Disclaimer Bar */}
+          <div style={{ padding: '4px 12px', background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-subtle)', fontSize: '10px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <ShieldAlert size={12} style={{ flexShrink: 0 }} />
+            <span>AI-Assisted Interpretation. Does not alter original evidence.</span>
+          </div>
+
           {/* Composer */}
-          {!offline && (
-            <div style={{ borderTop: '1px solid var(--border)', padding: '10px', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); }
-                }}
-                placeholder="Ask about the hex view, timeline, or anything on screen…"
-                rows={1}
-                style={{
-                  flex: 1, resize: 'none', maxHeight: '96px', minHeight: '38px',
-                  padding: '9px 10px', fontSize: '12.5px', borderRadius: '8px',
-                  border: '1px solid var(--border)', background: 'var(--surface-sunken)', color: 'var(--text-primary)',
-                }}
-              />
-              {streaming ? (
-                <button className="btn btn-secondary" onClick={stop} title="Stop" style={{ height: '38px' }}>Stop</button>
-              ) : (
-                <button className="btn btn-primary" onClick={() => send(input)} disabled={!input.trim()} title="Send" style={{ height: '38px' }}>
-                  <Send size={15} />
-                </button>
-              )}
-            </div>
-          )}
+          <div style={{ borderTop: '1px solid var(--border)', padding: '10px 12px', display: 'flex', gap: '8px', alignItems: 'flex-end', background: 'var(--surface)' }}>
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); }
+              }}
+              placeholder="Ask about recovery results, timeline gaps, or hex bytes…"
+              rows={1}
+              style={{
+                flex: 1, resize: 'none', maxHeight: '96px', minHeight: '38px',
+                padding: '9px 10px', fontSize: '12.5px', borderRadius: '8px',
+                border: '1px solid var(--border)', background: 'var(--surface-sunken)', color: 'var(--text-primary)',
+              }}
+            />
+            <button className="btn btn-primary" onClick={() => send(input)} disabled={!input.trim() || loading} title="Send query" style={{ height: '38px', minWidth: '42px' }}>
+              <Send size={15} />
+            </button>
+          </div>
         </div>
       )}
     </>

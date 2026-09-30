@@ -604,3 +604,83 @@ export async function registerAcquisitionEvidence(
   }
   return res.json();
 }
+
+// ── AI Gateway API ─────────────────────────────────────────────────────────
+
+export interface AiChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface AiChatRequest {
+  messages: AiChatMessage[];
+  provider?: string;
+  api_key?: string;
+  model?: string;
+  temperature?: number;
+}
+
+export interface AiChatResponse {
+  provider: string;
+  model: string;
+  message: string;
+  is_ai_assisted: boolean;
+  disclaimer: string;
+}
+
+export interface AiReportSummaryRequest {
+  report: any;
+  provider?: string;
+  api_key?: string;
+  model?: string;
+}
+
+export interface AiReportSummaryResponse {
+  provider: string;
+  model: string;
+  raw_markdown: string;
+  is_ai_assisted: boolean;
+  disclaimer: string;
+}
+
+export interface AiStatusResponse {
+  status: string;
+  default_provider: string;
+  supported_providers: string[];
+  models: Record<string, string>;
+}
+
+export async function getAiStatus(): Promise<AiStatusResponse> {
+  const res = await apiFetch('/ai/status');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to query AI gateway status');
+  }
+  return res.json();
+}
+
+export async function sendAiChat(req: AiChatRequest): Promise<AiChatResponse> {
+  const res = await apiFetch('/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'AI Copilot request failed');
+  }
+  return res.json();
+}
+
+export async function generateAiReportSummary(req: AiReportSummaryRequest): Promise<AiReportSummaryResponse> {
+  const res = await apiFetch('/ai/report-summary', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to generate AI executive summary');
+  }
+  return res.json();
+}

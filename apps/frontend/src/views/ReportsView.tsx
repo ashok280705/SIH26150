@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
   FileSpreadsheet, HardDrive, Download, RefreshCw, ShieldCheck,
   Search, Film, Clock, Wrench, ListTree, FileText, AlertTriangle,
+  Sparkles, Copy, Check, ShieldAlert,
 } from 'lucide-react';
 import { Evidence } from '../types';
-import { fetchReport } from '../services/api';
+import { fetchReport, generateAiReportSummary } from '../services/api';
 import { ContextHelp } from '../components/onboarding/ContextHelp';
 
 interface ReportsViewProps {
@@ -208,6 +209,54 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ evidence, evidenceList
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── AI Executive Summary State ──
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiProvider, setAiProvider] = useState<string>(() => localStorage.getItem('vidforge_ai_provider') || 'gemini');
+  const [aiModel, setAiModel] = useState<string>(() => localStorage.getItem('vidforge_ai_model') || '');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const generateAiSummary = async () => {
+    if (!report) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const storedKey = localStorage.getItem('vidforge_ai_key') || undefined;
+      const res = await generateAiReportSummary({
+        report,
+        provider: aiProvider,
+        api_key: storedKey,
+        model: aiModel || undefined,
+      });
+      setAiSummary(res.raw_markdown);
+      setAiProvider(res.provider);
+      setAiModel(res.model);
+    } catch (e: any) {
+      setAiError(e?.message || 'Failed to generate AI executive summary');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const copyAiSummary = () => {
+    if (!aiSummary) return;
+    navigator.clipboard.writeText(aiSummary);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const downloadAiSummary = () => {
+    if (!aiSummary || !evidence) return;
+    const blob = new Blob([aiSummary], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AI-Executive-Summary-${evidence.source_device.replace(/\s+/g, '_')}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     setReport(null);
     setError(null);
@@ -339,6 +388,127 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ evidence, evidenceList
             </select>
           )}
         </div>
+      </div>
+
+      {/* ── AI Executive Forensic Summary Card ─────────────────────────────── */}
+      <div
+        className="panel mb-4"
+        style={{
+          padding: '18px',
+          background: 'linear-gradient(180deg, var(--surface) 0%, var(--surface-muted) 100%)',
+          border: '1px solid var(--accent)',
+          borderRadius: '10px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: '8px',
+              background: 'linear-gradient(135deg, #134074 0%, #0B2545 100%)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff'
+            }}>
+              <Sparkles size={20} />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700 }}>AI Executive Forensic Summary</h3>
+                <span className="badge badge-info" style={{ fontSize: '10px' }}>{aiProvider.toUpperCase()}</span>
+              </div>
+              <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                Synthesizes deterministic recovery findings, filesystem indicators, and timeline gaps into an authoritative courtroom narrative.
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <select
+              className="form-select"
+              style={{ fontSize: '12px', padding: '5px 8px' }}
+              value={aiProvider}
+              onChange={(e) => {
+                setAiProvider(e.target.value);
+                localStorage.setItem('vidforge_ai_provider', e.target.value);
+              }}
+            >
+              <option value="gemini">Google Gemini (Gemini 3.8 Flash)</option>
+              <option value="groq">Groq Cloud (Qwen 3.8 27B)</option>
+              <option value="openai">OpenAI (GPT-4o-mini)</option>
+              <option value="ollama">Local Offline Ollama</option>
+            </select>
+
+            <button
+              className="btn btn-primary"
+              onClick={generateAiSummary}
+              disabled={aiLoading || !report}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              {aiLoading ? <RefreshCw size={14} className="spin" /> : <Sparkles size={14} />}
+              <span>{aiSummary ? 'Regenerate Narrative' : 'Generate AI Summary'}</span>
+            </button>
+          </div>
+        </div>
+
+        {aiLoading && (
+          <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+            <RefreshCw size={24} className="spin" style={{ color: 'var(--accent)' }} />
+            <div style={{ fontSize: '13px', fontWeight: 600 }}>Synthesizing forensic facts with {aiProvider.toUpperCase()}...</div>
+            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Grounded strictly in verified SHA-256 hashes, sector offsets, and recovery allocations.</div>
+          </div>
+        )}
+
+        {aiError && (
+          <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(179, 38, 30, 0.1)', border: '1px solid var(--danger)', borderRadius: '8px', color: 'var(--danger)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertTriangle size={16} />
+            <span>{aiError}</span>
+          </div>
+        )}
+
+        {aiSummary && !aiLoading && (
+          <div style={{ marginTop: '14px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <span className="badge badge-pass" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}>
+                <ShieldAlert size={12} /> AI-Assisted Advisory Narrative
+              </span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button className="btn btn-secondary btn-sm" onClick={copyAiSummary} title="Copy markdown to clipboard">
+                  {copied ? <Check size={13} style={{ color: 'var(--success)' }} /> : <Copy size={13} />}
+                  <span>{copied ? 'Copied' : 'Copy'}</span>
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={downloadAiSummary} title="Download markdown report">
+                  <Download size={13} />
+                  <span>Export MD</span>
+                </button>
+              </div>
+            </div>
+
+            <div
+              className="markdown-body"
+              style={{
+                background: 'var(--surface-sunken)',
+                padding: '16px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+                fontSize: '13px',
+                lineHeight: '1.6',
+                color: 'var(--text-primary)',
+                whiteSpace: 'pre-wrap',
+                maxHeight: '480px',
+                overflowY: 'auto',
+                fontFamily: 'inherit',
+              }}
+            >
+              {aiSummary}
+            </div>
+
+            <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <ShieldAlert size={12} />
+              <span>
+                <strong>Evidentiary Notice:</strong> AI output provides advisory synthesis only. Original forensic evidence remains strictly preserved and verified via SHA-256.
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {error && (

@@ -7,6 +7,7 @@ use forensic_api::{app_router, AppState};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
+    load_dotenv_if_present();
 
     // Best-effort: bring up the bundled offline assistant runtime (project-local Ollama)
     // if it has been installed under vendor/ollama. This never blocks or fails startup.
@@ -26,6 +27,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn load_dotenv_if_present() {
+    let candidates = [".env", "../.env", "../../.env"];
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    let key = k.trim();
+                    let val = v.trim().trim_matches('"').trim_matches('\'');
+                    if std::env::var(key).is_err() {
+                        std::env::set_var(key, val);
+                    }
+                }
+            }
+            break;
+        }
+    }
 }
 
 /// Automatically seeds a demonstration case and links available sample evidence when the database is fresh.

@@ -3712,3 +3712,38 @@ pub async fn register_acquisition_evidence(
 
     Ok((StatusCode::CREATED, Json(res)))
 }
+
+/// GET /api/ai/status
+pub async fn get_ai_status(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(state.ai_gateway.status()))
+}
+
+/// POST /api/ai/chat
+pub async fn ai_chat_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<crate::ai::AiChatRequest>,
+) -> Result<Json<crate::ai::AiChatResponse>, ApiError> {
+    let res = state.ai_gateway.chat(payload).await.map_err(|e| ApiError {
+        error: format!("AI Copilot request failed: {e}"),
+        details: None,
+    })?;
+    Ok(Json(res))
+}
+
+/// POST /api/ai/report-summary
+pub async fn ai_report_summary_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<crate::ai::ReportSummaryRequest>,
+) -> Result<Json<crate::ai::ReportSummaryResponse>, ApiError> {
+    let res = state
+        .ai_gateway
+        .generate_report_summary(payload)
+        .await
+        .map_err(|e| ApiError {
+            error: format!("AI Executive Summary generation failed: {e}"),
+            details: None,
+        })?;
+    Ok(Json(res))
+}
