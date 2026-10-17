@@ -52,6 +52,41 @@ fn find_frontend_dir() -> Option<PathBuf> {
     None
 }
 
+async fn root_index() -> impl axum::response::IntoResponse {
+    axum::response::Html(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VidForge Forensic API</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+        .card { background: #131b2e; padding: 2.5rem; border-radius: 1rem; border: 1px solid #1e293b; max-width: 520px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); }
+        .badge { display: inline-flex; align-items: center; gap: 0.5rem; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.825rem; font-weight: 600; margin-bottom: 1.25rem; }
+        .badge-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; box-shadow: 0 0 8px #10b981; }
+        h1 { font-size: 1.6rem; font-weight: 700; margin: 0 0 0.5rem 0; letter-spacing: -0.02em; }
+        p { color: #94a3b8; font-size: 0.95rem; line-height: 1.6; margin: 0 0 1.5rem 0; }
+        .links { display: flex; flex-direction: column; gap: 0.65rem; }
+        a { color: #38bdf8; text-decoration: none; padding: 0.65rem 0.9rem; background: #0f172a; border-radius: 0.5rem; font-size: 0.875rem; font-family: ui-monospace, monospace; border: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; }
+        a:hover { background: #1e293b; border-color: #38bdf8; transform: translateY(-1px); }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="badge"><span class="badge-dot"></span> Service Live & Operational</div>
+        <h1>VidForge Forensic Platform</h1>
+        <p>The multi-vendor DVR/NVR forensic analysis backend gateway is live and operational on Render.</p>
+        <div class="links">
+            <a href="/health"><span>/health</span> <span>➜</span></a>
+            <a href="/api/cases"><span>/api/cases</span> <span>➜</span></a>
+            <a href="/api/capabilities"><span>/api/capabilities</span> <span>➜</span></a>
+            <a href="/api/ai/status"><span>/api/ai/status</span> <span>➜</span></a>
+        </div>
+    </div>
+</body>
+</html>"#)
+}
+
 async fn health_check() -> impl axum::response::IntoResponse {
     axum::Json(serde_json::json!({
         "status": "ok",
@@ -73,6 +108,7 @@ pub fn app_router(state: AppState) -> Router {
         ]);
 
     let mut router = Router::new()
+        .route("/", get(root_index))
         .route("/health", get(health_check))
         .route("/api/health", get(health_check))
         .route(
