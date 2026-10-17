@@ -58,6 +58,7 @@ members = [
   # Cross-crate tests and fixture generators
   "tests", "crates/parsers-core",
 ]
+default-members = ["apps/api"]
 
 [workspace.package]
 version = "0.1.0"
