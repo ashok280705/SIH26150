@@ -108,7 +108,6 @@ pub fn app_router(state: AppState) -> Router {
         ]);
 
     let mut router = Router::new()
-        .route("/", get(root_index))
         .route("/health", get(health_check))
         .route("/api/health", get(health_check))
         .route(
@@ -185,9 +184,13 @@ pub fn app_router(state: AppState) -> Router {
         .route("/api/ai/vision/analyze", post(handlers::ai_vision_analyze_handler));
 
     if let Some(frontend_dir) = find_frontend_dir() {
+        println!("Serving Forensic Workstation UI from: {}", frontend_dir.display());
         let index_file = frontend_dir.join("index.html");
         let serve_service = ServeDir::new(&frontend_dir).fallback(ServeFile::new(index_file));
         router = router.fallback_service(serve_service);
+    } else {
+        println!("No static frontend directory found; mounting API landing page at /");
+        router = router.route("/", get(root_index));
     }
 
     router.layer(cors).with_state(state)

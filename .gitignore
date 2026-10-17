@@ -27,6 +27,8 @@ node_modules/
 dist/
 .vite/
 *.tsbuildinfo
+!apps/frontend/dist/
+!apps/frontend/dist/**
 
 # ---------------------------------------------------------------------------
 # Bundled offline assistant runtime (Ollama). The binaries, shared libraries and
